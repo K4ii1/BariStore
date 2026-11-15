@@ -2,27 +2,150 @@
 # =============================================================================
 #  BariSign — Bonjour/mDNS helpers (MIT)
 #
-#  On the signer (a-Shell/iOS) raw multicast sockets are not available, so
-#  registration and browsing go through the system DNS-SD API (libsystem_dnssd,
-#  reached with ctypes) exactly as the existing pair_probe.py does.  On Linux
-#  (development only) a small raw mDNS browser is used so the parser can be
-#  exercised without a device.
-#
-#  UNTESTED ON A DEVICE (browse path); registration reuses the device-verified
-#  approach from ashell_bonjour.py.
+#  DNS-SD registration/browsing goes through the system DNS-SD API
+#  (libsystem_dnssd, reached with ctypes).  On iOS the API is gated by the
+#  app's signed NSBonjourServices allowlist, so a-Shell gets -65555 for every
+#  type and BariSign advertises with raw broadcast instead (poc/raw_mdns.py).
+#  On Linux (development only) a small raw mDNS browser is used so the parser
+#  can be exercised without a device.
 # =============================================================================
 
 import ctypes
+import os
 import select
 import socket
 import struct
 import sys
 import time
 
-from ashell_bonjour import BonjourResponder, _load_dnssd, is_ashell
-
 PAIRABLE_HOST = "_remotepairing-pairable-host._tcp"
 REMOTE_PAIRING = "_remotepairing._tcp"
+
+SERVICE_TYPE = PAIRABLE_HOST
+
+_kDNSServiceErr = {
+    0: "ok",
+    -65537: "unknown error",
+    -65539: "out of memory",
+    -65540: "bad parameter",
+    -65548: "name conflict",
+    -65549: "invalid",
+    -65555: "NoAuth: the app's NSBonjourServices does not allow this service type",
+    -65556: "no such key",
+    -65557: "NAT traversal error",
+    -65562: "transient error",
+    -65563: "Bonjour service not running",
+    -65570: "policy denied (Local Network permission?)",
+}
+
+REPLY = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int32,
+                         ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                         ctypes.c_void_p)
+
+
+def is_ashell():
+    """True on the a-Shell app (the only place raw advertisement is needed)."""
+    return (os.environ.get("TERM_PROGRAM", "") == "a-Shell"
+            or os.environ.get("BARISIGN_ASHELL") == "1"
+            or sys.platform == "ios")
+
+
+def _load_dnssd():
+    """Find the Bonjour C API."""
+    candidates = (
+        "libsystem_dnssd.dylib",
+        "/usr/lib/system/libsystem_dnssd.dylib",
+        "libdns_sd.dylib",
+        "/usr/lib/libdns_sd.dylib",
+    )
+    errors = []
+    for name in candidates:
+        try:
+            library = ctypes.CDLL(name)
+            if hasattr(library, "DNSServiceRegister"):
+                return library
+        except OSError as exc:
+            errors.append("%s (%s)" % (name, str(exc)[:40]))
+    try:
+        library = ctypes.CDLL(None)
+        if hasattr(library, "DNSServiceRegister"):
+            return library
+    except OSError as exc:
+        errors.append("process (%s)" % (str(exc)[:40],))
+    raise RuntimeError("Bonjour (DNSServiceRegister) not reachable: %s"
+                       % "; ".join(errors or ["no library"]))
+
+
+def _txt_record(properties):
+    payload = b""
+    for key, value in properties.items():
+        key = str(key).encode("utf-8")
+        value = str(value).encode("utf-8")
+        if len(key) > 255 or len(value) > 255:
+            continue
+        entry = key + b"=" + value
+        if len(entry) > 255:
+            continue
+        payload += bytes([len(entry)]) + entry
+    return payload
+
+
+class BonjourResponder:
+    """Minimal MDNSResponder replacement using the system Bonjour daemon."""
+
+    def __init__(self, service_type, instance_name, port, properties,
+                 hostname=None, addresses=None):
+        self.service_type = service_type.rstrip(".") or SERVICE_TYPE
+        self.instance_name = properties.get("name") or instance_name
+        self.port = int(port)
+        self.properties = dict(properties or {})
+        self._library = None
+        self._ref = ctypes.c_void_p()
+        self._callback = None
+        self._error = 0
+
+    def _registered(self, _ref, _flags, error, _name, _type, _domain, _context):
+        if error:
+            self._error = error
+
+    def _register(self):
+        library = _load_dnssd()
+        library.DNSServiceRegister.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+            ctypes.c_uint16, ctypes.c_uint16, ctypes.c_char_p, REPLY,
+            ctypes.c_void_p]
+        library.DNSServiceRegister.restype = ctypes.c_int32
+        library.DNSServiceRefDeallocate.argtypes = [ctypes.c_void_p]
+
+        txt = _txt_record(self.properties)
+        self._callback = REPLY(self._registered)
+        error = library.DNSServiceRegister(
+            ctypes.byref(self._ref), 0, 0,
+            self.instance_name.encode("utf-8"),
+            self.service_type.encode("utf-8"), None, None,
+            socket.htons(self.port), len(txt), txt, self._callback, None)
+        if error:
+            raise RuntimeError("DNSServiceRegister: %d (%s)"
+                               % (error, _kDNSServiceErr.get(error, "see dns_sd.h")))
+        if self._error:
+            raise RuntimeError("DNSServiceRegister callback: %d (%s)"
+                               % (self._error, _kDNSServiceErr.get(self._error, "see dns_sd.h")))
+        self._library = library
+
+    async def __aenter__(self):
+        self._register()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._library is not None and self._ref:
+            try:
+                self._library.DNSServiceRefDeallocate(self._ref)
+            except Exception:                                   # noqa: BLE001
+                pass
+        self._ref = ctypes.c_void_p()
+        self._callback = None
+        self._library = None
 
 
 # --------------------------------------------------------------------------

@@ -21,7 +21,7 @@ import asyncio
 import socket
 import struct
 
-from ashell_bonjour import _txt_record
+from mdns import _txt_record
 from pairing import mdns_txt
 
 MCAST = "224.0.0.251"

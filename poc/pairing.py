@@ -433,6 +433,7 @@ class PairingRecord:
             "host_alt_irk": self.identity.alt_irk,
             "peer_alt_irk": self.peer.get("alt_irk", b""),
             "peer_udid": self.peer.get("udid", ""),
+            "peer_identifier": self.peer.get("identifier", ""),
             "peer_model": self.peer.get("model", ""),
             "peer_name": self.peer.get("name", ""),
         }

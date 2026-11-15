@@ -31,12 +31,12 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
   So the target's Settings cannot discover BariSign from a-Shell. The pure tunnel/install engine is
   still valid once a pairing record exists; the pairing-host advertisement needs another app with
   the right Info.plist or a raw mDNS fallback. **Raw multicast failed the first probe**
-  (`bonjour_check.py`: every DNS-SD type returns `NoAuth`; bind 5353 is `EADDRINUSE`; multicast send
-  is `ENETUNREACH`). The probe did not set `IP_MULTICAST_IF`; the updated probe and the new
-  `poc/raw_mdns.py` do, and `pair` falls back to raw announcements automatically. **Device test
-  pending:** `sh bin/barisign pair` + Paired Macs (no target IP). If it fails, a pairing file from a
-  host that can advertise can be imported with
-  `sh bin/barisign pair --import FILE --host <target-ip>`.
+  (DNS-SD: every type returns `NoAuth`; multicast send is `ENETUNREACH`). `poc/raw_mdns.py`
+  sends multicast + subnet broadcast in parallel; broadcast is device-proven (the target lists
+  BariSign). `pair` uses it automatically on a-Shell. If discovery still fails, the target is
+  found by port scan (usual port 49152 first) and then by subnet sweep matching the pairing
+  record — no address lookup needed. Last resort:
+  `sh bin/barisign pair --host <target-ip>`.
 
 ## Written but **never tested on a device**
 

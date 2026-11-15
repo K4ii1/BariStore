@@ -149,5 +149,5 @@ refused on any other device or Apple ID. To use another target, register its UDI
 | UDID not recognised | `40` hex characters, or `24` like `00008110-001a2c3e0e91801e` |
 | target cannot open the page | same Wi-Fi? Allow **Local Network** for a-Shell; the address has the signer's Wi-Fi IP |
 | `bin/barisign pair` finds no IPA | sign on the signer first, or pass `--ipa FILE` |
-| `DNSServiceRegister: -65555` / BariSign does not appear in Paired Macs | a-Shell's Info.plist does not allow the pairing Bonjour type; run `python3 poc/bonjour_check.py` and see `docs/NEXT_SESSION.md` |
+| BariSign does not appear in Paired Macs | run plain `sh bin/barisign pair` (raw broadcast is automatic); if the target has no entry after 1 min, restart a-Shell and retry |
 | terminal stops taking input | quit a-Shell from the app switcher and reopen it |

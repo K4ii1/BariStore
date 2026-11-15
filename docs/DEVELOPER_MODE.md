@@ -75,7 +75,8 @@ Activity), Husk ("Pair with Husk", code in a notification), Madeira ("Pair with 
    UDID (`sh bin/barisign portal --udid <that UDID>`), sign again, and AirDrop the **.ipa** (not the
    zip) from the signing phone straight to it. Watch whether the icon appears, and whether tapping it
    reveals Settings → Privacy & Security → Developer Mode. If it does, no pairing is needed at all.
-2. **Does Bonjour work from a-Shell?** `poc/pair_probe.py` (untested) registers
+2. **Does Bonjour work from a-Shell?** No: DNS-SD registration fails with -65555 and is
+   skipped on a-Shell; `poc/raw_mdns.py` advertises with broadcast instead (device-proven).
    `_remotepairing-pairable-host._tcp` through `DNSServiceRegister` via ctypes, advertises the same TXT
    keys SideInstaller uses, and listens on 49152. Run it on a **second device** with a-Shell (the iPad)
    on the same Wi-Fi; on the target phone open Settings → Privacy & Security → Developer Mode and tap

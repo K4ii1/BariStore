@@ -73,9 +73,7 @@ download_all() {
                  "poc/barisign.py poc/barisign.py" \
                  "poc/signer.py poc/signer.py" \
                  "poc/download.py poc/download.py" \
-                 "poc/pair_probe.py poc/pair_probe.py" \
                  "poc/pair_install.py poc/pair_install.py" \
-                 "poc/ashell_bonjour.py poc/ashell_bonjour.py" \
                  "poc/tls_psk.py poc/tls_psk.py" \
                  "poc/tcp6.py poc/tcp6.py" \
                  "poc/remote_xpc.py poc/remote_xpc.py" \
@@ -83,7 +81,6 @@ download_all() {
                  "poc/pairing.py poc/pairing.py" \
                  "poc/rpp_tunnel.py poc/rpp_tunnel.py" \
                  "poc/mdns.py poc/mdns.py" \
-                 "poc/bonjour_check.py poc/bonjour_check.py" \
                  "poc/raw_mdns.py poc/raw_mdns.py" \
                  "third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py" \
                  "third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py" \
@@ -117,10 +114,10 @@ download_all() {
 check_compiles() {
     bad=""
     for f in poc/poc_login.py poc/poc_portal.py poc/barisign.py poc/signer.py \
-             poc/download.py poc/pair_probe.py poc/pair_install.py \
-             poc/ashell_bonjour.py poc/tls_psk.py poc/tcp6.py poc/remote_xpc.py \
+             poc/download.py poc/pair_install.py poc/tls_psk.py poc/tcp6.py \
+             poc/remote_xpc.py \
              poc/device_services.py poc/pairing.py poc/rpp_tunnel.py poc/mdns.py \
-             poc/bonjour_check.py poc/raw_mdns.py \
+             poc/raw_mdns.py \
              third_party/sideinstaller/signin.py \
              third_party/sideinstaller/portal.py; do
         if ! python3 -c "compile(open('$f').read(), 'x', 'exec')" 2>/dev/null; then

@@ -258,6 +258,40 @@ class TunnelLink:
         return header + body
 
 
+async def probe_handshake(host, port, timeout=8):
+    """Connect and run only the RPPairing handshake; return peerDeviceInfo or None.
+
+    No cryptography and no UI on the target: a plain handshake never prompts.
+    Used to pick our target out of a subnet sweep by its identifier/UDID.
+    """
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    except Exception:                                           # noqa: BLE001
+        return None
+    try:
+        link = RemotePairingLink(reader, writer, {})
+        await asyncio.wait_for(link._send_plain({
+            "request": {"_0": {"handshake": {"_0": {
+                "hostOptions": {"attemptPairVerify": True},
+                "wireProtocolVersion": WIRE_VERSION,
+            }}}}
+        }), timeout)
+        response = await asyncio.wait_for(link._recv_plain(), timeout)
+        handshake = response.get("response", {}).get("_1", {}).get("handshake", {}).get("_0", {})
+        return handshake.get("peerDeviceInfo") or {}
+    except Exception:                                           # noqa: BLE001
+        return None
+    finally:
+        try:
+            writer.close()
+        except Exception:                                       # noqa: BLE001
+            pass
+        try:
+            await writer.wait_closed()
+        except Exception:                                       # noqa: BLE001
+            pass
+
+
 async def open_tunnel(host, port, record, timeout=20):
     """Pair-verify, create the listener, run TLS-PSK + CDTunnel."""
     reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)

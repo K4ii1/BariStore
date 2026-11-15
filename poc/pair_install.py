@@ -80,6 +80,15 @@ def save_state(**values):
     return state
 
 
+def display_path(path):
+    """Short path as the Files app shows it, not the long container path."""
+    docs = os.path.join(os.path.expanduser("~"), "Documents")
+    full = os.path.abspath(path)
+    if full == docs or full.startswith(docs + os.sep):
+        return "Device/a-Shell/" + os.path.relpath(full, docs).replace(os.sep, "/")
+    return path
+
+
 def save_record(record):
     """Write the normalized pairing record for BariSign and for the apps."""
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -154,11 +163,19 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
     """Advertise BariSign, accept one device-initiated pairing."""
     result = asyncio.get_running_loop().create_future()
     debug_handle = open(_debug_path(), "w")
+    # The target may dial twice (IPv4 + IPv6 Happy Eyeballs): run pair-setup
+    # on the first connection only, or the two interleaved sessions poison
+    # each other and the result. Retries connect after the first one ends.
+    active = {"busy": False}
 
     async def handle(reader, writer):
-        if result.done():
-            writer.close()
+        if result.done() or active["busy"]:
+            try:
+                writer.close()
+            except Exception:                                   # noqa: BLE001
+                pass
             return
+        active["busy"] = True
         peer = writer.get_extra_info("peername")
 
         def log(text):
@@ -186,6 +203,7 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
             if not result.done():
                 result.set_exception(exc)
         finally:
+            active["busy"] = False
             try:
                 writer.close()
             except Exception:                                   # noqa: BLE001
@@ -363,6 +381,64 @@ async def resolve_port(host, port):
         raise RuntimeError("no pairing port answered on %s (target asleep or off-Wi-Fi?)" % host)
     _say("  scan         open: %s" % ", ".join(str(p) for p in found[:6]))
     return found
+
+
+def _id_match(value, *candidates):
+    """True when a handshake identifier names the same device as a saved UDID."""
+    wanted = re.sub(r"[^0-9a-f]", "", str(value or "").lower())
+    if not wanted:
+        return False
+    for candidate in candidates:
+        other = re.sub(r"[^0-9a-f]", "", str(candidate or "").lower())
+        if other and other == wanted:
+            return True
+    return False
+
+
+async def sweep_target(record, udid=""):
+    """Find our target on the signer's /24 without any address from the user.
+
+    Sweeps port 49152 across the subnet, handshakes each open host (no UI on
+    the target) and returns the address whose identifier matches the pairing
+    record (or --udid). Stale DHCP leases make the saved peer_ip wrong; this
+    needs no lookup in Settings.
+    """
+    me = raw_mdns.wifi_ipv4()
+    parts = me.split(".") if me else []
+    if len(parts) != 4:
+        return None
+    try:
+        if int(parts[3]) < 0 or int(parts[3]) > 255:
+            return None
+    except ValueError:
+        return None
+    prefix = ".".join(parts[:3])
+    _say("  sweep        scanning %s.* for the target" % prefix)
+    candidates = ["%s.%d" % (prefix, i) for i in range(1, 255)
+                  if "%s.%d" % (prefix, i) != me]
+
+    async def check(ip):
+        if await _tcp_open(ip, 49152, timeout=1.0):
+            return ip
+        return None
+
+    open_hosts = []
+    for chunk in range(0, len(candidates), 48):
+        results = await asyncio.gather(
+            *[check(ip) for ip in candidates[chunk:chunk + 48]])
+        open_hosts.extend(ip for ip in results if ip)
+    if not open_hosts:
+        return None
+    _say("  sweep        pairing port open on: %s" % ", ".join(open_hosts[:8]))
+    want_udid = (record or {}).get("peer_udid") or udid
+    want_identifier = (record or {}).get("peer_identifier", "")
+    for host in open_hosts:
+        peer = await rpp_tunnel.probe_handshake(host, 49152)
+        if not peer:
+            continue
+        if _id_match(peer.get("identifier"), want_udid, want_identifier, udid):
+            return host, 49152
+    return None
 
 
 async def open_session(record, host, port, identity_udid=""):
@@ -545,17 +621,10 @@ async def _run(args):
         except Exception as exc:                            # noqa: BLE001
             text = str(exc)
             if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
-                _say("  ! a-Shell cannot advertise the pairing service")
-                _say("    DNSServiceRegister returned -65555 (NoAuth).")
-                _say("    iOS only allows Bonjour types listed in the app's")
-                _say("    NSBonjourServices; a-Shell has no entry for")
-                _say("    _remotepairing-pairable-host._tcp, and a signed app's")
-                _say("    Info.plist cannot be changed from Python.")
-                _say("")
-                _say("  This blocks discovery in Settings > Developer > Paired Macs.")
-                _say("  Run: python3 poc/bonjour_check.py")
-                _say("  Options are in docs/NEXT_SESSION.md (pairing host with the")
-                _say("  right Info.plist, or a pairing record obtained elsewhere).")
+                _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
+                _say("    (DNSServiceRegister -65555: the app's Info.plist has no")
+                _say("    NSBonjourServices entry, and Python cannot change it).")
+                _say("    If Paired Macs shows no BariSign, see docs/NEXT_SESSION.md.")
                 return 2
             raise
         pseudo = pairing.PairingRecord(identity, info)
@@ -567,15 +636,19 @@ async def _run(args):
         _say("  UDID         %s" % (udid or "(will read it from the tunnel)"))
         record = rpp_tunnel.load_record(record_path)
     else:
-        _say("  pairing file %s" % RECORD_PATH)
+        _say("  pairing file %s" % display_path(RECORD_PATH))
 
+    # a-Shell can neither advertise nor browse Bonjour (-65555 on both), so
+    # skip discovery there entirely: the paired address plus scans replace it.
     host, port = args.get("host", ""), args.get("port", 0)
-    if not host:
+    if not host and not _ashell_limited():
         for attempt in range(3):
             host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
             if host and (port or peer_ip):
                 break
             await asyncio.sleep(2)
+    if not host:
+        host, port = peer_ip, 0
     if not host:
         _say("  ! the target was not found")
         _say("    pass its Wi-Fi address directly:")
@@ -584,18 +657,37 @@ async def _run(args):
         return 2
     if port:
         _say("  target       %s:%d" % (host, port))
+    else:
+        _say("  target       %s (port scan follows)" % host)
 
     session = None
     try:
         try:
-            session = await asyncio.wait_for(open_session(record, host, port, udid), 90)
+            session = await asyncio.wait_for(open_session(record, host, port, udid), 120)
         except Exception as exc:                                # noqa: BLE001
+            first_error = exc
             if args.get("pair_only") and udid:
                 _say("  ! tunnel/UDID check failed: %s" % exc)
                 _say("  UDID saved from the pairing: %s" % udid)
                 save_state(udid=udid, paired=True)
                 return 0
-            raise
+            swept = None
+            if not args.get("host", ""):
+                # The saved address goes stale when DHCP reassigns it; find
+                # the target again by its identifier instead of asking the
+                # user to look the address up in Settings.
+                try:
+                    swept = await sweep_target(record, udid)
+                except Exception:                               # noqa: BLE001
+                    swept = None
+            if swept is not None:
+                host, port = swept
+                _say("  target       %s:%d (found by sweep)" % (host, port))
+                save_state(peer_ip=host)
+                session = await asyncio.wait_for(
+                    open_session(record, host, port, udid), 120)
+            else:
+                raise first_error
         if session.udid:
             if udid and udid != session.udid:
                 _say("  ! the tunnel reports a different UDID than the pairing record")

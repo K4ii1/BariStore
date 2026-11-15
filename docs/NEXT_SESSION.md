@@ -45,64 +45,39 @@ interop test proves against OpenSSL.
 
 ## What to run now
 
-1. `python3 poc/bonjour_check.py` — **already run (2026-11-15):** every type returns `NoAuth`, bind
-   5353 fails and multicast send has no route. Raw mDNS is not available; see option D below.
-2. The self-update command is `sh bin/update` (now also `sh bin/barisign update`); it must print a
-   moving `files ....` indicator, then `files ok`, `check ok`, `ready`. There is no separate
-   `engine` step: the check already imports the pure engine.
-3. `sh bin/barisign pair --check` — must import the engine.
-4. Pairing cannot work from a-Shell until an advertising host exists. The options are below.
+1. `sh bin/update` — must print `installing BariSign <version>`, then `files ok`, `check ok`,
+   `ready`. (The `files` line cycles dots on one line and always ends with ok.)
+2. `sh bin/barisign pair --check` — must import the engine.
+3. `sh bin/barisign pair` — pairs (raw broadcast is automatic on a-Shell) or reuses the
+   record, finds the target by port scan + subnet sweep, then tunnels and installs with
+   `installation_proxy`. Target: trust the developer, open the app.
+4. If a step fails, rerun with `--debug` and send the output plus `state/pair_debug.log`.
 
-## Options after the -65555 blocker (need a user decision)
+## Discovery, as it stands (device-proven 2026-11-15)
 
-- **A. Pairing host with the right `Info.plist` on the signer.** A small native helper (or a fork of
-  SideInstaller/a-Shell) advertises `_remotepairing-pairable-host._tcp` and runs the Pair-Setup
-  responder; BariSign keeps signing and the pure tunnel/install. This is the reliable path. It adds
-  one **signer-side** app, not a target-side app. Bootstrap of the helper still needs a developer
-  source (SideStore/AltStore/PC once).
-- **B. Use SideInstaller (or SideStore/AltStore) on the signer for pairing only**, then feed the
-  resulting `PairingFile_RemoteRP.plist` to BariSign. The target installs nothing from BariSign; the
-  third-party app is on the signer. This violates the current "no third-party app" decision but is
-  the shortest path.
-- **C. One-time computer.** Pair the target with a Mac/Xcode Device Hub, copy the Mac's remote
-  pairing record to `state/PairingFile_RemoteRP.plist`, then `sh bin/barisign pair --udid UDID`
-  installs from a-Shell. No third-party app; a computer is needed once.
-- **D. Raw mDNS fallback — multicast RULED OUT, broadcast OPEN (device test needed).**
-  `pair --raw-mdns` fails at multicast send (`Errno 65`, multicast entitlement missing). NEW IDEA
-  since then: **subnet broadcast** (`255.255.255.255` + `x.y.z.255` to port 5353) is plain unicast
-  IP plumbing (`SO_BROADCAST`), no entitlement needed. If iOS mDNSResponder honors it, the target
-  caches the records and Paired Macs shows the host — same result as multicast. `raw_mdns.py` now
-  sends multicast + both broadcasts in parallel and reports live transports; `bonjour_check.py`
-  tests broadcast send separately. **Test: `sh bin/barisign pair --raw-mdns`, open Paired Macs.**
-  If the host appears, D wins and the goal survives intact. If sends fail or nothing appears, D is
-  dead and only A–C remain.
-- **E. Host-initiated pairing (signer dials the target) — RULED OUT for iOS 27.** SideInstaller
-  proved on devices (issues #52, two networks): iOS 27 lockdownd resets Wi-Fi pairing TCP
-  immediately, no Trust prompt; "the way iOS 27 pairs over a network is the device-initiated one".
-  pymobiledevice3's own manual-pairing command targets Apple TV/visionOS only
-  ("Standard iOS devices usually do not need this"). A fresh iPhone listens on nothing until it
-  sees a pairable host in Settings — so there is nothing to dial. Our `pairing.py` responder is
-  the right side of the protocol; it is the advertisement that cannot run in a-Shell.
-- **E. Fork a-Shell** with the `NSBonjourServices` entry and distribute it. Developer-only, not an
-  end-user path.
+- Pairing advertisement works via raw broadcast; the target lists BariSign, M1-M6 completes.
+- Bonjour browse is dead on a-Shell (-65555), so discovery is: paired address -> port scan
+  (49152 first) -> subnet sweep matching the pairing record. No address lookup needed.
+- Remaining untested on a device: tunnel + RSD + AFC + `installation_proxy` install, and the
+  pairing-file write into the app.
 
-### Importing a pairing file (supports C and B)
+## Background options (only if the current path stalls)
 
-`sh bin/barisign pair --import FILE --host <target-ip>` now imports a pairing record produced by a
-host that can advertise (Mac/Xcode, AltServer/AltStore, SideInstaller, …). It normalizes
-`host_identifier`/`host_alt_irk`, accepts a 32- or 64-byte Ed25519 private key, writes the
-`state/PairingFile_RemoteRP.plist` / `ALTPairingFile.*` copies, and can go straight to the tunnel.
-`--host` defaults the port to **49152** (the device's RPPairing service); override with `--port`.
-The target's LAN IP is in **Settings → Wi-Fi → IP Address**. No mDNS is needed on the signer.
+- **A. Pairing host with the right `Info.plist`.** Reliable but needs a developer source once.
+- **B. SideInstaller on the signer for pairing only**, then `--import` the record. Works but
+  violates the no-third-party goal.
+- **C. One-time computer** for the pairing record, then `--udid` installs from a-Shell.
+- **E. Host-initiated pairing — RULED OUT for iOS 27** (SideInstaller #52: lockdownd resets
+  Wi-Fi pairing TCP; only device-initiated works).
 
 ## Acceptance gates
 
 1. `sh bin/update` clean; files/engine synced; no repeated curl/git; no pip.
 2. `pair --check` imports on a-Shell with cryptography 3.4.8, no qh3/sslpsk/native wheel.
-3. **Blocked:** pairing from Settings cannot be advertised by a-Shell (`-65555`). Needs option A–D.
-4. **Conditional:** with a pairing record from elsewhere, `pair` installs over Wi-Fi with the pure
-   engine; target trusts the developer and the app opens.
-5. Signing/portal/UDID page/self-update still work.
+3. `pair --pair-only` pairs from Settings over raw broadcast, saves the UDID and the pairing file.
+4. `pair` finds the target (paired address → port scan → subnet sweep), installs over Wi-Fi;
+   target trusts the developer and the app opens.
+5. Signing/portal/UDID page/self-update still work; no PC, no AirDrop/OTA, no third-party app.
 
 ## Where it stands (device, 2026-11-15 evening)
 
