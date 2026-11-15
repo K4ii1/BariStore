@@ -133,10 +133,34 @@ while [ "$attempt" -le 2 ]; do
     attempt=$((attempt + 1))
 done
 
+
+# The pairing engine is a one-time pip install. One pip process only: a-Shell
+# refuses a second concurrent pip, and splitting the engine from its
+# dependencies caused that when a previous attempt was still finishing.
+setup_engine() {
+    if python3 poc/pair_install.py --check >/dev/null 2>&1; then
+        printf '  engine    ok\n'
+        return 0
+    fi
+    printf '  engine    ...'
+    if python3 -u poc/pair_install.py --setup >engine.log 2>&1; then
+        printf '\r\033[2K  engine    ok\n'
+        rm -f engine.log
+        return 0
+    fi
+    printf '\r\033[2K  engine    failed\n'
+    printf '  ! the pairing engine is not installed; signing still works.\n'
+    printf '  ! see engine.log; quit other pip/a-Shell windows, then run sh install.sh again.\n'
+    return 1
+}
+
 printf '\n'
 if [ "$fail" -ne 0 ] || ! works; then
     printf '  ! install failed; nothing was changed outside the program files.\n'
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
+    exit 1
+fi
+if ! setup_engine; then
     exit 1
 fi
 printf '  ready     sh bin/barisign\n'

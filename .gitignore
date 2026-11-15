@@ -32,3 +32,6 @@ secrets*
 .DS_Store
 __pycache__/
 *.pyc
+
+# installer log from the one-time pairing-engine setup
+/engine.log

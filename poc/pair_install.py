@@ -149,6 +149,9 @@ async def write_pairing_file(rsd, ipa, record_path, bundle_id=""):
 
 
 PURE_DEPS = [
+    # The full pure-Python closure is listed explicitly because the single pip
+    # command below runs with --no-deps (pymobiledevice3 would otherwise try to
+    # replace a-Shell's native cryptography).
     "qh3<2",
     "pmd-pytcp",
     "pmd-net-addr",
@@ -164,6 +167,24 @@ PURE_DEPS = [
     "prompt_toolkit",
     "rich",
     "requests",
+    # transitive pure dependencies
+    "Pygments",
+    "markdown-it-py",
+    "mdurl",
+    "arrow",
+    "python-dateutil",
+    "six",
+    "tzdata",
+    "wcwidth",
+    "certifi",
+    "urllib3",
+    "idna",
+    "charset-normalizer",
+    "click",
+    # Pin the engine: 11.55 pulls new modules (developer_disk_image, ipsw_parser,
+    # pyimg4, ...) that are irrelevant here. 11.49 is the version the pairing
+    # host/userspace tunnel imports were verified against.
+    "pymobiledevice3==11.49.0",
 ]
 
 PYTUN_STUB = '''\
@@ -231,11 +252,15 @@ def _pip(args):
 
 
 def setup():
-    """One-time: install pymobiledevice3 and its pure-Python dependencies."""
+    """One-time: install pymobiledevice3 and its pure-Python dependencies.
+
+    One pip process on purpose. a-Shell refuses two pip instances at once, and
+    splitting pymobiledevice3 from its dependencies caused exactly that when a
+    previous attempt was still finishing.
+    """
     os.makedirs(PIP_TARGET, exist_ok=True)
-    _say("  first run: installing the pairing engine into state/pymd3")
-    ok = _pip(["--no-deps", "pymobiledevice3"])
-    ok = _pip(PURE_DEPS) and ok
+    _say("  installing the pairing engine into state/pymd3")
+    ok = _pip(["--no-deps"] + PURE_DEPS)
     _write_stubs()
     _add_path()
     return ok
@@ -450,11 +475,10 @@ def main(argv):
         return 0 if setup() else 1
 
     if _import_engine(quiet=True) is None:
-        if not setup():
-            _say("  ! setup failed; see the message above")
-            return 1
-        if _import_engine() is None:
-            return 1
+        _say("  ! the pairing engine is not installed")
+        _say("    run: sh install.sh")
+        _say("    or:  sh bin/barisign pair --setup")
+        return 1
 
     ipa = find_ipa(explicit_ipa)
     try:

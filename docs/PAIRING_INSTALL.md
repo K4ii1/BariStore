@@ -62,7 +62,7 @@ If gate 2 is clean, this is the project's answer and no native helper is needed.
 `bin/barisign pair` wires the gates together. On the signer:
 
 ```sh
-sh bin/barisign pair            # first run installs the engine into state/pymd3, then pairs + installs
+sh bin/barisign pair            # pair and install; install.sh already installed the engine
 sh bin/barisign pair --check    # python, cryptography and engine import only
 sh bin/barisign pair --setup    # install the engine only
 sh bin/barisign pair --pair-only --timeout 120   # pair, print peer/tunnel UDID, save it
@@ -70,7 +70,8 @@ sh bin/barisign pair --pair-only --timeout 120   # pair, print peer/tunnel UDID,
 
 It finds the newest `*-signed.ipa` in the BariSign folder (or `--ipa FILE`), advertises as
 `BariSign`, prints the 6-digit code, then installs with `--userspace` `installation_proxy`.
-The first run needs the network; later runs are local. `poc/ashell_bonjour.py` replaces
+`install.sh` installs the engine into state/pymd3 once (one pip process); later runs are local.
+If it was skipped, `sh bin/barisign pair --setup` does it. `poc/ashell_bonjour.py` replaces
 pymobiledevice3's raw-multicast responder with `DNSServiceRegister` when `TERM_PROGRAM=a-Shell`.
 
 **Do not try to vendor a newer `cryptography`.** It is a compiled native extension (OpenSSL/Rust),
