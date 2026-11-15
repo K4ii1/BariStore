@@ -33,6 +33,4 @@ secrets*
 __pycache__/
 *.pyc
 
-# installer log when the engine check fails
-/engine.log
 /tests/*.log

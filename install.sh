@@ -116,11 +116,34 @@ works() {
         && sh -n bin/barisign && sh -n bin/update
 }
 
+# A small moving indicator so a slow Wi-Fi download visibly keeps working.
+_progress_pid=""
+progress_start() {
+    _progress_label="$1"
+    ( while :; do
+        for _dots in '.  ' '.. ' '...' '   '; do
+            printf '\r\033[2K  %-9s %s' "$_progress_label" "$_dots"
+            sleep 1
+        done
+      done ) &
+    _progress_pid=$!
+}
+progress_stop() {
+    if [ -n "${_progress_pid:-}" ]; then
+        kill "$_progress_pid" 2>/dev/null
+        wait "$_progress_pid" 2>/dev/null
+        _progress_pid=""
+    fi
+}
+trap 'progress_stop' 0
+trap 'progress_stop; exit 130' 1 2 15
+
 attempt=1
 while [ "$attempt" -le 2 ]; do
     FAILED=""
-    printf '  files     ...'
+    progress_start "files"
     download_all
+    progress_stop
     if [ "$fail" -eq 0 ]; then
         printf '\r\033[2K  files     ok\n'
     else
@@ -128,12 +151,14 @@ while [ "$attempt" -le 2 ]; do
         printf '  ! could not fetch:%s\n' "$FAILED"
     fi
 
-    printf '  check     ...'
+    progress_start "check"
     COMPILE_BAD=""
     if [ "$fail" -eq 0 ] && COMPILE_BAD=$(check_compiles) && works; then
+        progress_stop
         printf '\r\033[2K  check     ok\n'
         break
     fi
+    progress_stop
     printf '\r\033[2K  check     failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
         printf '  ! does not compile:%s\n' "$COMPILE_BAD"
@@ -145,30 +170,10 @@ while [ "$attempt" -le 2 ]; do
     attempt=$((attempt + 1))
 done
 
-
-# The pairing engine is pure Python now: there is nothing to download and no
-# pip process.  This step only proves that every module imports with the
-# cryptography that a-Shell ships.
-check_engine() {
-    printf '  engine    ...'
-    if python3 -u poc/pair_install.py --check >engine.log 2>&1; then
-        printf '\r\033[2K  engine    ok\n'
-        rm -f engine.log
-        return 0
-    fi
-    printf '\r\033[2K  engine    failed\n'
-    printf '  ! the pure pairing engine does not import; signing still works.\n'
-    printf '  ! see engine.log\n'
-    return 1
-}
-
 printf '\n'
 if [ "$fail" -ne 0 ] || ! works; then
     printf '  ! install failed; nothing was changed outside the program files.\n'
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
-    exit 1
-fi
-if ! check_engine; then
     exit 1
 fi
 printf '  ready     sh bin/barisign\n'

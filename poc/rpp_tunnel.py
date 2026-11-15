@@ -57,6 +57,8 @@ def load_record(path):
     for key in ("private_key", "public_key", "identifier"):
         if not record.get(key):
             raise PairingTunnelError("the pairing file is missing %s" % key)
+    if len(record["private_key"]) == 64:        # Ed25519 seed + public key form
+        record["private_key"] = bytes(record["private_key"])[:32]
     if not record.get("alt_irk") and record.get("host_alt_irk"):
         record["alt_irk"] = record["host_alt_irk"]
     return record

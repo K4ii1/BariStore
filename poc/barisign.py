@@ -1375,6 +1375,7 @@ _OPTIONS = {
         ("--pair-only", "pair, print the UDID and write the pairing file"),
         ("--ipa FILE", "install this signed IPA"),
         ("--udid UDID", "reuse an existing pairing for this UDID"),
+        ("--import FILE", "use a pairing file from another host (Mac/SideInstaller)"),
         ("--check", "python, cryptography and engine import only"),
         ("--setup", "verify the pure engine (nothing is downloaded)"),
         ("--timeout N", "give up if the target does not pair"),

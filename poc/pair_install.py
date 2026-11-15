@@ -82,7 +82,7 @@ def save_state(**values):
 def save_record(record):
     """Write the normalized pairing record for BariSign and for the apps."""
     os.makedirs(STATE_DIR, exist_ok=True)
-    data = record.as_dict()
+    data = record.as_dict() if hasattr(record, "as_dict") else dict(record)
     raw = plistlib.dumps(data)
     for name in ("PairingFile_RemoteRP.plist", "ALTPairingFile.plist",
                  "ALTPairingFile.mobiledevicepairing"):
@@ -384,6 +384,23 @@ async def _run(args):
         identity = pairing.HostIdentity.generate()
         identity.save(IDENTITY_PATH)
         record = None
+    if args.get("import"):
+        source = os.path.expanduser(args["import"])
+        try:
+            imported = rpp_tunnel.load_record(source)
+        except Exception as exc:                            # noqa: BLE001
+            _say("  ! cannot read the pairing file %s: %s" % (source, exc))
+            return 2
+        save_record(imported)
+        record = imported
+        udid = normalise_udid(args.get("udid") or imported.get("peer_udid") or udid)
+        save_state(paired=True, udid=udid, record=RECORD_PATH)
+        _say("  imported     %s" % source)
+        if udid:
+            _say("  UDID         %s" % udid)
+        if args.get("pair_only"):
+            _say("  done         pairing file imported")
+            return 0
     if record is None:
         _say("  no pairing file yet; pairing the target first")
         try:
@@ -476,7 +493,8 @@ def main(argv):
         _say("sh bin/barisign pair --ipa FILE      use a specific signed IPA")
         _say("sh bin/barisign pair --pair-only     pair only; save the UDID and pairing file")
         _say("sh bin/barisign pair --udid UDID     use an already paired target")
-        _say("sh bin/barisign pair --host H --port P   skip Bonjour (debugging)")
+        _say("sh bin/barisign pair --import FILE   use a pairing file from another host")
+        _say("sh bin/barisign pair --host H --port P   skip Bonjour; port defaults to 49152")
         _say("sh bin/barisign pair --timeout N     give up if the target never pairs")
         _say("sh bin/barisign pair --check         verify the pure engine imports")
         _say("sh bin/barisign pair --setup         verify the engine (no download needed)")
@@ -494,11 +512,16 @@ def main(argv):
         "udid": value("--udid"),
         "host": value("--host"),
         "port": int(value("--port", "0") or 0),
+        "import": value("--import"),
         "timeout": int(value("--timeout", "0") or 0) or None,
         "pair_only": "--pair-only" in argv,
         "repair": "--repair" in argv,
         "debug": "--debug" in argv,
     }
+    if args["host"] and not args["port"]:
+        # The device's RPPairing service listens on 49152 (SideStore/LocalDevVPN
+        # documents the same port); allow --port when it differs.
+        args["port"] = 49152
     if "--check" in argv:
         return check()
     if "--setup" in argv or "--ensure" in argv:

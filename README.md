@@ -8,9 +8,11 @@ same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 > `DNSServiceRegister` returns **-65555 (NoAuth)** because iOS only allows Bonjour types listed in
 > the app's signed `NSBonjourServices` allowlist, and a-Shell has no entry for
 > `_remotepairing-pairable-host._tcp`. Python cannot edit that Info.plist. So the target's
-> Settings → Paired Macs cannot discover BariSign from a-Shell. The **signing/portal/UDID-page** path
-> and the **pure tunnel/install engine** are unaffected; the install still needs a pairing record,
-> which can come from a host that can advertise. Options: `docs/NEXT_SESSION.md`.
+> Settings → Paired Macs cannot discover BariSign from a-Shell. Raw multicast is blocked too
+> (`bind 5353` and `sendto` fail), so there is no code-only fallback. The **signing/portal/UDID-page**
+> path and the **pure tunnel/install engine** are unaffected; the install still needs a pairing
+> record, which can come from a host that can advertise or be imported with
+> `pair --import FILE --host <target-ip>`. Options: `docs/NEXT_SESSION.md`.
 
 | Role | What it is | What it runs |
 |---|---|---|

@@ -45,12 +45,11 @@ interop test proves against OpenSSL.
 
 ## What to run now
 
-1. `python3 poc/bonjour_check.py` — reports, for `_barisign-check._tcp`, `_http._tcp` and the
-   pairable-host type, whether DNS-SD registration is allowed, then tests raw multicast
-   bind/join/send/receive. **Send this output back.** It decides whether a code-only raw-mDNS
-   fallback is worth building.
-2. The self-update command is `sh bin/update` (not `sh bin/barisign update`); it must print
-   `files ok`, `check ok`, `engine ok`, `ready`.
+1. `python3 poc/bonjour_check.py` — **already run (2026-11-15):** every type returns `NoAuth`, bind
+   5353 fails and multicast send has no route. Raw mDNS is not available; see option D below.
+2. The self-update command is `sh bin/update` (now also `sh bin/barisign update`); it must print a
+   moving `files ....` indicator, then `files ok`, `check ok`, `ready`. There is no separate
+   `engine` step: the check already imports the pure engine.
 3. `sh bin/barisign pair --check` — must import the engine.
 4. Pairing cannot work from a-Shell until an advertising host exists. The options are below.
 
@@ -68,11 +67,21 @@ interop test proves against OpenSSL.
 - **C. One-time computer.** Pair the target with a Mac/Xcode Device Hub, copy the Mac's remote
   pairing record to `state/PairingFile_RemoteRP.plist`, then `sh bin/barisign pair --udid UDID`
   installs from a-Shell. No third-party app; a computer is needed once.
-- **D. Raw mDNS fallback.** If `bonjour_check.py` shows raw multicast send/receive works, implement a
-  raw advertiser/responder in Python (no Bonjour allowlist). iOS may block this without the
-  multicast entitlement; the probe decides.
+- **D. Raw mDNS fallback — RULED OUT (device, 2026-11-15).** `python3 poc/bonjour_check.py` reports
+  `NoAuth` for `_barisign-check._tcp`, `_http._tcp` and the pairable-host type; binding 5353 fails
+  (`EADDRINUSE`, mDNSResponder owns it) and multicast send fails (`No route to host`). a-Shell has
+  neither the Bonjour allowlist nor usable raw multicast. There is no code-only path from a-Shell.
 - **E. Fork a-Shell** with the `NSBonjourServices` entry and distribute it. Developer-only, not an
   end-user path.
+
+### Importing a pairing file (supports C and B)
+
+`sh bin/barisign pair --import FILE --host <target-ip>` now imports a pairing record produced by a
+host that can advertise (Mac/Xcode, AltServer/AltStore, SideInstaller, …). It normalizes
+`host_identifier`/`host_alt_irk`, accepts a 32- or 64-byte Ed25519 private key, writes the
+`state/PairingFile_RemoteRP.plist` / `ALTPairingFile.*` copies, and can go straight to the tunnel.
+`--host` defaults the port to **49152** (the device's RPPairing service); override with `--port`.
+The target's LAN IP is in **Settings → Wi-Fi → IP Address**. No mDNS is needed on the signer.
 
 ## Acceptance gates
 

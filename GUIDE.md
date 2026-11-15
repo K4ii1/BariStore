@@ -12,8 +12,10 @@ a-Shell and BariSign are installed on the **signer only**.
 a real device. The tunnel/install engine is pure Python (no qh3, no pip, no native wheel), but the
 **pairing advertisement is blocked on a-Shell**: iOS refuses `DNSServiceRegister` for
 `_remotepairing-pairable-host._tcp` with `-65555` (NoAuth) because a-Shell's signed Info.plist has no
-`NSBonjourServices` entry for it. The **UDID page** still works, and the engine can install once a
-pairing record exists (options in `docs/NEXT_SESSION.md`).
+`NSBonjourServices` entry for it. Raw multicast is blocked too (`bonjour_check.py`: bind 5353 and
+multicast send fail), so there is no code-only fallback. The **UDID page** still works, and the engine
+can install once a pairing record exists: `pair --import FILE --host <target-ip>` (options in
+`docs/NEXT_SESSION.md`).
 
 ---
 
