@@ -25,6 +25,7 @@ from ashell_bonjour import _txt_record
 from pairing import mdns_txt
 
 MCAST = "224.0.0.251"
+BCAST_ALL = "255.255.255.255"
 SERVICE = "_remotepairing-pairable-host._tcp.local"
 HOST = "barisign-signer.local"
 INSTANCE = "BariSign." + SERVICE
@@ -65,6 +66,20 @@ def wifi_ipv4():
         probe.close()
 
 
+def subnet_broadcast(ipv4):
+    """Best-guess subnet broadcast (home Wi-Fi is almost always /24)."""
+    parts = ipv4.split(".")
+    if len(parts) != 4:
+        return ""
+    try:
+        octets = [int(part) for part in parts]
+    except ValueError:
+        return ""
+    if any(octet < 0 or octet > 255 for octet in octets):
+        return ""
+    return "%d.%d.%d.255" % (octets[0], octets[1], octets[2])
+
+
 class Advertiser:
     def __init__(self, identity, port, target_ip=""):
         self.identity = identity
@@ -83,6 +98,13 @@ class Advertiser:
         self.packet = build_announcement(self.identity, self.port, self.ipv4)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Broadcast is plain unicast IP plumbing (SO_BROADCAST): unlike
+        # multicast it needs no entitlement, only the socket option.
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except OSError as exc:
+            sock.close()
+            raise RuntimeError("raw mDNS: broadcast not allowed: %s" % exc)
         if hasattr(socket, "SO_REUSEPORT"):
             try:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
@@ -98,36 +120,58 @@ class Advertiser:
                             socket.inet_aton(self.ipv4))
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-        except OSError as exc:
-            sock.close()
-            raise RuntimeError("raw mDNS: cannot select the Wi-Fi interface: %s" % exc)
+        except OSError:
+            pass
         if self.bound:
             try:
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
                                 socket.inet_aton(MCAST) + socket.inet_aton(self.ipv4))
             except OSError:
                 pass
+        # Multicast first; broadcast always attempted as well.  Either one
+        # reaching mDNSResponder is enough — the target reads its own cache.
+        destinations = []
         try:
             sock.sendto(self.packet, (MCAST, 5353))
-            if self.target_ip:
+            destinations.append(((MCAST, 5353), "multicast"))
+        except OSError:
+            pass
+        for address in (BCAST_ALL, subnet_broadcast(self.ipv4)):
+            if not address:
+                continue
+            try:
+                sock.sendto(self.packet, (address, 5353))
+                destinations.append(((address, 5353), "broadcast"))
+            except OSError:
+                pass
+        if self.target_ip:
+            try:
                 sock.sendto(self.packet, (self.target_ip, 5353))
-        except OSError as exc:
+                destinations.append(((self.target_ip, 5353), "unicast"))
+            except OSError:
+                pass
+        if not destinations:
             sock.close()
-            raise RuntimeError("raw mDNS: multicast send failed: %s" % exc)
+            raise RuntimeError("raw mDNS: multicast send failed ([Errno 65] No route to host) "
+                               "and broadcast send failed too")
+        self.destinations = destinations
         sock.setblocking(False)
         self.sock = sock
         self._task = asyncio.create_task(self._loop())
         return self
 
+    @property
+    def transports(self):
+        return "+".join(sorted(set(label for _, label in self.destinations)))
+
     async def _loop(self):
         while True:
             await asyncio.sleep(1)
-            try:
-                self.sock.sendto(self.packet, (MCAST, 5353))
-                if self.target_ip:
-                    self.sock.sendto(self.packet, (self.target_ip, 5353))
-            except OSError:
-                pass
+            for (address, port), _label in self.destinations:
+                try:
+                    self.sock.sendto(self.packet, (address, port))
+                except OSError:
+                    pass
             if not self.bound:
                 continue
             while True:
@@ -139,8 +183,12 @@ class Advertiser:
                     break
                 if b"_remotepairing" not in data and b"BariSign" not in data:
                     continue
+                for (dest, dest_port), _label in self.destinations:
+                    try:
+                        self.sock.sendto(self.packet, (dest, dest_port))
+                    except OSError:
+                        pass
                 try:
-                    self.sock.sendto(self.packet, (MCAST, 5353))
                     self.sock.sendto(self.packet, (address[0], 5353))
                 except OSError:
                     pass

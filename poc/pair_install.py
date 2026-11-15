@@ -175,9 +175,8 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
     try:
         if raw:
             advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-            _say("  advertising  raw mDNS %s, %s (experimental)"
-                 % (advertiser.ipv4,
-                    "port 5353" if advertiser.bound else "ephemeral source port"))
+            _say("  advertising  raw %s from %s (experimental)"
+                 % (advertiser.transports, advertiser.ipv4))
         else:
             try:
                 registration = mdns.register(mdns.PAIRABLE_HOST, "BariSign", port, txt)
@@ -185,12 +184,11 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
             except RuntimeError as exc:
                 if "-65555" not in str(exc) and "NoAuth" not in str(exc):
                     raise
-                _say("  ! DNS-SD is blocked in a-Shell; trying raw multicast")
+                _say("  ! DNS-SD is blocked in a-Shell; trying raw multicast+broadcast")
                 registration = None
                 advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-                _say("  advertising  raw mDNS %s, %s (experimental)"
-                     % (advertiser.ipv4,
-                        "port 5353" if advertiser.bound else "ephemeral source port"))
+                _say("  advertising  raw %s from %s (experimental)"
+                     % (advertiser.transports, advertiser.ipv4))
         try:
             return await asyncio.wait_for(result, timeout)
         except asyncio.TimeoutError:

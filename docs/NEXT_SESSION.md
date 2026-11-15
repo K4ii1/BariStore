@@ -67,10 +67,15 @@ interop test proves against OpenSSL.
 - **C. One-time computer.** Pair the target with a Mac/Xcode Device Hub, copy the Mac's remote
   pairing record to `state/PairingFile_RemoteRP.plist`, then `sh bin/barisign pair --udid UDID`
   installs from a-Shell. No third-party app; a computer is needed once.
-- **D. Raw mDNS fallback — RULED OUT (device, 2026-11-15).** `pair --raw-mdns` fails with
-  `raw mDNS: multicast send failed: [Errno 65] No route to host`. iOS requires the multicast
-  entitlement to send multicast; a-Shell does not have it (same class of blocker as the missing
-  `NSBonjourServices` entry). No code running inside a-Shell can advertise the pairing host.
+- **D. Raw mDNS fallback — multicast RULED OUT, broadcast OPEN (device test needed).**
+  `pair --raw-mdns` fails at multicast send (`Errno 65`, multicast entitlement missing). NEW IDEA
+  since then: **subnet broadcast** (`255.255.255.255` + `x.y.z.255` to port 5353) is plain unicast
+  IP plumbing (`SO_BROADCAST`), no entitlement needed. If iOS mDNSResponder honors it, the target
+  caches the records and Paired Macs shows the host — same result as multicast. `raw_mdns.py` now
+  sends multicast + both broadcasts in parallel and reports live transports; `bonjour_check.py`
+  tests broadcast send separately. **Test: `sh bin/barisign pair --raw-mdns`, open Paired Macs.**
+  If the host appears, D wins and the goal survives intact. If sends fail or nothing appears, D is
+  dead and only A–C remain.
 - **E. Host-initiated pairing (signer dials the target) — RULED OUT for iOS 27.** SideInstaller
   proved on devices (issues #52, two networks): iOS 27 lockdownd resets Wi-Fi pairing TCP
   immediately, no Trust prompt; "the way iOS 27 pairs over a network is the device-initiated one".

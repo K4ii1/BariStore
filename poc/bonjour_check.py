@@ -131,6 +131,24 @@ def raw_multicast(target=""):
         print("  multicast send ok")
     except OSError as exc:
         print("  multicast send FAILED: %s" % exc)
+    # Subnet broadcast needs no multicast route/entitlement, only SO_BROADCAST.
+    # If mDNSResponder honors it, the target caches the records and Paired Macs
+    # shows the host — same result as multicast.
+    from raw_mdns import BCAST_ALL, subnet_broadcast
+    bcast_ok = False
+    try:
+        sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    except OSError as exc:
+        print("  SO_BROADCAST   FAILED: %s" % exc)
+    for address in (BCAST_ALL, subnet_broadcast(ip)):
+        if not address:
+            continue
+        try:
+            sender.sendto(_query(), (address, 5353))
+            bcast_ok = True
+            print("  broadcast send to %-15s ok" % address)
+        except OSError as exc:
+            print("  broadcast send to %-15s FAILED: %s" % (address, exc))
     if target:
         try:
             sender.sendto(_query(unicast=True), (target, 5353))
@@ -161,6 +179,8 @@ def raw_multicast(target=""):
         print("  raw mDNS       send works and traffic arrived; raw advertising is worth testing")
     elif send_ok:
         print("  raw mDNS       send works; advertising may work even with no reply")
+    elif bcast_ok:
+        print("  raw mDNS       multicast blocked but BROADCAST SEND WORKS — run pair and check Paired Macs")
     elif not bound:
         print("  raw mDNS       not usable (no 5353 bind and send failed)")
     else:
