@@ -134,6 +134,8 @@ The a-Shell interface (no Shortcuts):
 
 - Budget ~5 USD total. Be token-frugal: grep/head/tail instead of dumping whole files.
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
+- Bump `VERSION` in `poc/barisign.py` on every functional commit: the installer title prints
+  the version being installed, so the user can see the update arrived.
 - Stages 1–2 are verified on device; the tunnel/install engine is written and Linux-tested. The
   pairing advertisement is blocked inside a-Shell (`-65555` NoAuth, no multicast entitlement), and
   iOS 27 accepts only device-initiated network pairing — so a-Shell cannot start pairing at all.

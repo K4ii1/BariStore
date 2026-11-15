@@ -23,6 +23,7 @@ import platform
 import plistlib
 import re
 import sys
+import time
 import traceback
 import zipfile
 
@@ -321,19 +322,10 @@ def _choose_host(services, udid, peer_ip, host=None, port=0):
 async def find_service(udid, peer_ip, host, port, timeout=6):
     if host:
         return host, port
-    try:
-        services = mdns.browse(mdns.REMOTE_PAIRING, timeout=timeout)
-    except Exception as exc:                                    # noqa: BLE001
-        # a-Shell cannot browse (DNSServiceBrowse -65555, same allowlist as
-        # registration). Fall back to the target IP seen on the pairing
-        # connection; the port is found by scan below.
-        _say("  ! Bonjour browse unavailable (%s); using the paired address" % exc)
-        services = []
-    if services:
-        return _choose_host(services, udid, peer_ip, host, port)
-    if peer_ip:
-        return peer_ip, 0
-    return "", 0
+    # Raises on a-Shell (DNSServiceBrowse -65555): the caller falls back
+    # silently to the paired address instead of printing API internals.
+    services = mdns.browse(mdns.REMOTE_PAIRING, timeout=timeout)
+    return _choose_host(services, udid, peer_ip, host, port)
 
 
 async def _tcp_open(host, port, timeout=1.5):
@@ -375,11 +367,9 @@ async def resolve_port(host, port):
         return [port]
     if await _tcp_open(host, 49152):
         return [49152]
-    _say("  scan         probing the target for its pairing port")
     found = await scan_ports(host)
     if not found:
-        raise RuntimeError("no pairing port answered on %s (target asleep or off-Wi-Fi?)" % host)
-    _say("  scan         open: %s" % ", ".join(str(p) for p in found[:6]))
+        raise RuntimeError("no pairing port answered on %s" % host)
     return found
 
 
@@ -413,7 +403,7 @@ async def sweep_target(record, udid=""):
     except ValueError:
         return None
     prefix = ".".join(parts[:3])
-    _say("  sweep        scanning %s.* for the target" % prefix)
+    _say("  sweep        looking for the target on this Wi-Fi")
     candidates = ["%s.%d" % (prefix, i) for i in range(1, 255)
                   if "%s.%d" % (prefix, i) != me]
 
@@ -429,7 +419,6 @@ async def sweep_target(record, udid=""):
         open_hosts.extend(ip for ip in results if ip)
     if not open_hosts:
         return None
-    _say("  sweep        pairing port open on: %s" % ", ".join(open_hosts[:8]))
     want_udid = (record or {}).get("peer_udid") or udid
     want_identifier = (record or {}).get("peer_identifier", "")
     for host in open_hosts:
@@ -439,6 +428,21 @@ async def sweep_target(record, udid=""):
         if _id_match(peer.get("identifier"), want_udid, want_identifier, udid):
             return host, 49152
     return None
+
+
+def _friendly_error(host, exc):
+    """Translate transport gibberish into one actionable line."""
+    text = str(exc)
+    if ("0 bytes read" in text or "Connection reset" in text
+            or "ConnectionTerminated" in text or "EOF" in text):
+        return RuntimeError(
+            "the target at %s closed the connection without answering "
+            "(is it awake, unlocked and on the same Wi-Fi as the signer?)" % host)
+    if "timed out" in text.lower() or "Timeout" in type(exc).__name__:
+        return RuntimeError(
+            "the target at %s did not answer "
+            "(is it awake, unlocked and on the same Wi-Fi as the signer?)" % host)
+    return exc
 
 
 async def open_session(record, host, port, identity_udid=""):
@@ -640,10 +644,19 @@ async def _run(args):
 
     # a-Shell can neither advertise nor browse Bonjour (-65555 on both), so
     # skip discovery there entirely: the paired address plus scans replace it.
+    # Any browse failure (first -65555 included) is remembered, so later runs
+    # do not even try.
+    blocked = bool(_ashell_limited() or load_state().get("bonjour_blocked"))
     host, port = args.get("host", ""), args.get("port", 0)
-    if not host and not _ashell_limited():
+    if not host and not blocked:
         for attempt in range(3):
-            host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
+            try:
+                host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
+            except Exception:                                   # noqa: BLE001
+                save_state(bonjour_blocked=True)
+                blocked = True
+                host, port = "", 0
+                break
             if host and (port or peer_ip):
                 break
             await asyncio.sleep(2)
@@ -655,10 +668,7 @@ async def _run(args):
         _say("    target: Settings > Wi-Fi > (i) > IP Address, then")
         _say("    sh bin/barisign pair --host <target-ip>")
         return 2
-    if port:
-        _say("  target       %s:%d" % (host, port))
-    else:
-        _say("  target       %s (port scan follows)" % host)
+    _say("  target       %s" % host)
 
     session = None
     try:
@@ -682,12 +692,15 @@ async def _run(args):
                     swept = None
             if swept is not None:
                 host, port = swept
-                _say("  target       %s:%d (found by sweep)" % (host, port))
+                _say("  target       %s:%d" % (host, port))
                 save_state(peer_ip=host)
-                session = await asyncio.wait_for(
-                    open_session(record, host, port, udid), 120)
+                try:
+                    session = await asyncio.wait_for(
+                        open_session(record, host, port, udid), 120)
+                except Exception as exc2:                           # noqa: BLE001
+                    raise _friendly_error(host, exc2)
             else:
-                raise first_error
+                raise _friendly_error(host, first_error)
         if session.udid:
             if udid and udid != session.udid:
                 _say("  ! the tunnel reports a different UDID than the pairing record")
@@ -768,6 +781,15 @@ def main(argv):
         _say("  ! %s" % exc)
         if args["debug"]:
             traceback.print_exc()
+        else:
+            _say("  (rerun with --debug for the full traceback)")
+        try:
+            log = os.path.join(STATE_DIR, "pair_debug.log")
+            if (os.path.isfile(log) and time.time() - os.path.getmtime(log) < 600
+                    and os.path.getsize(log) > 0):
+                _say("  log  %s" % display_path(log))
+        except Exception:                                       # noqa: BLE001
+            pass
         return 1
 
 

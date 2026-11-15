@@ -85,12 +85,13 @@ interop test proves against OpenSSL.
 signer prints the PIN and saves the UDID (`00008110-…` ECID form) plus `state/PairingFile_*.plist`.
 Frame log: `state/pair_debug.log` (every RX/TX frame; send it back after any pairing run).
 
-**Next failure, already diagnosed:** after pairing, Bonjour *browse* fails the same way
-(`DNSServiceBrowse: -65555`). Fix in this commit: browse is retried 3×, then falls back to the
-target IP saved from the pairing connection (`peer_ip`), and the pairing port is resolved by
-scan — 49152 first, then a /48 sweep (closed ports RST at once, so it is fast). `open_session`
-tries pair-verify on each candidate port until one answers. `--host <ip>` skips all of this.
-If the scan finds nothing, the message says the target may be asleep or off-Wi-Fi.
+**Discovery without Bonjour (this commit):** browse is skipped on a-Shell and retried at most
+3× elsewhere; any -65555 is remembered in state so later runs never try. Fallback chain: paired
+address → port scan (49152 first) → subnet sweep matching the handshake identifier against the
+pairing record. The sweep found the port open on three LAN hosts but none answered RPPairing —
+the target was likely locked, asleep, on another network, or its DHCP address changed. Errors are
+now one plain line (awake/unlocked/same-Wi-Fi), with a `--debug` pointer and the debug-log path.
+`--host <ip>` skips all of this.
 
 **Still untested on a device:** tunnel + RSD + AFC + `installation_proxy` install, and the
 pairing-file write into the app. Run `sh bin/barisign pair` (plain; raw advertisement is now

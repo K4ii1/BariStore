@@ -17,7 +17,14 @@ BASE="https://github.com/barismd/barisign/blob/main"
 DIR="${BARISIGN_DIR:-$HOME/Documents/barisign}"
 
 printf 'installing BariSign'
-VER=$(python3 -c "import re; m = re.search(r'VERSION *= *[\"\x27]([^\"\x27]+)[\"\x27]', open('poc/barisign.py').read()); print(m.group(1) if m else '')" 2>/dev/null)
+# The version on the title is the version being installed, not the old copy:
+# fetch just this one small file first (the full download follows).
+VER=$(curl -fsSL --connect-timeout 15 --max-time 60 -H 'Cache-Control: no-cache' \
+    "$RAW/poc/barisign.py" 2>/dev/null | python3 -c "
+import re, sys
+m = re.search(r'VERSION *= *[\"\x27]([^\"\x27]+)[\"\x27]', sys.stdin.read())
+print(m.group(1) if m else '')
+" 2>/dev/null)
 if [ -n "${VER:-}" ]; then
     printf ' %s' "$VER"
 fi
