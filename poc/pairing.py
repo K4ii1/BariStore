@@ -449,7 +449,8 @@ class PairingRecord:
 class PairableHost:
     """One device-initiated pairing conversation over an open TCP stream."""
 
-    def __init__(self, reader, writer, identity, name="BariSign", model="Mac17,7"):
+    def __init__(self, reader, writer, identity, name="BariSign", model="Mac17,7",
+                 log=None):
         self.reader = reader
         self.writer = writer
         self.identity = identity
@@ -457,6 +458,41 @@ class PairableHost:
         self.model = model
         self.sequence = 0
         self.peer = {}
+        self._log = log or (lambda text: None)
+        self._frames = 0
+
+    def _describe(self, value):
+        try:
+            message = value.get("message", {}).get("plain", {}).get("_0", value)
+            if "request" in message:
+                inner = message["request"].get("_0", {})
+                if "handshake" in inner:
+                    hs = inner["handshake"].get("_0", {})
+                    return "handshake req wire=%r verify=%r" % (
+                        hs.get("wireProtocolVersion"), hs.get("hostOptions"))
+                return "request %s" % sorted(inner)
+            if "response" in message:
+                return "response %s" % sorted(message["response"])
+            if "event" in message:
+                event = message["event"].get("_0", {})
+                if "pairingData" in event:
+                    raw = event["pairingData"].get("_0", {})
+                    data = raw.get("data", "")
+                    try:
+                        import json as _json
+                        _ = _json
+                        decoded = tlv_decode(__import__("base64").b64decode(data))
+                        kinds = sorted(
+                            "%d:%dB" % (kind, len(val)) for kind, val in decoded.items())
+                        return "pairingData kind=%s state=%r kinds=%s" % (
+                            raw.get("kind"), decoded.get(6), ",".join(kinds))
+                    except Exception:                           # noqa: BLE001
+                        return "pairingData kind=%s (%dB, undecodable)" % (
+                            raw.get("kind"), len(data))
+                return "event %s" % sorted(event)
+            return "keys=%s" % sorted(message) if isinstance(message, dict) else type(message).__name__
+        except Exception:                                       # noqa: BLE001
+            return type(value).__name__
 
     async def _send(self, value):
         envelope = {
@@ -464,6 +500,7 @@ class PairableHost:
             "originatedBy": "device",
             "sequenceNumber": self.sequence,
         }
+        self._log("TX seq=%d %s" % (self.sequence, self._describe(envelope)))
         self._write_frame(envelope)
         self.sequence += 1
         await self.writer.drain()
@@ -480,11 +517,21 @@ class PairableHost:
             raise PairingError("the device did not send an RPPairing frame")
         length = struct.unpack(">H", await self.reader.readexactly(2))[0]
         body = await self.reader.readexactly(length)
-        envelope = json.loads(body)
+        self._frames += 1
         try:
-            return envelope["message"]["plain"]["_0"]
+            envelope = json.loads(body)
+        except Exception as exc:                                # noqa: BLE001
+            self._log("RX frame %d: %d bytes, NOT JSON (%s): %r" % (
+                self._frames, len(body), exc, body[:120]))
+            raise PairingError("the device sent a non-JSON frame")
+        try:
+            value = envelope["message"]["plain"]["_0"]
         except (KeyError, TypeError):
+            self._log("RX frame %d: unexpected envelope keys: %r" % (
+                self._frames, str(body[:200])))
             raise PairingError("unexpected pairing envelope")
+        self._log("RX frame %d: %s" % (self._frames, self._describe(envelope)))
+        return value
 
     async def accept(self, pin_callback=None):
         await self._handshake()

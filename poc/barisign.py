@@ -1380,7 +1380,7 @@ _OPTIONS = {
         ("--setup", "verify the pure engine (nothing is downloaded)"),
         ("--timeout N", "give up if the target does not pair"),
         ("--host H --port P", "skip Bonjour and use this _remotepairing address"),
-        ("--raw-mdns", "advertise with raw multicast instead of DNS-SD (experimental)"),
+        ("--raw-mdns", "force raw advertisement (automatic on a-Shell)"),
         ("--target-ip IP", "also send unicast mDNS to the target"),
         ("--repair", "new host identity; the target asks to pair again"),
         ("--debug", "print the full traceback on failure"),

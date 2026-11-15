@@ -125,28 +125,64 @@ def find_ipa(explicit=None):
 # Pairing
 # --------------------------------------------------------------------------
 
+def _ashell_limited():
+    """True where DNS-SD registration is known to fail (a-Shell/iOS sandbox).
+
+    Plain `pair` then goes straight to the raw advertiser instead of wasting
+    a DNS-SD attempt that always returns -65555. `--raw-mdns` forces the same.
+    """
+    import sys as _sys
+    return (os.environ.get("TERM_PROGRAM", "") == "a-Shell"
+            or os.environ.get("BARISIGN_ASHELL") == "1"
+            or _sys.platform == "ios")
+
+
+def _debug_path():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    return os.path.join(STATE_DIR, "pair_debug.log")
+
+
+def _debug_log(handle, text):
+    try:
+        handle.write(text + "\n")
+        handle.flush()
+    except Exception:                                           # noqa: BLE001
+        pass
+
+
 async def pair_target(timeout, identity, raw=False, target_ip=""):
     """Advertise BariSign, accept one device-initiated pairing."""
     result = asyncio.get_running_loop().create_future()
+    debug_handle = open(_debug_path(), "w")
 
     async def handle(reader, writer):
         if result.done():
             writer.close()
             return
         peer = writer.get_extra_info("peername")
-        host = pairing.PairableHost(reader, writer, identity)
+
+        def log(text):
+            _debug_log(debug_handle, text)
+
+        log("connected from %s" % ((peer[0] if peer else "?"),))
+        host = pairing.PairableHost(reader, writer, identity, log=log)
 
         def pin(code):
             _say("")
             _say("  pairing code:  %s" % code)
             _say("  enter it on the TARGET now")
             _say("")
+            log("PIN shown: %s" % code)
 
         try:
             info = await host.accept(pin)
+            log("pair-setup done: peer=%r" % (info,))
             if not result.done():
                 result.set_result((info, (peer[0] if peer else "").split("%", 1)[0]))
         except Exception as exc:                                # noqa: BLE001
+            import traceback as _tb
+            log("FAILED: %r" % (exc,))
+            log(_tb.format_exc(limit=5))
             if not result.done():
                 result.set_exception(exc)
         finally:
@@ -172,10 +208,11 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
 
     registration = None
     advertiser = None
+    use_raw = raw or _ashell_limited()
     try:
-        if raw:
+        if use_raw:
             advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-            _say("  advertising  raw %s from %s (experimental)"
+            _say("  advertising  raw %s from %s"
                  % (advertiser.transports, advertiser.ipv4))
         else:
             try:
@@ -187,13 +224,17 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
                 _say("  ! DNS-SD is blocked in a-Shell; trying raw multicast+broadcast")
                 registration = None
                 advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-                _say("  advertising  raw %s from %s (experimental)"
+                _say("  advertising  raw %s from %s"
                      % (advertiser.transports, advertiser.ipv4))
         try:
             return await asyncio.wait_for(result, timeout)
         except asyncio.TimeoutError:
             raise RuntimeError("timed out: the target never paired")
     finally:
+        try:
+            debug_handle.close()
+        except Exception:                                       # noqa: BLE001
+            pass
         if registration is not None:
             try:
                 await registration.__aexit__(None, None, None)
@@ -524,7 +565,7 @@ def main(argv):
         _say("sh bin/barisign pair --udid UDID     use an already paired target")
         _say("sh bin/barisign pair --import FILE   use a pairing file from another host")
         _say("sh bin/barisign pair --host H --port P   skip Bonjour; port defaults to 49152")
-        _say("sh bin/barisign pair --raw-mdns     advertise with raw multicast (experimental)")
+        _say("sh bin/barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
         _say("sh bin/barisign pair --target-ip IP  also send unicast mDNS to the target")
         _say("sh bin/barisign pair --timeout N     give up if the target never pairs")
         _say("sh bin/barisign pair --check         verify the pure engine imports")
