@@ -119,76 +119,54 @@ works() {
         && sh -n bin/barisign && sh -n bin/update
 }
 
-# Run one phase in the background while a foreground loop animates the
-# indicator.  A "done" file (not kill -0) ends the loop, so the spinner can
-# never become an orphan and the phase always ends with ok/failed.  The
-# phase writes its result to the same directory.
-progress_run() {   # <label> <phase-function>
-    _label="$1"
-    _fn="$2"
+# A moving indicator while a phase runs.  The spinner is a background
+# subshell that stops when a "stop" file appears, so it can never become an
+# orphan loop and no PID bookkeeping is needed (dash/ash unset $! under
+# `set -u` in some builds).  The phase itself runs in the foreground.
+progress_start() {
     _dir="$PWD/.progress.$$"
     rm -rf "$_dir"
-    mkdir -p "$_dir" || {
-        PROGRESS_STATUS=1
-        PROGRESS_FAILED=""
-        PROGRESS_BAD=""
-        return 1
-    }
-    PROGRESS_DIR="$_dir"
-    export PROGRESS_DIR
-    "$_fn" &
-    _pid=$!
-    _active_pid="$_pid"
-    _i=0
-    _dots=''
-    while [ ! -f "$_dir/done" ] && [ "$_i" -lt 3600 ]; do
-        case "$_dots" in
-            '') _dots='.';;
-            '.') _dots='..';;
-            '..') _dots='...';;
-            *) _dots='';;
-        esac
-        printf '\r\033[2K  %-9s %s' "$_label" "$_dots"
+    mkdir -p "$_dir" || _dir=""
+    [ -n "$_dir" ] || return 0
+    _label="$1"
+    (
+        _i=0
+        _d=''
+        while [ ! -f "$_dir/stop" ] && [ "$_i" -lt 600 ]; do
+            case "$_d" in
+                '') _d='.';;
+                '.') _d='..';;
+                '..') _d='...';;
+                *) _d='';;
+            esac
+            printf '\r\033[2K  %-9s %s' "$_label" "$_d"
+            sleep 1
+            _i=$((_i + 1))
+        done
+        : > "$_dir/stopped"
+    ) &
+}
+
+progress_stop() {
+    [ -n "${_dir:-}" ] || return 0
+    : > "$_dir/stop"
+    _k=0
+    while [ ! -f "$_dir/stopped" ] && [ "$_k" -lt 5 ]; do
         sleep 1
-        _i=$((_i + 1))
+        _k=$((_k + 1))
     done
-    wait "$_pid" 2>/dev/null
-    _active_pid=""
-    PROGRESS_STATUS=$(cat "$_dir/status" 2>/dev/null || echo 1)
-    PROGRESS_FAILED=$(cat "$_dir/failed" 2>/dev/null || echo "")
-    PROGRESS_BAD=$(cat "$_dir/bad" 2>/dev/null || echo "")
     rm -rf "$_dir"
-    return 0
+    _dir=""
 }
 
-fetch_phase() {
-    trap ': > "$PROGRESS_DIR/done"' 0
-    download_all
-    printf '%s' "$fail" > "$PROGRESS_DIR/status"
-    printf '%s' "${FAILED:-}" > "$PROGRESS_DIR/failed"
-    : > "$PROGRESS_DIR/done"
-}
-
-check_phase() {
-    trap ': > "$PROGRESS_DIR/done"' 0
-    _bad=$(check_compiles)
-    _rc=0
-    if [ -n "$_bad" ] || ! works; then
-        _rc=1
-    fi
-    printf '%s' "$_rc" > "$PROGRESS_DIR/status"
-    printf '%s' "$_bad" > "$PROGRESS_DIR/bad"
-    : > "$PROGRESS_DIR/done"
-}
-
-trap 'if [ -n "${_active_pid:-}" ]; then kill "$_active_pid" 2>/dev/null; fi; rm -rf "$PWD/.progress.$$"; exit 130' 1 2 15
+trap 'progress_stop; exit 130' 1 2 15
 
 attempt=1
 while [ "$attempt" -le 2 ]; do
     FAILED=""
-    progress_run "files" fetch_phase
-    fail="$PROGRESS_STATUS"
-    FAILED="$PROGRESS_FAILED"
+    progress_start "files"
+    download_all
+    progress_stop
     if [ "$fail" -eq 0 ]; then
         printf '\r\033[2K  files     ok\n'
     else
@@ -196,12 +174,14 @@ while [ "$attempt" -le 2 ]; do
         printf '  ! could not fetch:%s\n' "$FAILED"
     fi
 
-    progress_run "check" check_phase
-    COMPILE_BAD="$PROGRESS_BAD"
-    if [ "$fail" -eq 0 ] && [ "$PROGRESS_STATUS" -eq 0 ]; then
+    progress_start "check"
+    COMPILE_BAD=""
+    if [ "$fail" -eq 0 ] && COMPILE_BAD=$(check_compiles) && works; then
+        progress_stop
         printf '\r\033[2K  check     ok\n'
         break
     fi
+    progress_stop
     printf '\r\033[2K  check     failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
         printf '  ! does not compile:%s\n' "$COMPILE_BAD"
