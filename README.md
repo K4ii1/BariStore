@@ -75,7 +75,8 @@ curl -sSL "https://github.com/barismd/barisign/blob/main/install.sh?raw=true" -o
 sh install.sh
 ```
 
-Run `sh install.sh` again (or `sh bin/update`) any time to update. Your saved state in `state/` is kept.
+`sh bin/update` self-updates everything in one command: it reads the newest `install.sh` from the
+repository and applies it (files, engine, and `bin/update` itself). Your saved state in `state/` is kept.
 `install.sh` installs the pairing engine; `sh bin/update` keeps it in sync (only reinstalls when the pinned version changes); `pair` never starts a second download.
 
 ```

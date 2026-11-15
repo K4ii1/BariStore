@@ -1,34 +1,44 @@
 #!/bin/sh
-# BariSign - update in place, quietly.
+# BariSign — self-updating bootstrapper.
+#
+# It reads the instructions from one file in the repository (install.sh), pinned
+# to the newest commit so GitHub's cache cannot serve a stale mix. install.sh
+# then fetches every file at that same commit, including this script and the
+# pairing engine step, so `sh bin/update` is the only command ever needed.
+#
+#   sh bin/update          # update everything, in place
+#
+# The user never has to run curl or git by hand again.
 cd "$(dirname "$0")/.." || exit 1
-if [ -d .git ] && command -v git >/dev/null 2>&1; then
-    before=$(git rev-parse --short HEAD)
-    git pull --ff-only -q || { echo "! update failed"; exit 1; }
-    after=$(git rev-parse --short HEAD)
-    [ "$before" = "$after" ] && echo "already up to date ($after)" || echo "updated $before -> $after"
-    if [ -f poc/pair_install.py ]; then
-        python3 -u poc/pair_install.py --ensure
-        code=$?
-        if [ "$code" -eq 2 ]; then
-            echo "! engine unavailable on a-Shell (qh3 has no iOS wheel); signing still works"
-        elif [ "$code" -ne 0 ]; then
-            echo "! engine update failed; run 'sh install.sh'"
-            exit 1
-        fi
-    fi
-    exit 0
-fi
-tmp=install.sh.new
-rm -f "$tmp"
-curl -sSL -H 'Cache-Control: no-cache' \
-     "https://raw.githubusercontent.com/barismd/barisign/main/install.sh" -o "$tmp" || {
-    echo "! no network"; exit 1; }
-if BARISIGN_DIR="$PWD" sh "$tmp" >/dev/null 2>&1; then
-    mv "$tmp" install.sh
-    ver=$(python3 -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('poc/barisign.py').read()).group(1))")
-    echo "BariSign $ver  installed"
+
+ATOM="https://github.com/barismd/barisign/commits/main.atom"
+SHA=$(curl -sSL --max-time 25 "$ATOM" 2>/dev/null | python3 -c "
+import re, sys
+found = re.search(r'barismd/barisign/commit/([0-9a-f]{40})', sys.stdin.read())
+print(found.group(1) if found else '')
+" 2>/dev/null)
+if [ -n "${SHA:-}" ]; then
+    BASE="https://raw.githubusercontent.com/barismd/barisign/$SHA"
 else
+    BASE="https://raw.githubusercontent.com/barismd/barisign/main"
+fi
+
+tmp=".install.sh.update"
+curl -sSL -H 'Cache-Control: no-cache' "$BASE/install.sh" -o "$tmp" || {
+    echo "! no network; could not reach the repository"
+    exit 1
+}
+if [ ! -s "$tmp" ]; then
     rm -f "$tmp"
-    echo "! update failed; run 'sh install.sh' to see why"
+    echo "! no network; could not fetch install.sh"
     exit 1
 fi
+
+BARISIGN_DIR="$(pwd)" sh "$tmp"
+status=$?
+if [ "$status" -eq 0 ]; then
+    mv -f "$tmp" install.sh
+else
+    rm -f "$tmp"
+fi
+exit "$status"
