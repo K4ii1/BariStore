@@ -50,13 +50,15 @@ def _tlv(data):
 def load_record(path):
     with open(path, "rb") as handle:
         record = plistlib.load(handle)
+    # A device-initiated record stores the identifier under host_identifier;
+    # pair-verify must present the same value the device stored.
+    if record.get("host_identifier"):
+        record["identifier"] = record["host_identifier"]
     for key in ("private_key", "public_key", "identifier"):
         if not record.get(key):
             raise PairingTunnelError("the pairing file is missing %s" % key)
     if not record.get("alt_irk") and record.get("host_alt_irk"):
         record["alt_irk"] = record["host_alt_irk"]
-    if not record.get("identifier") and record.get("host_identifier"):
-        record["identifier"] = record["host_identifier"]
     return record
 
 
@@ -100,7 +102,10 @@ class RemotePairingLink:
             raise PairingTunnelError("unexpected RPPairing envelope")
 
     async def pair_verify(self):
-        private = Ed25519PrivateKey.from_private_bytes(bytes(self.record["private_key"]))
+        key_bytes = bytes(self.record["private_key"])
+        if len(key_bytes) == 64:            # Ed25519 seed + public key form
+            key_bytes = key_bytes[:32]
+        private = Ed25519PrivateKey.from_private_bytes(key_bytes)
         identifier = str(self.record["identifier"])
         ephemeral = X25519PrivateKey.generate()
         public = ephemeral.public_key().public_bytes(
@@ -274,6 +279,10 @@ async def open_tunnel(host, port, record, timeout=20):
     client = response.get("clientParameters") or {}
     address = client.get("address")
     server_address = response.get("serverAddress")
+    if isinstance(address, str):
+        address = address.split("/", 1)[0]
+    if isinstance(server_address, str):
+        server_address = server_address.split("/", 1)[0]
     rsd_port = response.get("serverRSDPort")
     if isinstance(rsd_port, str) and rsd_port.isdigit():
         rsd_port = int(rsd_port)

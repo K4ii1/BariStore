@@ -1368,6 +1368,9 @@ _OPTIONS = {
         ("--check", "python, cryptography and engine import only"),
         ("--setup", "verify the pure engine (nothing is downloaded)"),
         ("--timeout N", "give up if the target does not pair"),
+        ("--host H --port P", "skip Bonjour and use this _remotepairing address"),
+        ("--repair", "new host identity; the target asks to pair again"),
+        ("--debug", "print the full traceback on failure"),
     ),
     "login": (
         ("--use-clipboard", "take the password from the clipboard, no typing"),

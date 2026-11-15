@@ -106,7 +106,8 @@ sh bin/barisign sign --ipa X.ipa  # sign a file you already have
 sh bin/barisign pair
 ```
 
-1. The signer advertises as **BariSign** and prints a 6-digit code.
+1. The signer advertises as **BariSign** and prints a 6-digit code. Keep the target **unlocked**
+   and on the same Wi-Fi for the whole step.
 2. On the **target**, open **Settings → Privacy & Security → Developer Mode → Paired Macs**
    (or **Settings → Developer → Paired Macs**), pick **BariSign**, and enter the code.
 3. The signer installs the newest `*-signed.ipa` over Wi-Fi with `installation_proxy`.

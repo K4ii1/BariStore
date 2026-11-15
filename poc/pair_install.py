@@ -261,6 +261,10 @@ class Session:
             except Exception:                                  # noqa: BLE001
                 pass
         try:
+            self.tunnel["stream"].close()
+        except Exception:                                       # noqa: BLE001
+            pass
+        try:
             await self.tunnel["stream"].wait_closed()
         except Exception:                                       # noqa: BLE001
             pass
@@ -396,7 +400,7 @@ async def _run(args):
 
     host, port = args.get("host", ""), args.get("port", 0)
     if not host:
-        for attempt in range(3):
+        for attempt in range(5):
             host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
             if host and port:
                 break
@@ -431,7 +435,7 @@ async def _run(args):
             _say("  ! no signed IPA found")
             _say("    sign on the signer first (sh bin/barisign sign), or pass --ipa FILE")
             return 2
-        await install(session, ipa, RECORD_PATH)
+        await asyncio.wait_for(install(session, ipa, RECORD_PATH), 900)
         _say("")
         _say("  next         on the target: Settings > General > VPN & Device Management")
         _say("               trust the developer, then open the app")
