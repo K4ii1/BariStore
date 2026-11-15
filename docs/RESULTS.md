@@ -13,12 +13,23 @@ Replaces the old phase-0 report. The current plan is the two-role flow in `AGENT
 | Our signer's IPA installed on a device | install accepted, Trust Developer offered; after the app-group fix the app **launches** (device-confirmed) |
 | a-Shell running our Python stack (`cryptography` 3.4.8, stdlib only) | works; no native binaries, no `openssl`/`unzip` |
 
+## Blocked by a native dependency (2026-11-15)
+
+- `pymobiledevice3`'s RPPairing tunnel imports **qh3**, a compiled QUIC library. PyPI has **no iOS
+  wheel** for any qh3 version (checked 0.15–2.1), and a-Shell cannot build native extensions. pip
+  therefore falls back to the sdist and dies while preparing qh3 metadata. The pure a-Shell pairing
+  engine — pair-first UDID, signer→target install and the AFC pairing-file writer — **cannot run**.
+- This is not a pip concurrency problem; the single-pip/`--only-binary` fixes cannot supply a
+  missing native iOS binary. Signing/portal are unaffected.
+- The fallback UDID page still works for the portal; the install needs a native helper (MIT
+  `idevice`) or a computer until a replacement is chosen.
+
 ## Written but **never tested on a device**
 
 - The **pair-first UDID** (`sh bin/barisign pair --pair-only`; peer/tunnel UDID), the fallback
   **UDID page** (`sh bin/barisign udid`), the **signer → target pairing install** and the
-  **pairing-file writer** (state/ + AFC into AltStore/SideStore). The code is written and
-  the HTTP handler/normalizer are tested on Linux, but no device has run the tunnel yet.
+  **pairing-file writer** (state/ + AFC into AltStore/SideStore). The code is written and the
+  HTTP handler/normalizer are tested on Linux; the engine is blocked as above.
 
 ## Not built
 

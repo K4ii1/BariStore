@@ -9,8 +9,8 @@ Either device can be an **iPhone or an iPad** (iOS/iPadOS 27+). They must be on 
 a-Shell and BariSign are installed on the **signer only**.
 
 **Status:** Apple sign-in, the developer portal, signing and launching the signed app are verified on
-a real device. The pair-first **UDID from pairing**, the fallback **UDID page** and the **signer →
-target pairing install** are written but not yet verified on a device.
+a real device. The **pairing install is blocked**: its engine needs qh3, a compiled QUIC library with
+no iOS wheel, and a-Shell cannot build it. Signing and the **UDID page** still work.
 
 ---
 
@@ -32,6 +32,9 @@ sh bin/barisign status     # what is saved
 ---
 
 ## UDID (pairing first)
+
+> **Blocked:** pair-first needs the same qh3 engine as the install. Until it is replaced, use the
+> fallback page below for the UDID; signing works, but the Wi-Fi install does not.
 
 The normal flow takes the target's UDID **from the pairing**, so no median profile is needed:
 
@@ -97,6 +100,10 @@ sh bin/barisign sign --ipa X.ipa  # sign a file you already have
 ---
 
 ## INSTALL on the target (signer + target)
+
+> **Blocked:** `sh bin/barisign pair` cannot install the engine on a-Shell because qh3 has no iOS
+> wheel. The command reports this clearly. Signing and the UDID page are unaffected; the install
+> needs a native helper or a computer until qh3 is replaced.
 
 ```
 sh bin/barisign pair

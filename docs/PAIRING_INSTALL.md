@@ -1,21 +1,20 @@
 # Pairing + `installation_proxy` on iOS 27 — what is possible
 
-Status: **research, verified against source and device logs on 2026-10-30/31; the pure-Python
-path in section 0 is the current candidate and is not yet tested on a device.** No code in this
-document is written yet.
+Status: **blocked on 2026-11-15.** The pure-Python route in section 0 cannot run in a-Shell:
+`pymobiledevice3`'s RPPairing tunnel imports `qh3`, a **compiled QUIC library**, and PyPI has no
+iOS wheel. a-Shell cannot build native extensions, and pip's attempt to build qh3 from its sdist
+is what produced the "Too many instances" metadata error. Signing/portal still work; the Wi-Fi
+install needs a native helper (MIT `idevice`) or a computer until qh3 is replaced.
 
 The question: can BariSign install its signed IPA on the **target** device with **no computer**, using
 pairing plus `installation_proxy`, and generate pairing files that AltStore and SideStore can
 use?
 
-Short answer: **the only all-constraints path worth testing is the signer device running a-Shell with
-`pymobiledevice3`.** Its iOS 27 `remote pair-host` accepts device-initiated pairing and its
-**pure-Python userspace tunnel** needs no root, no TUN, no native app and no certificate. The
-signer stays in the foreground while the target pairs from Settings, so a-Shell is not suspended.
-Either device may be an iPhone or an iPad; only the role matters.
-The blockers to test are a-Shell's old `cryptography` (3.4.8), the extra pure-Python dependencies,
-and raw mDNS vs. the Bonjour API. A native app (SideInstaller or a helper) is the fallback, not the
-first choice.
+Short answer: **the pure-Python route is blocked.** `pymobiledevice3`'s `remote pair-host` and
+userspace tunnel look ideal, but the tunnel imports **qh3**, a compiled QUIC library with no iOS
+wheel. a-Shell cannot install/build it, so the engine cannot run there. The remaining routes are a
+native helper built from the MIT `idevice`/`isideload` stack, a one-time computer, or a pure/native
+replacement for qh3 (a security-critical port, not a small patch).
 
 ## 0. The pure-Python route (test this first)
 
@@ -27,7 +26,8 @@ the missing pieces:
   **Settings → Developer → Paired Macs** (Developer Mode on), pick the host, enter the code.
 - The remote pairing record it writes is reused by `remote start-tunnel`.
 - The tunnel has a **userspace backend** (`pmd-pytcp`, pure Python asyncio; no `utun`, no root) on
-  top of either QUIC (`qh3`, pure Python) or TCP.
+  top of either QUIC or TCP. **QUIC uses qh3, which is compiled and has no iOS wheel**; this is the
+  blocker. The TCP path needs `sslpsk`, also native.
 - `pymobiledevice3 install <ipa>` then installs through `installation_proxy` over that tunnel — the
   developer source, so the free-profile restriction that blocks AirDrop does not apply.
 - The pairing result also carries the target's **UDID** (peer info, and the RSD tunnel reports it).
@@ -35,9 +35,9 @@ the missing pieces:
   works, the median/UDID page is unnecessary; the signer pairs first, registers the UDID, signs, and
   installs over the same record.
 
-So: the **signer** runs a-Shell (foreground, advertisement + tunnel + install); the **target** only
-opens Settings and pairs. The signed IPA is already on the signer; no file transfer is needed. No PC,
-no SideInstaller, no enterprise certificate.
+So the intended flow is still: the **signer** advertises, the **target** pairs from Settings, the
+signer installs. But the engine cannot be installed in a-Shell because of qh3; the pure route is
+blocked. Do not retry pip after seeing the qh3 metadata error.
 
 Gates, in order:
 

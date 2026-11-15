@@ -139,9 +139,18 @@ done
 # dependencies caused that when a previous attempt was still finishing.
 setup_engine() {
     printf '  engine    ...'
-    if python3 -u poc/pair_install.py --ensure >engine.log 2>&1; then
+    python3 -u poc/pair_install.py --ensure >engine.log 2>&1
+    code=$?
+    if [ "$code" -eq 0 ]; then
         printf '\r\033[2K  engine    ok\n'
         rm -f engine.log
+        return 0
+    fi
+    if [ "$code" -eq 2 ]; then
+        printf '\r\033[2K  engine    unavailable\n'
+        rm -f engine.log
+        printf '  ! qh3 (QUIC) has no iOS wheel; a-Shell cannot install the pairing engine.\n'
+        printf '  ! signing works; the Wi-Fi install needs a native helper or a computer.\n'
         return 0
     fi
     printf '\r\033[2K  engine    failed\n'

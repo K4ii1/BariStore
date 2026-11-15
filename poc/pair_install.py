@@ -150,6 +150,13 @@ async def write_pairing_file(rsd, ipa, record_path, bundle_id=""):
 
 ENGINE_VERSION = "11.49.0"
 
+
+def platform_blocked():
+    """True where qh3's compiled QUIC module has no wheel (a-Shell/iOS)."""
+    return (os.environ.get("TERM_PROGRAM", "") == "a-Shell"
+            or os.environ.get("BARISIGN_ASHELL") == "1"
+            or sys.platform == "ios")
+
 PURE_DEPS = [
     # The full pure-Python closure is listed explicitly because the single pip
     # command below runs with --no-deps (pymobiledevice3 would otherwise try to
@@ -247,7 +254,7 @@ def _write_stubs():
 
 def _pip(args):
     command = [sys.executable, "-m", "pip", "install", "--upgrade",
-               "--target", PIP_TARGET] + args
+               "--only-binary=:all:", "--target", PIP_TARGET] + args
     _say("  pip %s" % " ".join(args))
     result = subprocess.run(command)
     return result.returncode == 0
@@ -276,6 +283,10 @@ def setup():
     splitting pymobiledevice3 from its dependencies caused exactly that when a
     previous attempt was still finishing.
     """
+    if platform_blocked():
+        _say("  ! qh3 (QUIC) has no iOS wheel; a-Shell cannot install the pairing engine")
+        _say("    signing still works; the Wi-Fi install needs a native helper or a computer")
+        return False
     if os.path.isdir(PIP_TARGET):
         # A failed earlier attempt can leave a newer engine plus stale dist-info
         # behind; a clean target makes the pinned version unambiguous.
@@ -495,6 +506,10 @@ def main(argv):
             except ValueError:
                 timeout = None
 
+    if platform_blocked():
+        _say("  ! qh3 (QUIC) has no iOS wheel; the pairing engine cannot run in a-Shell")
+        _say("    signing still works; the Wi-Fi install needs a native helper or a computer")
+        return 2
     if "--ensure" in argv:
         if engine_ready():
             _say("  engine    ok  %s" % ENGINE_VERSION)

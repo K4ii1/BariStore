@@ -1,7 +1,13 @@
 # BariSign
 
 Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classic** — on an iPhone or iPad
-**with no computer**, using your own free Apple ID. **Two iOS/iPadOS devices on the same Wi-Fi are enough.**
+**with no computer**, using your own free Apple ID. The design needs **two iOS/iPadOS devices on the
+same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
+
+> **Current blocker:** the signer's Wi-Fi install engine needs **qh3**, a compiled QUIC library with
+> **no iOS wheel**. a-Shell cannot install or build it, so the pairing install cannot run in a-Shell
+> yet. Signing, the portal and the signed IPA are unaffected; the install needs a native helper or,
+> for development only, a computer until qh3 is replaced.
 
 | Role | What it is | What it runs |
 |---|---|---|
@@ -12,8 +18,9 @@ Both devices may be an **iPhone or an iPad**; iOS and iPadOS both work. The role
 They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSign.
 
 > **Status:** the signer path is verified on a real device running iOS 27: Apple sign-in, the
-> developer portal, signing, and launching the signed app. The **pair-first UDID**, the fallback
-> **UDID page** and the **signer → target pairing install** are written but not yet verified.
+> developer portal, signing, and launching the signed app. The **pair-first UDID** and the fallback
+> **UDID page** are written; the **signer → target pairing install** is blocked by the native qh3
+> dependency described above.
 
 ---
 
@@ -33,6 +40,11 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
    (`Documents/ALTPairingFile.mobiledevicepairing`) so the installed app can refresh itself.
 6. On the target, trust the developer and open the app.
 
+> **Install blocker:** the pairing engine depends on qh3, a compiled QUIC module. PyPI has no iOS
+> wheel, and a-Shell cannot build native extensions. `sh bin/barisign pair` therefore stops with a
+> clear message; signing and the UDID page still work. The install needs a native helper or a computer
+> until a pure/native replacement is chosen.
+
 If pairing cannot produce a UDID (old target, Developer Mode not available), the signer falls back to
 a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<port>/`, installs the
 **median.co/udid** profile, copies the UDID and submits it.
@@ -46,10 +58,10 @@ a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<p
 | **Apple sign-in** (free ID, 2FA) | ✅ verified |
 | **Device, certificate, profile** (developer portal) | ✅ verified |
 | **Download + sign + verify** | ✅ verified — the signed IPA installs and the app launches on a device |
-| **UDID from pairing** (pair-first) | ⚠️ written, untested on a device |
+| **UDID from pairing** (pair-first) | ❌ blocked by qh3 (no iOS wheel) |
 | **UDID page** fallback served by the signer | ⚠️ written, untested on a device |
-| **Signer → target pairing install** (`sh bin/barisign pair`) | ⚠️ written, untested on a device |
-| **Two devices, no computer** | ✅ the design; pairing-first is the remaining device test |
+| **Signer → target pairing install** (`sh bin/barisign pair`) | ❌ blocked by qh3 (no iOS wheel) |
+| **Two devices, no computer** | the design; the install engine needs a native replacement |
 
 ---
 
@@ -83,7 +95,7 @@ sh bin/barisign --help   # every command
 | Apple account | a **free** Apple ID — no paid Developer Program membership |
 | **Signer** | **a-Shell** (free, App Store) — BariSign runs here |
 | **Target** | no extra app; Safari and Settings only |
-| Computer | **none** |
+| Computer | **none** for signing; the Wi-Fi install is blocked until qh3 is replaced |
 | Network | both devices on the same **Wi-Fi**; internet for Apple and the IPA download |
 | On the target | LocalDevVPN for SideStore to refresh apps after install |
 

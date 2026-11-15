@@ -27,9 +27,13 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
 - **Target = iOS 27+ only.** iOS 17.4–26.x is out of scope (pairing file needs a PC). Stated in `README.md`.
 - **Install = pairing + `installation_proxy` from the signer.** AirDrop and OTA are dead for
   free-profile apps on iOS 27: `MIInstallerErrorDomain` 111, *"free provisioning profile ... not
-  allowed to be installed from this source"*. The signer runs `sh bin/barisign pair`; the target picks
-  **BariSign** under Settings → Developer → Paired Macs and enters the code. See
-  `docs/PAIRING_INSTALL.md` and `docs/RESULTS.md`.
+  allowed to be installed from this source"*. The intended signer command is `sh bin/barisign pair`;
+  the target picks **BariSign** under Settings → Developer → Paired Macs and enters the code.
+- **Blocker (2026-11-15): qh3 has no iOS wheel.** `pymobiledevice3`'s RPPairing tunnel imports
+  `qh3`, a compiled QUIC library; PyPI publishes only platform wheels (no iOS) and a-Shell cannot
+  build native extensions. The pure a-Shell pairing engine therefore cannot run. Signing/portal
+  work; the no-computer install needs a native helper (MIT `idevice`) or a computer until a
+  replacement is chosen. See `docs/PAIRING_INSTALL.md` and `docs/RESULTS.md`.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.
 - Test devices are roles, not hardware: either device can be the signer or the target. Both run
   iOS/iPadOS 27+; a-Shell is installed only on the signer.
@@ -121,7 +125,7 @@ The a-Shell interface (no Shortcuts):
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
 - Stages 1–2 are verified on device, 3 is written; the plan is `docs/PLAN_V2.md`, the verified facts
   are in `docs/RESULTS.md`.
-- Next: the pair-first UDID and `bin/barisign pair` on a device, then the forks, then i18n + Turkish last.
+- Next: resolve the qh3 blocker (native helper or a pure replacement); signing works meanwhile.
 
 ## Verified / unverified convention
 

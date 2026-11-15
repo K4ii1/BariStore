@@ -7,10 +7,14 @@ if [ -d .git ] && command -v git >/dev/null 2>&1; then
     after=$(git rev-parse --short HEAD)
     [ "$before" = "$after" ] && echo "already up to date ($after)" || echo "updated $before -> $after"
     if [ -f poc/pair_install.py ]; then
-        python3 -u poc/pair_install.py --ensure || {
+        python3 -u poc/pair_install.py --ensure
+        code=$?
+        if [ "$code" -eq 2 ]; then
+            echo "! engine unavailable on a-Shell (qh3 has no iOS wheel); signing still works"
+        elif [ "$code" -ne 0 ]; then
             echo "! engine update failed; run 'sh install.sh'"
             exit 1
-        }
+        fi
     fi
     exit 0
 fi
