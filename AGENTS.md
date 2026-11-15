@@ -39,8 +39,9 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
   `DNSServiceRegister` returns **-65555 (NoAuth)**: iOS only allows Bonjour types listed in the app's
   signed `NSBonjourServices`, and a-Shell has no `_remotepairing-pairable-host._tcp` entry. Python
   cannot edit a signed Info.plist, so the target's Paired Macs cannot discover BariSign from a-Shell.
-  Raw multicast is blocked too (`poc/bonjour_check.py`: bind 5353 fails, multicast send has no
-  route), so there is no code-only fallback from a-Shell. The tunnel/install engine still works
+  The first raw-multicast probe also failed (bind 5353; multicast send `ENETUNREACH`), but it did
+  not select the Wi-Fi interface; the updated probe sets `IP_MULTICAST_IF` and tries a unicast
+  query, so raw mDNS is not ruled out yet. The tunnel/install engine still works
   **if a pairing record exists** (from a host that can advertise; `pair --import FILE --host IP`
   imports it). Options and evidence: `docs/NEXT_SESSION.md`; do not claim the pairing install works.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.

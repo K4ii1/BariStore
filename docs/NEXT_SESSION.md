@@ -67,10 +67,14 @@ interop test proves against OpenSSL.
 - **C. One-time computer.** Pair the target with a Mac/Xcode Device Hub, copy the Mac's remote
   pairing record to `state/PairingFile_RemoteRP.plist`, then `sh bin/barisign pair --udid UDID`
   installs from a-Shell. No third-party app; a computer is needed once.
-- **D. Raw mDNS fallback — RULED OUT (device, 2026-11-15).** `python3 poc/bonjour_check.py` reports
-  `NoAuth` for `_barisign-check._tcp`, `_http._tcp` and the pairable-host type; binding 5353 fails
-  (`EADDRINUSE`, mDNSResponder owns it) and multicast send fails (`No route to host`). a-Shell has
-  neither the Bonjour allowlist nor usable raw multicast. There is no code-only path from a-Shell.
+- **D. Raw mDNS fallback — first probe failed, second probe pending.** The first
+  `bonjour_check.py` run reported `NoAuth` for `_barisign-check._tcp`, `_http._tcp` and the
+  pairable-host type; binding 5353 failed (`EADDRINUSE`, mDNSResponder owns it) and multicast send
+  failed (`No route to host`). That send error is consistent with **not selecting the Wi-Fi
+  interface** (`IP_MULTICAST_IF`), so the probe was updated: it now binds with `SO_REUSEPORT`, sets
+  `IP_MULTICAST_IF` to the default-route address, and can send a **unicast** query to a target
+  (`--target <target-ip>`). Rerun:
+  `python3 poc/bonjour_check.py --target <target-ip>`. If this still fails, raw mDNS is ruled out.
 - **E. Fork a-Shell** with the `NSBonjourServices` entry and distribute it. Developer-only, not an
   end-user path.
 

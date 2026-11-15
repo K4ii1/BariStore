@@ -30,9 +30,10 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
   signed `NSBonjourServices`; a-Shell's Info.plist has no such entry, and Python cannot change it.
   So the target's Settings cannot discover BariSign from a-Shell. The pure tunnel/install engine is
   still valid once a pairing record exists; the pairing-host advertisement needs another app with
-  the right Info.plist. **Raw multicast is not available either** (`bonjour_check.py`: every DNS-SD
-  type returns `NoAuth`; bind 5353 is `EADDRINUSE`; multicast send is `ENETUNREACH`). A pairing file
-  from a host that can advertise can be imported with
+  the right Info.plist. **Raw multicast failed the first probe** (`bonjour_check.py`: every DNS-SD
+  type returns `NoAuth`; bind 5353 is `EADDRINUSE`; multicast send is `ENETUNREACH`). The probe did
+  not set `IP_MULTICAST_IF`; the updated version does and can test a unicast query, so this is not
+  final. A pairing file from a host that can advertise can be imported with
   `sh bin/barisign pair --import FILE --host <target-ip>`.
 
 ## Written but **never tested on a device**
