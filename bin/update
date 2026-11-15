@@ -6,6 +6,12 @@ if [ -d .git ] && command -v git >/dev/null 2>&1; then
     git pull --ff-only -q || { echo "! update failed"; exit 1; }
     after=$(git rev-parse --short HEAD)
     [ "$before" = "$after" ] && echo "already up to date ($after)" || echo "updated $before -> $after"
+    if [ -f poc/pair_install.py ]; then
+        python3 -u poc/pair_install.py --ensure || {
+            echo "! engine update failed; run 'sh install.sh'"
+            exit 1
+        }
+    fi
     exit 0
 fi
 tmp=install.sh.new

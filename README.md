@@ -64,7 +64,7 @@ sh install.sh
 ```
 
 Run `sh install.sh` again (or `sh bin/update`) any time to update. Your saved state in `state/` is kept.
-`install.sh` also installs the pairing engine once; `pair` never starts a second download.
+`install.sh` installs the pairing engine; `sh bin/update` keeps it in sync (only reinstalls when the pinned version changes); `pair` never starts a second download.
 
 ```
 sh bin/barisign          # guided: check -> variant -> download -> pair/UDID -> Apple -> portal -> sign -> install

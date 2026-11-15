@@ -111,7 +111,7 @@ sh bin/barisign pair
    `Documents/ALTPairingFile.mobiledevicepairing`. A copy stays under `state/` for manual import.
 5. On the target, tap **Trust** for the developer and open the app.
 
-`sh install.sh` installs the networking engine once; later runs are local. If it was skipped, run `sh bin/barisign pair --setup`.
+`sh install.sh` installs the networking engine; `sh bin/update` updates it when the pinned version changes. If it was skipped, run `sh bin/barisign pair --setup`.
 
 The app installs **only on the target whose UDID is in the profile**: a development-signed app is
 refused on any other device or Apple ID. To use another target, register its UDID and sign again.

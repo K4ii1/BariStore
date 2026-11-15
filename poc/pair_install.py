@@ -148,6 +148,8 @@ async def write_pairing_file(rsd, ipa, record_path, bundle_id=""):
         return False
 
 
+ENGINE_VERSION = "11.49.0"
+
 PURE_DEPS = [
     # The full pure-Python closure is listed explicitly because the single pip
     # command below runs with --no-deps (pymobiledevice3 would otherwise try to
@@ -184,7 +186,7 @@ PURE_DEPS = [
     # Pin the engine: 11.55 pulls new modules (developer_disk_image, ipsw_parser,
     # pyimg4, ...) that are irrelevant here. 11.49 is the version the pairing
     # host/userspace tunnel imports were verified against.
-    "pymobiledevice3==11.49.0",
+    "pymobiledevice3==" + ENGINE_VERSION,
 ]
 
 PYTUN_STUB = '''\
@@ -251,6 +253,22 @@ def _pip(args):
     return result.returncode == 0
 
 
+def engine_version():
+    """The pymobiledevice3 version in the local target (not the global one)."""
+    _add_path()
+    try:
+        from importlib.metadata import version
+        return version("pymobiledevice3")
+    except Exception:                                         # noqa: BLE001
+        return ""
+
+
+def engine_ready():
+    if _import_engine(quiet=True) is None:
+        return False
+    return engine_version() == ENGINE_VERSION
+
+
 def setup():
     """One-time: install pymobiledevice3 and its pure-Python dependencies.
 
@@ -258,6 +276,10 @@ def setup():
     splitting pymobiledevice3 from its dependencies caused exactly that when a
     previous attempt was still finishing.
     """
+    if os.path.isdir(PIP_TARGET):
+        # A failed earlier attempt can leave a newer engine plus stale dist-info
+        # behind; a clean target makes the pinned version unambiguous.
+        shutil.rmtree(PIP_TARGET, ignore_errors=True)
     os.makedirs(PIP_TARGET, exist_ok=True)
     _say("  installing the pairing engine into state/pymd3")
     ok = _pip(["--no-deps"] + PURE_DEPS)
@@ -293,7 +315,10 @@ def check():
     if engine is None:
         _say("  ! run 'sh bin/barisign pair setup' first (or run without --check to install)")
         return 1
-    _say("  engine      imported")
+    installed = engine_version()
+    _say("  engine      imported  %s" % (installed or "?"))
+    if installed and installed != ENGINE_VERSION:
+        _say("  ! expected  %s; run 'sh bin/barisign pair --setup'" % ENGINE_VERSION)
     try:
         from ashell_bonjour import is_ashell
     except Exception:                                           # noqa: BLE001
@@ -449,6 +474,7 @@ def main(argv):
         _say("sh bin/barisign pair --udid UDID     install to an already paired device")
         _say("sh bin/barisign pair --check         check python, cryptography and the engine")
         _say("sh bin/barisign pair --setup         install the engine only")
+        _say("sh bin/barisign pair --ensure        install/update only when needed")
         return 0
     if "--ipa" in argv:
         position = argv.index("--ipa") + 1
@@ -469,6 +495,16 @@ def main(argv):
             except ValueError:
                 timeout = None
 
+    if "--ensure" in argv:
+        if engine_ready():
+            _say("  engine    ok  %s" % ENGINE_VERSION)
+            return 0
+        _say("  engine    installing/updating to %s" % ENGINE_VERSION)
+        if not setup() or not engine_ready():
+            _say("  ! engine is still not usable; see the pip output above")
+            return 1
+        _say("  engine    ok  %s" % ENGINE_VERSION)
+        return 0
     if "--check" in argv:
         return check()
     if "--setup" in argv:

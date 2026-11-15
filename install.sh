@@ -138,12 +138,8 @@ done
 # refuses a second concurrent pip, and splitting the engine from its
 # dependencies caused that when a previous attempt was still finishing.
 setup_engine() {
-    if python3 poc/pair_install.py --check >/dev/null 2>&1; then
-        printf '  engine    ok\n'
-        return 0
-    fi
     printf '  engine    ...'
-    if python3 -u poc/pair_install.py --setup >engine.log 2>&1; then
+    if python3 -u poc/pair_install.py --ensure >engine.log 2>&1; then
         printf '\r\033[2K  engine    ok\n'
         rm -f engine.log
         return 0
