@@ -416,7 +416,15 @@ async def _run(args):
 
     session = None
     try:
-        session = await asyncio.wait_for(open_session(record, host, port, udid), 90)
+        try:
+            session = await asyncio.wait_for(open_session(record, host, port, udid), 90)
+        except Exception as exc:                                # noqa: BLE001
+            if args.get("pair_only") and udid:
+                _say("  ! tunnel/UDID check failed: %s" % exc)
+                _say("  UDID saved from the pairing: %s" % udid)
+                save_state(udid=udid, paired=True)
+                return 0
+            raise
         if session.udid:
             if udid and udid != session.udid:
                 _say("  ! the tunnel reports a different UDID than the pairing record")
