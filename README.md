@@ -4,11 +4,13 @@ Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classi
 **with no computer**, using your own free Apple ID. The design needs **two iOS/iPadOS devices on the
 same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 
-> **New engine, device test pending:** `sh bin/barisign pair` now runs entirely in a-Shell. The
-> RPPairing host, TLS 1.2 PSK tunnel, userspace TCP, RSD, AFC and `installation_proxy` are pure Python
-> on the `cryptography` 3.4.8 that a-Shell ships — no qh3, no sslpsk, no pip, no native wheel, no
-> second app. The whole chain is tested on Linux; the **on-device run is the remaining gate**.
-> See `docs/NEXT_SESSION.md`.
+> **Current blocker (device-confirmed): a-Shell cannot advertise the pairing service.**
+> `DNSServiceRegister` returns **-65555 (NoAuth)** because iOS only allows Bonjour types listed in
+> the app's signed `NSBonjourServices` allowlist, and a-Shell has no entry for
+> `_remotepairing-pairable-host._tcp`. Python cannot edit that Info.plist. So the target's
+> Settings → Paired Macs cannot discover BariSign from a-Shell. The **signing/portal/UDID-page** path
+> and the **pure tunnel/install engine** are unaffected; the install still needs a pairing record,
+> which can come from a host that can advertise. Options: `docs/NEXT_SESSION.md`.
 
 | Role | What it is | What it runs |
 |---|---|---|
@@ -19,10 +21,9 @@ Both devices may be an **iPhone or an iPad**; iOS and iPadOS both work. The role
 They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSign.
 
 > **Status:** the signer path is verified on a real device running iOS 27: Apple sign-in, the
-> developer portal, signing, and launching the signed app. The **pure pairing/tunnel/install engine**
-> is written and passes its Linux protocol tests; the **pair-first UDID** and the
-> **signer → target pairing install** still need the user's device run. The fallback **UDID page** is
-> written too.
+> developer portal, signing, and launching the signed app. The pure tunnel/install engine is written
+> and Linux-tested, but **pairing from Settings is blocked by a-Shell's Bonjour allowlist**
+> (see above). The fallback **UDID page** works for the UDID; it does not produce a pairing record.
 
 ---
 
@@ -34,7 +35,8 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
    appears after the failed launch attempt. (This is only a trigger; it is not the app we sign.)
 3. Pair the target: on the **target** open **Settings → Privacy & Security → Developer Mode →
    Paired Macs**, pick **BariSign**, enter the code. The signer takes the target's **UDID from the
-   pairing** and continues; the median page is not needed.
+   pairing** and continues; the median page is not needed. **This step currently fails inside
+   a-Shell** because it cannot advertise the Bonjour type; see the blocker above.
 4. Signer: Apple sign-in, developer portal (device + App ID + certificate + profile), sign.
 5. Install with the same pairing record: `sh bin/barisign pair`. The signer advertises again, the target
    enters the code, and the signer installs over Wi-Fi with `installation_proxy`. The pairing file is
@@ -42,10 +44,11 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
    (`Documents/ALTPairingFile.mobiledevicepairing`) so the installed app can refresh itself.
 6. On the target, trust the developer and open the app.
 
-> **How the install works:** the same pairing record opens the target's `_remotepairing` service over
-> Wi-Fi. A pure TLS 1.2 PSK tunnel carries a small userspace TCP stack; `installation_proxy` installs
-> the staged IPA as a developer package, and house_arrest writes the pairing file into the app. The
-> target only trusts the developer and opens the app. **Untested on a device until the user runs it.**
+> **How the install works (once a pairing record exists):** the record opens the target's
+> `_remotepairing` service over Wi-Fi. A pure TLS 1.2 PSK tunnel carries a small userspace TCP stack;
+> `installation_proxy` installs the staged IPA as a developer package, and house_arrest writes the
+> pairing file into the app. The target only trusts the developer and opens the app. **Untested on a
+> device; the pairing advertisement is the current blocker.**
 
 If pairing cannot produce a UDID (old target, Developer Mode not available), the signer falls back to
 a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<port>/`, installs the
@@ -60,10 +63,10 @@ a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<p
 | **Apple sign-in** (free ID, 2FA) | ✅ verified |
 | **Device, certificate, profile** (developer portal) | ✅ verified |
 | **Download + sign + verify** | ✅ verified — the signed IPA installs and the app launches on a device |
-| **UDID from pairing** (pair-first) | ⚠️ pure engine written, Linux-tested; device run pending |
+| **UDID from pairing** (pair-first) | ❌ a-Shell cannot advertise the service (`-65555` NoAuth) |
 | **UDID page** fallback served by the signer | ⚠️ written, untested on a device |
-| **Signer → target pairing install** (`sh bin/barisign pair`) | ⚠️ pure engine written, Linux-tested; device run pending |
-| **Two devices, no computer** | the design; the pure engine removes the last native dependency |
+| **Signer → target pairing install** (`sh bin/barisign pair`) | ❌ discovery blocked; engine ready once a pairing record exists |
+| **Two devices, no computer** | blocked at the pairing-host advertisement; `docs/NEXT_SESSION.md` lists the options |
 
 ---
 

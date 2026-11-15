@@ -968,8 +968,10 @@ def cmd_udid(argv):
     typed = [item for item in argv if not item.startswith("-")]
     udid = extract_udid(typed[0]) if typed else ""
     manual = "--manual" in argv or "--no-open" in argv
-    if not udid and "--pair" in argv:
-        print("  First pair the TARGET; the pairing gives its UDID.")
+    # Pairing is the normal way to get the UDID, so `udid` pairs by itself;
+    # --pair is kept only as a compatibility no-op.
+    if not udid and not manual:
+        print("  Pairing the TARGET; the pairing gives its UDID.")
         print("  If Paired Macs is not available, install the original IPA on")
         print("  the target first (it makes Developer Mode appear), then retry.")
         print()
@@ -1299,7 +1301,7 @@ def cmd_guided(argv):
 
     if state.get("udid") and _yes("  keep UDID %s?" % state["udid"], True):
         pass
-    elif cmd_udid(["--pair"]) != 0:
+    elif cmd_udid([]) != 0:
         return 1
     state = load_state()
 
@@ -1342,8 +1344,16 @@ def cmd_pair(argv):
     return subprocess.call([sys.executable, "-u", pair] + list(argv))
 
 
+def cmd_update(_argv):
+    """Self-update: fetch the newest install.sh and apply it."""
+    _stage("Update")
+    script = os.path.join(_HERE, "..", "bin", "update")
+    return subprocess.call(["sh", script])
+
+
 COMMANDS = {
     "pair": cmd_pair,
+    "update": cmd_update,
     "version": cmd_version,
     "check": cmd_check,
     "status": cmd_status,
@@ -1386,7 +1396,6 @@ _OPTIONS = {
         ("--no-extensions", "drop PlugIns (an app extension needs its own App ID)"),
     ),
     "udid": (
-        ("--pair", "pair the target first and take its UDID from the pairing"),
         ("--manual", "paste the UDID on the signer instead of serving the page"),
     ),
 }
@@ -1401,6 +1410,7 @@ def _usage():
     print("  sh bin/barisign portal    UDID + certificate + profile")
     print("  sh bin/barisign sign      download, sign and zip the chosen variant")
     print("  sh bin/barisign pair      pair the target and install over Wi-Fi")
+    print("  sh bin/barisign update    self-update (same as sh bin/update)")
     print("  sh bin/barisign status    what is saved")
     print("  sh bin/barisign check     diagnostics only")
     print("  sh bin/barisign version   which copy is running")

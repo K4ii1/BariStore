@@ -2,8 +2,23 @@
 
 State: version **0.9.0**, pure on-device pairing/tunnel/install engine, working tree clean after
 commit. Signing, the developer portal, the UDID fallback page and the self-updater are unchanged and
-still work. The **new engine is Linux-tested but not device-tested** — the device run below is the
-only remaining gate.
+still work.
+
+**Confirmed blocker (device, 2026-11-15): a-Shell cannot advertise the pairing service.**
+`sh bin/barisign pair` stops at `DNSServiceRegister: -65555 (NoAuth)`. `-65555` is
+`kDNSServiceErr_NoAuth`: iOS only lets an app register a Bonjour type listed in its **signed
+`Info.plist` `NSBonjourServices`** allowlist. a-Shell has no `_remotepairing-pairable-host._tcp`
+entry (its `Info.plist` has `NSLocalNetworkUsageDescription` but no `NSBonjourServices`), and Python
+cannot edit a signed app. So the target's **Settings → Paired Macs** cannot discover BariSign when
+BariSign runs inside a-Shell. This is not a protocol bug in the pure engine; the pairing host simply
+never gets advertised.
+
+The **tunnel/install half of the engine remains valid**: it needs a pairing record, not the
+advertisement. If a record is already in `state/PairingFile_RemoteRP.plist` (from a host that can
+advertise), `sh bin/barisign pair --udid UDID` still uses the pure engine to install.
+
+`udid --pair` is no longer needed: `sh bin/barisign udid` pairs automatically (or falls back to the
+page), and `sh bin/barisign pair` pairs by itself when no record exists.
 
 ## What changed
 
@@ -28,29 +43,45 @@ and then runs `pair --check`.
 suites are CBC-SHA (`0x00AF`/`0x008C`), exactly what MIT `idevice` implements and what the Linux
 interop test proves against OpenSSL.
 
-## What the user should run (in order)
+## What to run now
 
-1. `sh bin/update` — must print `files ok`, `check ok`, `engine ok`, `ready`. No pip, no repeated curl.
-2. `sh bin/barisign pair --check` — must import the engine and report
-   `pure Python, no qh3/sslpsk/native wheel`.
-3. `sh bin/barisign udid --pair` (or `sh bin/barisign pair --pair-only --timeout 180`):
-   the signer prints `advertising as BariSign` and a 6-digit code; on the target open
-   **Settings → Privacy & Security → Developer Mode → Paired Macs**, pick **BariSign**, enter the
-   code. The signer must save the UDID and write
-   `state/PairingFile_RemoteRP.plist` + `state/ALTPairingFile.*`.
-4. `sh bin/barisign pair` — the signer installs the newest `*-signed.ipa` over Wi-Fi. On the target,
-   trust the developer and open the app.
+1. `python3 poc/bonjour_check.py` — reports, for `_barisign-check._tcp`, `_http._tcp` and the
+   pairable-host type, whether DNS-SD registration is allowed, then tests raw multicast
+   bind/join/send/receive. **Send this output back.** It decides whether a code-only raw-mDNS
+   fallback is worth building.
+2. The self-update command is `sh bin/update` (not `sh bin/barisign update`); it must print
+   `files ok`, `check ok`, `engine ok`, `ready`.
+3. `sh bin/barisign pair --check` — must import the engine.
+4. Pairing cannot work from a-Shell until an advertising host exists. The options are below.
 
-Run any failing step with `sh bin/barisign pair --debug` and send the full output. Do not retry the
-same failing step more than twice; the next session needs the error text.
+## Options after the -65555 blocker (need a user decision)
+
+- **A. Pairing host with the right `Info.plist` on the signer.** A small native helper (or a fork of
+  SideInstaller/a-Shell) advertises `_remotepairing-pairable-host._tcp` and runs the Pair-Setup
+  responder; BariSign keeps signing and the pure tunnel/install. This is the reliable path. It adds
+  one **signer-side** app, not a target-side app. Bootstrap of the helper still needs a developer
+  source (SideStore/AltStore/PC once).
+- **B. Use SideInstaller (or SideStore/AltStore) on the signer for pairing only**, then feed the
+  resulting `PairingFile_RemoteRP.plist` to BariSign. The target installs nothing from BariSign; the
+  third-party app is on the signer. This violates the current "no third-party app" decision but is
+  the shortest path.
+- **C. One-time computer.** Pair the target with a Mac/Xcode Device Hub, copy the Mac's remote
+  pairing record to `state/PairingFile_RemoteRP.plist`, then `sh bin/barisign pair --udid UDID`
+  installs from a-Shell. No third-party app; a computer is needed once.
+- **D. Raw mDNS fallback.** If `bonjour_check.py` shows raw multicast send/receive works, implement a
+  raw advertiser/responder in Python (no Bonjour allowlist). iOS may block this without the
+  multicast entitlement; the probe decides.
+- **E. Fork a-Shell** with the `NSBonjourServices` entry and distribute it. Developer-only, not an
+  end-user path.
 
 ## Acceptance gates
 
 1. `sh bin/update` clean; files/engine synced; no repeated curl/git; no pip.
 2. `pair --check` imports on a-Shell with cryptography 3.4.8, no qh3/sslpsk/native wheel.
-3. `pair --pair-only` pairs from Settings, saves the UDID and the normalized pairing file.
-4. `pair` installs over Wi-Fi; the target trusts the developer and the app opens.
-5. Signing/portal/UDID page/self-update still work; no PC, no AirDrop/OTA, no third-party app.
+3. **Blocked:** pairing from Settings cannot be advertised by a-Shell (`-65555`). Needs option A–D.
+4. **Conditional:** with a pairing record from elsewhere, `pair` installs over Wi-Fi with the pure
+   engine; target trusts the developer and the app opens.
+5. Signing/portal/UDID page/self-update still work.
 
 ## Where it can still fail (device-only unknowns)
 

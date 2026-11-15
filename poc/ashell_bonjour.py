@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  BariSign — Bonjour advertisement for pymobiledevice3 on a-Shell (MIT)
+#  BariSign — Bonjour advertisement for a-Shell (MIT)
 #
-#  pymobiledevice3's own MDNSResponder opens raw multicast sockets. iOS only
-#  lets an app advertise through the Bonjour daemon (DNSServiceRegister);
-#  raw multicast needs an entitlement a-Shell does not have. This module is
-#  the drop-in responder: same async-context-manager surface as
-#  pymobiledevice3.bonjour.MDNSResponder, but registration goes through
-#  libsystem_dnssd, exactly like poc/pair_probe.py already does.
+#  The pairing host is advertised through libsystem_dnssd, like pair_probe.py.
+#  On iOS the DNS-SD API is subject to the app's signed NSBonjourServices
+#  allowlist: a type that is not listed fails with -65555 (NoAuth), and Python
+#  cannot change a signed Info.plist.  That is why the caller must handle -65555
+#  explicitly (poc/pair_install.py) instead of retrying.
 #
-#  It is used by poc/pair_install.py on the signer. On a normal Linux/macOS
-#  machine the original responder is left alone.
+#  On a normal Linux/macOS machine registration is only used by tests.
 # =============================================================================
 
 import ctypes
@@ -27,9 +25,12 @@ _kDNSServiceErr = {
     -65540: "bad parameter",
     -65548: "name conflict",
     -65549: "invalid",
-    -65557: "policy denied (Local Network permission?)",
-    -65562: "not authorised",
-    -65563: "unsupported",
+    -65555: "NoAuth: the app's NSBonjourServices does not allow this service type",
+    -65556: "no such key",
+    -65557: "NAT traversal error",
+    -65562: "transient error",
+    -65563: "Bonjour service not running",
+    -65570: "policy denied (Local Network permission?)",
 }
 
 REPLY = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int32,
@@ -85,12 +86,7 @@ def _txt_record(properties):
 
 
 class BonjourResponder:
-    """Minimal ``MDNSResponder`` replacement using the system Bonjour daemon.
-
-    ``pymobiledevice3`` uses the object only as an async context manager:
-    entering publishes the service, leaving withdraws it. The daemon answers
-    PTR/SRV/TXT/A queries, so no packet loop runs in Python.
-    """
+    """Minimal ``MDNSResponder`` replacement using the system Bonjour daemon."""
 
     def __init__(self, service_type, instance_name, port, properties,
                  hostname=None, addresses=None):
@@ -148,7 +144,7 @@ class BonjourResponder:
 
 
 def patch():
-    """Make pymobiledevice3's pairing host advertise via Bonjour on a-Shell."""
+    """Legacy shim: make pymobiledevice3's pairing host advertise on a-Shell."""
     if not is_ashell():
         return False
     try:

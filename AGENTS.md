@@ -34,8 +34,13 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
   `sh bin/barisign pair` now runs a self-contained MIT Python stack: RPPairing host (SRP-6a, TLV8,
   OPACK), pair-verify, **TLS 1.2 PSK** (0x00AF/0x008C — the suites iOS actually negotiates, *not*
   TLS 1.3), a minimal IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and
-  `installation_proxy`. No pip, no native wheel, no GPL runtime. The Linux tests are in `tests/`;
-  the **on-device run is the remaining gate**. See `docs/NEXT_SESSION.md` and `docs/RESULTS.md`.
+  `installation_proxy`. No pip, no native wheel, no GPL runtime. The Linux tests are in `tests/`.
+- **Blocker (device-confirmed, 2026-11-15): a-Shell cannot advertise the pairing service.**
+  `DNSServiceRegister` returns **-65555 (NoAuth)**: iOS only allows Bonjour types listed in the app's
+  signed `NSBonjourServices`, and a-Shell has no `_remotepairing-pairable-host._tcp` entry. Python
+  cannot edit a signed Info.plist, so the target's Paired Macs cannot discover BariSign from a-Shell.
+  The tunnel/install engine still works **if a pairing record exists** (from a host that can
+  advertise). Options and evidence: `docs/NEXT_SESSION.md`; do not claim the pairing install works.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.
 - Test devices are roles, not hardware: either device can be the signer or the target. Both run
   iOS/iPadOS 27+; a-Shell is installed only on the signer.
@@ -125,9 +130,11 @@ The a-Shell interface (no Shortcuts):
 
 - Budget ~5 USD total. Be token-frugal: grep/head/tail instead of dumping whole files.
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
-- Stages 1–2 are verified on device; the pairing/tunnel/install engine is written and Linux-tested
-  but not device-verified. The plan is `docs/PLAN_V2.md`, verified facts are in `docs/RESULTS.md`.
-- Next: run the on-device gates in `docs/NEXT_SESSION.md` (`pair --check`, `--pair-only`, `pair`).
+- Stages 1–2 are verified on device; the tunnel/install engine is written and Linux-tested. The
+  pairing advertisement is blocked inside a-Shell (`-65555` NoAuth). The plan is `docs/PLAN_V2.md`,
+  verified facts are in `docs/RESULTS.md`.
+- Next: choose a pairing-host path in `docs/NEXT_SESSION.md` (host with the right Info.plist,
+  SideInstaller for pairing only, a one-time computer, or a raw-mDNS check).
 
 ## Verified / unverified convention
 

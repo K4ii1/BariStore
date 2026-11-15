@@ -25,7 +25,12 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
 - Linux tests (all passing): TLS-PSK interop with OpenSSL, full Pair-Setup round-trip, pair-verify +
   TLS-PSK + CDTunnel against a mock device, 1 MiB TCP echo + two connections against the Linux
   kernel through TUN, and RSD + 300 KiB AFC upload + `installation_proxy` over that stack.
-- **The on-device run is not done yet.** Nothing below is a device claim for the new engine.
+- **Device-confirmed blocker (2026-11-15):** `DNSServiceRegister` returns **-65555 (NoAuth)** for
+  `_remotepairing-pairable-host._tcp` inside a-Shell. iOS only allows types listed in the app's
+  signed `NSBonjourServices`; a-Shell's Info.plist has no such entry, and Python cannot change it.
+  So the target's Settings cannot discover BariSign from a-Shell. The pure tunnel/install engine is
+  still valid once a pairing record exists; the pairing-host advertisement needs another app with
+  the right Info.plist (or a raw-mDNS fallback, if the device allows it).
 
 ## Written but **never tested on a device**
 

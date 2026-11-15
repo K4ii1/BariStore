@@ -9,9 +9,11 @@ Either device can be an **iPhone or an iPad** (iOS/iPadOS 27+). They must be on 
 a-Shell and BariSign are installed on the **signer only**.
 
 **Status:** Apple sign-in, the developer portal, signing and launching the signed app are verified on
-a real device. The **pairing/tunnel/install engine is now pure Python** (no qh3, no pip, no native
-wheel) and passes its Linux protocol tests; the **on-device run is the remaining gate**. The fallback
-**UDID page** also still works.
+a real device. The tunnel/install engine is pure Python (no qh3, no pip, no native wheel), but the
+**pairing advertisement is blocked on a-Shell**: iOS refuses `DNSServiceRegister` for
+`_remotepairing-pairable-host._tcp` with `-65555` (NoAuth) because a-Shell's signed Info.plist has no
+`NSBonjourServices` entry for it. The **UDID page** still works, and the engine can install once a
+pairing record exists (options in `docs/NEXT_SESSION.md`).
 
 ---
 
@@ -34,10 +36,11 @@ sh bin/barisign status     # what is saved
 
 ## UDID (pairing first)
 
-The normal flow takes the target's UDID **from the pairing**, so no median profile is needed:
+The normal flow takes the target's UDID **from the pairing**, so no median profile is needed.
+`udid` pairs by itself; there is no separate `--pair` step:
 
 ```
-sh bin/barisign udid --pair
+sh bin/barisign udid
 ```
 
 1. The signer advertises as **BariSign** and prints a code.
@@ -99,8 +102,9 @@ sh bin/barisign sign --ipa X.ipa  # sign a file you already have
 
 ## INSTALL on the target (signer + target)
 
-> **Untested on a device:** the pure engine passes its Linux protocol tests, but the signer → target
-> install has not run on hardware yet. If a step fails, run the same command with `--debug`.
+> **Blocked at discovery:** the signer cannot advertise `_remotepairing-pairable-host._tcp` from
+> a-Shell (`-65555` NoAuth). The pure engine is ready, but the target cannot see BariSign until a
+> pairing host with the right Info.plist is used. See `docs/NEXT_SESSION.md` for the options.
 
 ```
 sh bin/barisign pair
@@ -143,5 +147,5 @@ refused on any other device or Apple ID. To use another target, register its UDI
 | UDID not recognised | `40` hex characters, or `24` like `00008110-001a2c3e0e91801e` |
 | target cannot open the page | same Wi-Fi? Allow **Local Network** for a-Shell; the address has the signer's Wi-Fi IP |
 | `bin/barisign pair` finds no IPA | sign on the signer first, or pass `--ipa FILE` |
-| BariSign does not appear in Paired Macs | both devices on the same Wi-Fi; press `sh bin/barisign pair` again; allow Local Network for a-Shell |
+| `DNSServiceRegister: -65555` / BariSign does not appear in Paired Macs | a-Shell's Info.plist does not allow the pairing Bonjour type; run `python3 poc/bonjour_check.py` and see `docs/NEXT_SESSION.md` |
 | terminal stops taking input | quit a-Shell from the app switcher and reopen it |

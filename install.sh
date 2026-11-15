@@ -76,6 +76,7 @@ download_all() {
     fetch poc/pairing.py                      poc/pairing.py                   || fail=1
     fetch poc/rpp_tunnel.py                   poc/rpp_tunnel.py                || fail=1
     fetch poc/mdns.py                         poc/mdns.py                      || fail=1
+    fetch poc/bonjour_check.py                poc/bonjour_check.py             || fail=1
     fetch third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py || fail=1
     fetch third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py || fail=1
     fetch third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem || fail=1
@@ -94,6 +95,7 @@ check_compiles() {
              poc/download.py poc/pair_probe.py poc/pair_install.py \
              poc/ashell_bonjour.py poc/tls_psk.py poc/tcp6.py poc/remote_xpc.py \
              poc/device_services.py poc/pairing.py poc/rpp_tunnel.py poc/mdns.py \
+             poc/bonjour_check.py \
              third_party/sideinstaller/signin.py \
              third_party/sideinstaller/portal.py; do
         if ! python3 -c "compile(open('$f').read(), 'x', 'exec')" 2>/dev/null; then

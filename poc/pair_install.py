@@ -386,7 +386,24 @@ async def _run(args):
         record = None
     if record is None:
         _say("  no pairing file yet; pairing the target first")
-        info, peer_ip = await pair_target(timeout, identity)
+        try:
+            info, peer_ip = await pair_target(timeout, identity)
+        except Exception as exc:                            # noqa: BLE001
+            text = str(exc)
+            if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
+                _say("  ! a-Shell cannot advertise the pairing service")
+                _say("    DNSServiceRegister returned -65555 (NoAuth).")
+                _say("    iOS only allows Bonjour types listed in the app's")
+                _say("    NSBonjourServices; a-Shell has no entry for")
+                _say("    _remotepairing-pairable-host._tcp, and a signed app's")
+                _say("    Info.plist cannot be changed from Python.")
+                _say("")
+                _say("  This blocks discovery in Settings > Developer > Paired Macs.")
+                _say("  Run: python3 poc/bonjour_check.py")
+                _say("  Options are in docs/NEXT_SESSION.md (pairing host with the")
+                _say("  right Info.plist, or a pairing record obtained elsewhere).")
+                return 2
+            raise
         pseudo = pairing.PairingRecord(identity, info)
         record_path = save_record(pseudo)
         udid = normalise_udid(info.get("udid", ""))

@@ -74,8 +74,10 @@ the `bin/barisign pair` engine on the signer.
 ## Status
 
 - Verified on the signer (iOS 27): Apple sign-in, portal, signing, app launch.
-- The pairing/tunnel/install engine is now pure Python (`poc/tls_psk.py`, `tcp6.py`, `remote_xpc.py`,
+- The tunnel/install engine is now pure Python (`poc/tls_psk.py`, `tcp6.py`, `remote_xpc.py`,
   `device_services.py`, `pairing.py`, `rpp_tunnel.py`, `mdns.py`); no pip, no qh3, no native wheel.
   All layers pass their Linux tests.
-- Not yet device-verified: the pair-first UDID, the fallback UDID page, the signer→target pairing
-  install and the pairing-file writer. The device gates are in `docs/NEXT_SESSION.md`.
+- **Device blocker:** a-Shell cannot advertise `_remotepairing-pairable-host._tcp`
+  (`DNSServiceRegister -65555`, NoAuth; its signed Info.plist lacks `NSBonjourServices`). The target
+  cannot discover BariSign from a-Shell. The install engine is ready once a pairing record exists.
+  Options: `docs/NEXT_SESSION.md`.

@@ -1,17 +1,18 @@
 # Pairing + `installation_proxy` on iOS 27 — what is possible
 
-Status (2026-11-15): **the pure route is implemented.** `sh bin/barisign pair` now pairs the target
-from Settings, opens the RPPairing tunnel and installs the signed IPA with `installation_proxy`,
-entirely in a-Shell with no pip, no native wheel and no second app. The engine is Linux-tested; the
-**on-device run is the remaining gate** (`docs/NEXT_SESSION.md`).
+Status (2026-11-15): **the tunnel/install route is implemented; the pairing advertisement is blocked
+inside a-Shell.** `DNSServiceRegister` returns **-65555 (NoAuth)** because a-Shell's signed
+`Info.plist` has no `NSBonjourServices` entry for `_remotepairing-pairable-host._tcp`. The target's
+Settings cannot discover BariSign from a-Shell. The pure engine (pair-verify, TLS 1.2 PSK, userspace
+TCP, RSD, AFC, `installation_proxy`) is Linux-tested and can install **once a pairing record exists**.
+Options: `docs/NEXT_SESSION.md`.
 
 The question was: can BariSign install its signed IPA on the **target** with **no computer**, using
 pairing plus `installation_proxy`, and generate pairing files that AltStore and SideStore can use?
 
-Short answer: **yes, with a self-contained pure-Python protocol stack.** `pymobiledevice3` itself is
-not usable here (it imports `qh3`, and its recent releases use `cryptography` APIs newer than
-a-Shell's 3.4.8), so BariSign implements the needed subset from the MIT `jkcoxson/idevice` sources and
-Apple's public formats.
+Short answer: **the protocol stack is solved, but the first advertisement is not.** The pure engine
+can pair/tunnel/install, but a-Shell cannot publish the Bonjour type the target browses. A pairing
+record obtained from an advertising host unlocks the pure install path.
 
 ## 0. The pure route, as built
 
