@@ -104,7 +104,22 @@ The target's LAN IP is in **Settings → Wi-Fi → IP Address**. No mDNS is need
    engine; target trusts the developer and the app opens.
 5. Signing/portal/UDID page/self-update still work.
 
-## Where it can still fail (device-only unknowns)
+## Where it stands (device, 2026-11-15 evening)
+
+**Pairing works.** Broadcast discovery shows BariSign on the target; the full M1–M6 runs, the
+signer prints the PIN and saves the UDID (`00008110-…` ECID form) plus `state/PairingFile_*.plist`.
+Frame log: `state/pair_debug.log` (every RX/TX frame; send it back after any pairing run).
+
+**Next failure, already diagnosed:** after pairing, Bonjour *browse* fails the same way
+(`DNSServiceBrowse: -65555`). Fix in this commit: browse is retried 3×, then falls back to the
+target IP saved from the pairing connection (`peer_ip`), and the pairing port is resolved by
+scan — 49152 first, then a /48 sweep (closed ports RST at once, so it is fast). `open_session`
+tries pair-verify on each candidate port until one answers. `--host <ip>` skips all of this.
+If the scan finds nothing, the message says the target may be asleep or off-Wi-Fi.
+
+**Still untested on a device:** tunnel + RSD + AFC + `installation_proxy` install, and the
+pairing-file write into the app. Run `sh bin/barisign pair` (plain; raw advertisement is now
+automatic on a-Shell, `--raw-mdns` only forces it elsewhere).
 
 - **Bonjour browse/registration in a-Shell.** Registration is the existing DNS-SD shim; browsing was
   added with `DNSServiceBrowse`/`DNSServiceResolve`. If the target's `_remotepairing._tcp` is not

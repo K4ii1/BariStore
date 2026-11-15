@@ -303,8 +303,89 @@ def _choose_host(services, udid, peer_ip, host=None, port=0):
 async def find_service(udid, peer_ip, host, port, timeout=6):
     if host:
         return host, port
-    services = mdns.browse(mdns.REMOTE_PAIRING, timeout=timeout)
-    return _choose_host(services, udid, peer_ip, host, port)
+    try:
+        services = mdns.browse(mdns.REMOTE_PAIRING, timeout=timeout)
+    except Exception as exc:                                    # noqa: BLE001
+        # a-Shell cannot browse (DNSServiceBrowse -65555, same allowlist as
+        # registration). Fall back to the target IP seen on the pairing
+        # connection; the port is found by scan below.
+        _say("  ! Bonjour browse unavailable (%s); using the paired address" % exc)
+        services = []
+    if services:
+        return _choose_host(services, udid, peer_ip, host, port)
+    if peer_ip:
+        return peer_ip, 0
+    return "", 0
+
+
+async def _tcp_open(host, port, timeout=1.5):
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    except Exception:                                           # noqa: BLE001
+        return None
+    try:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:                                       # noqa: BLE001
+            pass
+    except Exception:                                           # noqa: BLE001
+        pass
+    return port
+
+
+async def scan_ports(host, start=49152, count=48, timeout=1.5, batch=16):
+    """Find open TCP ports near the usual RPPairing port (it moves at boot).
+
+    Closed ports on a LAN RST immediately, so a /48 sweep in batches is fast.
+    Returns open ports, 49152 first when open.
+    """
+    found = []
+    ports = [start + offset for offset in range(count)]
+    for chunk in range(0, len(ports), batch):
+        results = await asyncio.gather(
+            *[_tcp_open(host, port, timeout) for port in ports[chunk:chunk + batch]])
+        found.extend(port for port in results if port is not None)
+        if found and chunk >= batch:
+            break
+    return sorted(found, key=lambda p: (p != start, p))
+
+
+async def resolve_port(host, port):
+    """Return usable _remotepairing port(s): the given one, else a quick scan."""
+    if port:
+        return [port]
+    if await _tcp_open(host, 49152):
+        return [49152]
+    _say("  scan         probing the target for its pairing port")
+    found = await scan_ports(host)
+    if not found:
+        raise RuntimeError("no pairing port answered on %s (target asleep or off-Wi-Fi?)" % host)
+    _say("  scan         open: %s" % ", ".join(str(p) for p in found[:6]))
+    return found
+
+
+async def open_session(record, host, port, identity_udid=""):
+    ports = await resolve_port(host, port)
+    errors = []
+    for candidate in ports:
+        try:
+            tunnel = await rpp_tunnel.open_tunnel(host, candidate, record)
+        except Exception as exc:                                # noqa: BLE001
+            errors.append("%s: %s" % (candidate, exc))
+            continue
+        stack = tcp6.TcpStack(tunnel["link"], tunnel["client_address"])
+        await stack.start()
+        try:
+            connection = await stack.connect(tunnel["server_address"], tunnel["rsd_port"], timeout=20)
+            services, properties, xpc = await remote_xpc.connect_rsd(connection, connection)
+        except Exception:
+            await stack.close()
+            continue
+        _say("  device       %s" % (properties.get("ProductType", "?")))
+        return Session(tunnel, stack, services, properties, xpc)
+    raise RuntimeError("pair-verify failed on %s (tried %s): %s"
+                       % (host, ports, "; ".join(errors[:3])))
 
 
 # --------------------------------------------------------------------------
@@ -336,20 +417,6 @@ class Session:
             await self.tunnel["stream"].wait_closed()
         except Exception:                                       # noqa: BLE001
             pass
-
-
-async def open_session(record, host, port, identity_udid=""):
-    tunnel = await rpp_tunnel.open_tunnel(host, port, record)
-    stack = tcp6.TcpStack(tunnel["link"], tunnel["client_address"])
-    await stack.start()
-    try:
-        connection = await stack.connect(tunnel["server_address"], tunnel["rsd_port"], timeout=20)
-        services, properties, xpc = await remote_xpc.connect_rsd(connection, connection)
-    except Exception:
-        await stack.close()
-        raise
-    _say("  device       %s" % (properties.get("ProductType", "?")))
-    return Session(tunnel, stack, services, properties, xpc)
 
 
 async def install(session, ipa, record_path):
@@ -504,19 +571,19 @@ async def _run(args):
 
     host, port = args.get("host", ""), args.get("port", 0)
     if not host:
-        for attempt in range(5):
+        for attempt in range(3):
             host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
-            if host and port:
+            if host and (port or peer_ip):
                 break
             await asyncio.sleep(2)
-    if args.get("host") and not port:
-        _say("  ! --host needs --port (the _remotepairing service port)")
+    if not host:
+        _say("  ! the target was not found")
+        _say("    pass its Wi-Fi address directly:")
+        _say("    target: Settings > Wi-Fi > (i) > IP Address, then")
+        _say("    sh bin/barisign pair --host <target-ip>")
         return 2
-    if not host or not port:
-        _say("  ! the target's _remotepairing service was not found")
-        _say("    both devices must be on the same Wi-Fi and the target unlocked")
-        return 2
-    _say("  target       %s:%d" % (host, port))
+    if port:
+        _say("  target       %s:%d" % (host, port))
 
     session = None
     try:
@@ -564,7 +631,7 @@ def main(argv):
         _say("sh bin/barisign pair --pair-only     pair only; save the UDID and pairing file")
         _say("sh bin/barisign pair --udid UDID     use an already paired target")
         _say("sh bin/barisign pair --import FILE   use a pairing file from another host")
-        _say("sh bin/barisign pair --host H --port P   skip Bonjour; port defaults to 49152")
+        _say("sh bin/barisign pair --host IP          use this target address (port is scanned)")
         _say("sh bin/barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
         _say("sh bin/barisign pair --target-ip IP  also send unicast mDNS to the target")
         _say("sh bin/barisign pair --timeout N     give up if the target never pairs")

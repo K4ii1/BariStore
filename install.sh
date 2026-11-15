@@ -16,7 +16,12 @@ set -u
 BASE="https://github.com/barismd/barisign/blob/main"
 DIR="${BARISIGN_DIR:-$HOME/Documents/barisign}"
 
-printf 'BariSign installer\n\n'
+printf 'installing BariSign'
+VER=$(python3 -c "import re; m = re.search(r'VERSION *= *[\"\x27]([^\"\x27]+)[\"\x27]', open('poc/barisign.py').read()); print(m.group(1) if m else '')" 2>/dev/null)
+if [ -n "${VER:-}" ]; then
+    printf ' %s' "$VER"
+fi
+printf '\n\n'
 
 mkdir -p "$DIR/poc" "$DIR/bin" "$DIR/third_party/sideinstaller" \
          "$DIR/third_party/apple-roots" "$DIR/third_party/ca-bundle" || {
@@ -39,11 +44,8 @@ print(found.group(1) if found else '')
 " 2>/dev/null)
 if [ -n "${SHA:-}" ]; then
     RAW="https://raw.githubusercontent.com/barismd/barisign/$SHA"
-    printf '  revision  %.7s\n' "$SHA"
 else
     RAW="https://raw.githubusercontent.com/barismd/barisign/main"
-    printf '  revision  main (not pinned)\n'
-    printf '  ! the commit id could not be read; GitHub can serve an older copy\n'
 fi
 
 fetch() {   # fetch <file-in-repo> <destination>

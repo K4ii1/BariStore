@@ -154,6 +154,26 @@ def load_variants():
         return []
 
 
+def app_display_name(variant_id="", bundle_id=""):
+    """The App ID name shown in the Apple portal: the app's own name.
+
+    The certificate keeps the BariSign name; the App ID carries e.g. SideStore,
+    so the portal list stays readable when several apps are registered.
+    """
+    for item in load_variants():
+        if variant_id and item.get("id") == variant_id:
+            name = re.sub(r"\s*\(.*\)\s*$", "", item.get("name", "")).strip()
+            if name:
+                return name
+        if bundle_id and item.get("bundle_id") == bundle_id:
+            name = re.sub(r"\s*\(.*\)\s*$", "", item.get("name", "")).strip()
+            if name:
+                return name
+    if bundle_id:
+        return bundle_id.rsplit(".", 1)[-1]
+    return "BariSign"
+
+
 # ---------------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------------
@@ -1119,7 +1139,8 @@ def cmd_portal(argv):
         udid = load_state().get("udid", "")
 
     account = _sign_in(email)
-    result = _portal(account, email, udid, bundle_id, "BariSign device", "BariSign")
+    result = _portal(account, email, udid, bundle_id, "BariSign device",
+                     app_display_name(variant_id=variant, bundle_id=bundle_id))
     update_state(email=email, udid=udid, variant=variant or state.get("variant", ""),
                  bundle_id=result["bundle_id"], team_id=result["team_id"],
                  profile=result["profile"], key=result["key"], cert=result["cert"])
@@ -1317,7 +1338,9 @@ def cmd_guided(argv):
     update_state(email=email)
 
     result = _portal(account, email, state.get("udid", ""), state.get("bundle_id", ""),
-                     "BariSign device", "BariSign")
+                     "BariSign device",
+                     app_display_name(variant_id=state.get("variant", ""),
+                                      bundle_id=state.get("bundle_id", "")))
     update_state(bundle_id=result["bundle_id"], team_id=result["team_id"],
                  profile=result["profile"], key=result["key"], cert=result["cert"])
     _result("PORTAL", "ok")
@@ -1379,7 +1402,7 @@ _OPTIONS = {
         ("--check", "python, cryptography and engine import only"),
         ("--setup", "verify the pure engine (nothing is downloaded)"),
         ("--timeout N", "give up if the target does not pair"),
-        ("--host H --port P", "skip Bonjour and use this _remotepairing address"),
+        ("--host IP", "use this target address; the pairing port is scanned"),
         ("--raw-mdns", "force raw advertisement (automatic on a-Shell)"),
         ("--target-ip IP", "also send unicast mDNS to the target"),
         ("--repair", "new host identity; the target asks to pair again"),
