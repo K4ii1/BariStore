@@ -1,36 +1,27 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  BariSign — pair + install from the signer device (MIT wrapper)
+#  BariSign — pair the target and install the signed IPA (MIT)
 #
-#  Run on the SIGNER device's a-Shell, with the TARGET device on the same Wi-Fi:
+#  Runs on the SIGNER inside a-Shell.  No pip, no qh3, no sslpsk, no native
+#  wheel: every protocol piece is implemented in pure Python on top of the
+#  cryptography 3.4.8 that a-Shell ships.
 #
-#      sh bin/barisign pair
+#      sh bin/barisign pair                 pair (if needed) and install
+#      sh bin/barisign pair --pair-only     pair, save the UDID, stop
+#      sh bin/barisign pair --check         verify the pure engine imports
+#      sh bin/barisign pair --ipa FILE      install a specific signed IPA
 #
-#  The signer advertises itself as a pairable host; on the target open
-#  Settings > Privacy & Security > Developer Mode > Paired Macs (or
-#  Settings > Developer > Paired Macs), pick "BariSign", and enter the code
-#  printed here. The signer then opens the userspace tunnel, installs the signed
-#  IPA with installation_proxy, and writes the pairing file into AltStore or
-#  SideStore so the app can refresh itself. No PC, no SideInstaller, no
-#  certificate. Either device may be an iPhone or an iPad.
-#
-#  pymobiledevice3 is GPL-3.0-or-later and is NOT part of this repository: the
-#  first run installs it into state/pymd3 on the device. This wrapper contains
-#  no pymobiledevice3 code and is MIT, like the rest of BariSign.
-#
-#  STATUS: the pymobiledevice3 path is not yet verified on a-Shell. The script
-#  stops with a precise message at the first gate that fails instead of
-#  pretending. See docs/PAIRING_INSTALL.md.
+#  The target only uses Settings > Developer > Paired Macs and then opens the
+#  app.  UNTESTED ON A DEVICE: the tunnel/install path is Linux-tested only.
 # =============================================================================
 
 import asyncio
 import glob
 import json
 import os
+import platform
 import plistlib
 import re
-import shutil
-import subprocess
 import sys
 import traceback
 import zipfile
@@ -38,9 +29,28 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 STATE_DIR = os.environ.get("BARISIGN_STATE_DIR") or os.path.join(ROOT, "state")
-PIP_TARGET = os.path.join(STATE_DIR, "pymd3")
+RECORD_PATH = os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist")
+IDENTITY_PATH = os.path.join(STATE_DIR, "pairing_host.plist")
 
-UDID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{8}-[0-9a-f]{16})$")
+for _path in (HERE, ROOT):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+import device_services
+import mdns
+import pairing
+import remote_xpc
+import rpp_tunnel
+import tcp6
+
+
+def _say(text=""):
+    print(text, flush=True)
+
+
+def _udid_ok(value):
+    cleaned = re.sub(r"[\s\-]", "", (value or "")).lower()
+    return bool(re.fullmatch(r"[0-9a-f]{40}", cleaned) or re.fullmatch(r"[0-9a-f]{24}", cleaned))
 
 
 def normalise_udid(value):
@@ -52,48 +62,37 @@ def normalise_udid(value):
     return ""
 
 
-def save_udid(udid, record=""):
-    os.makedirs(STATE_DIR, exist_ok=True)
-    path = os.path.join(STATE_DIR, "barisign.json")
+def load_state():
     try:
-        with open(path) as handle:
-            state = json.load(handle)
-    except Exception:                                         # noqa: BLE001
-        state = {}
-    state["udid"] = udid
-    state["paired"] = True
-    if record:
-        state["pair_record"] = str(record)
-    with open(path, "w") as handle:
-        json.dump(state, handle, indent=2)
+        with open(os.path.join(STATE_DIR, "barisign.json")) as handle:
+            return json.load(handle)
+    except Exception:                                           # noqa: BLE001
+        return {}
 
 
-def normalise_pair_record(record_path):
-    """Add the keys AltStore/SideStore expect to pymobiledevice3's record.
-
-    pymobiledevice3's device-initiated host writes host_identifier/host_alt_irk;
-    the pairing-file consumers look for identifier/alt_irk (SideInstaller's
-    PairingFileKind requires identifier). The public/private Ed25519 keys are
-    already named correctly. Return the normalized path in state/.
-    """
-    with open(record_path, "rb") as handle:
-        record = plistlib.loads(handle.read())
-    if "identifier" not in record and record.get("host_identifier"):
-        record["identifier"] = record["host_identifier"]
-    if "alt_irk" not in record:
-        alt = record.get("host_alt_irk") or record.get("peer_alt_irk")
-        if alt:
-            record["alt_irk"] = alt
+def save_state(**values):
     os.makedirs(STATE_DIR, exist_ok=True)
-    target = os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist")
-    with open(target, "wb") as handle:
-        plistlib.dump(record, handle)
-    for name in ("ALTPairingFile.plist", "ALTPairingFile.mobiledevicepairing"):
-        try:
-            shutil.copyfile(target, os.path.join(STATE_DIR, name))
-        except OSError:
-            pass
-    return target
+    state = load_state()
+    state.update(values)
+    with open(os.path.join(STATE_DIR, "barisign.json"), "w") as handle:
+        json.dump(state, handle, indent=2)
+    return state
+
+
+def save_record(record):
+    """Write the normalized pairing record for BariSign and for the apps."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    data = record.as_dict()
+    raw = plistlib.dumps(data)
+    for name in ("PairingFile_RemoteRP.plist", "ALTPairingFile.plist",
+                 "ALTPairingFile.mobiledevicepairing"):
+        path = os.path.join(STATE_DIR, name)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as handle:
+            handle.write(raw)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    return os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist")
 
 
 def ipa_bundle_id(ipa):
@@ -106,236 +105,8 @@ def ipa_bundle_id(ipa):
                 return ""
             info = plistlib.loads(archive.read(names[0]))
             return info.get("CFBundleIdentifier") or ""
-    except Exception:                                         # noqa: BLE001
-        return ""
-
-
-async def write_pairing_file(rsd, ipa, record_path, bundle_id=""):
-    """Copy the pairing file into an installed AltStore/SideStore container."""
-    if not record_path or not os.path.isfile(record_path):
-        return False
-    bundle_id = bundle_id or ipa_bundle_id(ipa)
-    if not bundle_id:
-        return False
-    if bundle_id.startswith("com.altstore.AltStore"):
-        remote = "ALTPairingFile.plist"
-        documents_only = True
-    elif bundle_id.startswith("com.SideStore.SideStore"):
-        remote = "ALTPairingFile.mobiledevicepairing"
-        documents_only = True
-    elif bundle_id.startswith("com.kdt.livecontainer"):
-        remote = "SideStore/Documents/ALTPairingFile.mobiledevicepairing"
-        documents_only = False
-    else:
-        return False
-    try:
-        from pymobiledevice3.services.house_arrest import HouseArrestService
-        service = await HouseArrestService.create(rsd, bundle_id,
-                                                  documents_only=documents_only)
-        async with service:
-            if documents_only:
-                await service.push(record_path, remote, progress_bar=False)
-            else:
-                try:
-                    await service.makedirs(os.path.dirname("/" + remote))
-                except Exception:                             # noqa: BLE001
-                    pass
-                await service.push(record_path, "/" + remote, progress_bar=False)
-        _say("  pairing file written into %s" % bundle_id)
-        return True
-    except Exception as exc:                                    # noqa: BLE001
-        _say("  ! pairing file not written into the app: %s" % exc)
-        return False
-
-
-ENGINE_VERSION = "11.49.0"
-
-
-def platform_blocked():
-    """True where qh3's compiled QUIC module has no wheel (a-Shell/iOS)."""
-    return (os.environ.get("TERM_PROGRAM", "") == "a-Shell"
-            or os.environ.get("BARISIGN_ASHELL") == "1"
-            or sys.platform == "ios")
-
-PURE_DEPS = [
-    # The full pure-Python closure is listed explicitly because the single pip
-    # command below runs with --no-deps (pymobiledevice3 would otherwise try to
-    # replace a-Shell's native cryptography).
-    "qh3<2",
-    "pmd-pytcp",
-    "pmd-net-addr",
-    "pmd-net-proto",
-    "bytestruct",
-    "opack2",
-    "ifaddr",
-    "hyperframe",
-    "typing_extensions",
-    "packaging",
-    "pygnuutils",
-    "questionary",
-    "prompt_toolkit",
-    "rich",
-    "requests",
-    # transitive pure dependencies
-    "Pygments",
-    "markdown-it-py",
-    "mdurl",
-    "arrow",
-    "python-dateutil",
-    "six",
-    "tzdata",
-    "wcwidth",
-    "certifi",
-    "urllib3",
-    "idna",
-    "charset-normalizer",
-    "click",
-    # Pin the engine: 11.55 pulls new modules (developer_disk_image, ipsw_parser,
-    # pyimg4, ...) that are irrelevant here. 11.49 is the version the pairing
-    # host/userspace tunnel imports were verified against.
-    "pymobiledevice3==" + ENGINE_VERSION,
-]
-
-PYTUN_STUB = '''\
-class TunTapDevice:
-    """Stub: the userspace tunnel never creates a kernel utun."""
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError("kernel tun is unavailable; use the userspace tunnel")
-'''
-
-PSUTIL_STUB = '''\
-class Process:
-    pass
-
-
-class ZombieProcess(Exception):
-    pass
-
-
-class NoSuchProcess(Exception):
-    pass
-
-
-class AccessDenied(Exception):
-    pass
-
-
-def process_iter(*args, **kwargs):
-    return []
-
-
-def virtual_memory():
-    class Memory:
-        total = 0
-        available = 0
-        percent = 0
-    return Memory()
-'''
-
-
-def _say(text):
-    print(text, flush=True)
-
-
-def _add_path():
-    for path in (PIP_TARGET, HERE):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-
-
-def _write_stubs():
-    os.makedirs(PIP_TARGET, exist_ok=True)
-    for name, body in (("pytun_pmd3.py", PYTUN_STUB), ("psutil.py", PSUTIL_STUB)):
-        path = os.path.join(PIP_TARGET, name)
-        if not os.path.isfile(path):
-            with open(path, "w") as handle:
-                handle.write(body)
-
-
-def _pip(args):
-    command = [sys.executable, "-m", "pip", "install", "--upgrade",
-               "--only-binary=:all:", "--target", PIP_TARGET] + args
-    _say("  pip %s" % " ".join(args))
-    result = subprocess.run(command)
-    return result.returncode == 0
-
-
-def engine_version():
-    """The pymobiledevice3 version in the local target (not the global one)."""
-    _add_path()
-    try:
-        from importlib.metadata import version
-        return version("pymobiledevice3")
-    except Exception:                                         # noqa: BLE001
-        return ""
-
-
-def engine_ready():
-    if _import_engine(quiet=True) is None:
-        return False
-    return engine_version() == ENGINE_VERSION
-
-
-def setup():
-    """One-time: install pymobiledevice3 and its pure-Python dependencies.
-
-    One pip process on purpose. a-Shell refuses two pip instances at once, and
-    splitting pymobiledevice3 from its dependencies caused exactly that when a
-    previous attempt was still finishing.
-    """
-    if platform_blocked():
-        _say("  ! qh3 (QUIC) has no iOS wheel; a-Shell cannot install the pairing engine")
-        _say("    signing still works; the Wi-Fi install needs a native helper or a computer")
-        return False
-    if os.path.isdir(PIP_TARGET):
-        # A failed earlier attempt can leave a newer engine plus stale dist-info
-        # behind; a clean target makes the pinned version unambiguous.
-        shutil.rmtree(PIP_TARGET, ignore_errors=True)
-    os.makedirs(PIP_TARGET, exist_ok=True)
-    _say("  installing the pairing engine into state/pymd3")
-    ok = _pip(["--no-deps"] + PURE_DEPS)
-    _write_stubs()
-    _add_path()
-    return ok
-
-
-def _import_engine(quiet=False):
-    _add_path()
-    _write_stubs()
-    try:
-        from pymobiledevice3.remote.tunnel_service import PairableHostInfo, serve_pairable_host
-        from pymobiledevice3.remote.userspace_tunnel import establish_userspace_rsd
-        from pymobiledevice3.services.installation_proxy import InstallationProxyService
-        return PairableHostInfo, serve_pairable_host, establish_userspace_rsd, InstallationProxyService
-    except Exception as exc:                                    # noqa: BLE001
-        if not quiet:
-            _say("  ! pairing engine not usable: %s: %s" % (type(exc).__name__, exc))
-        return None
-
-
-def check():
-    """Report the gates without touching the device."""
-    import platform
-    _say("  python      %s" % platform.python_version())
-    try:
-        import cryptography
-        _say("  cryptography %s" % getattr(cryptography, "__version__", "?"))
-    except Exception as exc:                                    # noqa: BLE001
-        _say("  ! cryptography: %s" % exc)
-    engine = _import_engine()
-    if engine is None:
-        _say("  ! run 'sh bin/barisign pair setup' first (or run without --check to install)")
-        return 1
-    installed = engine_version()
-    _say("  engine      imported  %s" % (installed or "?"))
-    if installed and installed != ENGINE_VERSION:
-        _say("  ! expected  %s; run 'sh bin/barisign pair --setup'" % ENGINE_VERSION)
-    try:
-        from ashell_bonjour import is_ashell
     except Exception:                                           # noqa: BLE001
-        is_ashell = lambda: False                              # noqa: E731
-    _say("  a-Shell     %s" % ("yes (Bonjour shim active)" if is_ashell() else "no (raw mDNS)"))
-    return 0
+        return ""
 
 
 def find_ipa(explicit=None):
@@ -346,200 +117,366 @@ def find_ipa(explicit=None):
                     os.path.join(ROOT, "*-signed.ipa")):
         candidates.extend(glob.glob(pattern))
     candidates = [path for path in candidates if os.path.isfile(path)]
-    if not candidates:
-        return ""
-    return max(candidates, key=os.path.getmtime)
+    return max(candidates, key=os.path.getmtime) if candidates else ""
 
 
-def _patch_bonjour():
-    try:
-        from ashell_bonjour import patch
-    except Exception:                                           # noqa: BLE001
-        return False
-    try:
-        return patch()
-    except Exception as exc:                                    # noqa: BLE001
-        _say("  ! Bonjour shim failed: %s" % exc)
-        return False
+# --------------------------------------------------------------------------
+# Pairing
+# --------------------------------------------------------------------------
 
+async def pair_target(timeout, identity):
+    """Advertise BariSign, accept one device-initiated pairing."""
+    result = asyncio.get_running_loop().create_future()
 
-async def _run(ipa, pair_only=False, udid="", timeout=None):
-    engine = _import_engine()
-    if engine is None:
-        return 2
-    PairableHostInfo, serve_pairable_host, establish_userspace_rsd, InstallationProxyService = engine
-    _patch_bonjour()
-
-    if not pair_only and not udid and not ipa:
-        _say("  ! no signed IPA found")
-        _say("    sign on the signer first (sh bin/barisign sign),")
-        _say("    or pass --ipa FILE.")
-        return 2
-
-    found_udid = normalise_udid(udid) or udid
-    rsd = None
-    normalized = ""
-    if udid and not pair_only:
-        _say("  using        already paired %s" % udid)
-    else:
-        host = PairableHostInfo(name="BariSign", model="Mac17,7")
+    async def handle(reader, writer):
+        if result.done():
+            writer.close()
+            return
+        peer = writer.get_extra_info("peername")
+        host = pairing.PairableHost(reader, writer, identity)
 
         def pin(code):
             _say("")
-            _say("  target pairing code:  %s" % code)
+            _say("  pairing code:  %s" % code)
+            _say("  enter it on the TARGET now")
             _say("")
 
-        def waiting(seconds):
-            _say("  waiting for the target to pair (%ds)" % int(seconds))
-
-        _say("")
-        _say("  signer: advertising as BariSign")
-        _say("  target: Settings > Privacy & Security > Developer Mode > Paired Macs")
-        _say("          (or Settings > Developer > Paired Macs) -> BariSign -> Pair")
-        _say("")
         try:
-            result = await serve_pairable_host(host, pin_callback=pin,
-                                               waiting_callback=waiting,
-                                               timeout=timeout)
-        except asyncio.TimeoutError:
-            _say("  ! timed out: the target never paired")
-            return 2
+            info = await host.accept(pin)
+            if not result.done():
+                result.set_result((info, (peer[0] if peer else "").split("%", 1)[0]))
         except Exception as exc:                                # noqa: BLE001
-            _say("  ! pairing failed: %s" % exc)
-            return 2
-
-        device = getattr(result, "peer_device", None)
-        name = getattr(device, "name", "device")
-        peer_udid = normalise_udid(getattr(device, "udid", ""))
-        _say("  paired       %s" % name)
-        _say("  peer UDID    %s" % (peer_udid or getattr(device, "udid", "") or "(empty)"))
-        record = getattr(result, "record_path", "")
-        _say("  record       %s" % (record or "?"))
-        normalized = ""
-        if record and os.path.isfile(str(record)):
+            if not result.done():
+                result.set_exception(exc)
+        finally:
             try:
-                normalized = normalise_pair_record(str(record))
-                _say("  pairing file %s" % normalized)
-            except Exception as exc:                            # noqa: BLE001
-                _say("  ! pairing file normalization failed: %s" % exc)
-        rsd = None
-        tunnel_udid = ""
+                writer.close()
+            except Exception:                                   # noqa: BLE001
+                pass
+
+    server = await asyncio.start_server(handle, "0.0.0.0", 0)
+    port = server.sockets[0].getsockname()[1]
+    txt = pairing.mdns_txt(identity)
+    _say("")
+    _say("  signer: advertising as BariSign")
+    _say("  target: Settings > Privacy & Security > Developer Mode > Paired Macs")
+    _say("          (or Settings > Developer > Paired Macs)")
+    _say("          pick BariSign, then enter the code printed here")
+    _say("")
+    async with mdns.register(mdns.PAIRABLE_HOST, "BariSign", port, txt):
         try:
-            rsd = await establish_userspace_rsd(serial=peer_udid or None)
-            tunnel_udid = normalise_udid(getattr(rsd, "udid", ""))
-            _say("  tunnel UDID  %s" % (tunnel_udid or getattr(rsd, "udid", "") or "(empty)"))
-        except Exception as exc:                                # noqa: BLE001
-            _say("  ! tunnel/UDID query failed: %s" % exc)
-        found_udid = peer_udid or tunnel_udid or normalise_udid(udid)
-        if found_udid:
-            save_udid(found_udid, record)
-            _say("  UDID saved   %s" % found_udid)
-        if normalized:
-            _say("  pairing names state/ALTPairingFile.plist + .mobiledevicepairing")
-    if pair_only:
-        return 0
-    if not normalized:
-        candidate = os.path.join(STATE_DIR, "ALTPairingFile.plist")
-        if os.path.isfile(candidate):
-            normalized = candidate
-    if not ipa:
-        _say("  ! no signed IPA found")
-        return 2
+            return await asyncio.wait_for(result, timeout)
+        except asyncio.TimeoutError:
+            raise RuntimeError("timed out: the target never paired")
+        finally:
+            server.close()
+            await server.wait_closed()
 
-    _say("  installing   %s" % ipa)
+
+# --------------------------------------------------------------------------
+# Target discovery
+# --------------------------------------------------------------------------
+
+def _sort_addresses(addresses):
+    def key(address):
+        try:
+            import ipaddress
+            parsed = ipaddress.ip_address(address.split("%", 1)[0])
+            return (parsed.is_link_local, parsed.version)
+        except ValueError:
+            return (True, 9)
+    return sorted(addresses, key=key)
+
+
+def _choose_host(services, udid, peer_ip, host=None, port=0):
+    if host:
+        return host, port
+    candidates = []
+    for service in services:
+        properties = service.get("properties") or {}
+        identifier = properties.get("identifier") or ""
+        addresses = _sort_addresses(service.get("addresses") or [])
+        if not addresses or not service.get("port"):
+            continue
+        candidates.append((service, identifier, addresses))
+    if not candidates:
+        return "", 0
+    if udid:
+        wanted = udid.lower()
+        for service, identifier, addresses in candidates:
+            if identifier.lower() == wanted or wanted in identifier.lower():
+                return addresses[0], service["port"]
+    if peer_ip:
+        for service, _identifier, addresses in candidates:
+            if peer_ip in addresses:
+                return peer_ip, service["port"]
+    if len(candidates) == 1:
+        return candidates[0][2][0], candidates[0][0]["port"]
+    _say("")
+    _say("  more than one device advertises pairing:")
+    for index, (service, identifier, addresses) in enumerate(candidates, 1):
+        name = (service.get("properties") or {}).get("name") or identifier or "?"
+        _say("    %d. %s  %s" % (index, name, addresses[0]))
+    _say("")
     try:
-        if rsd is None:
-            rsd = await establish_userspace_rsd(serial=found_udid or None)
-    except Exception as exc:                                    # noqa: BLE001
-        _say("  ! tunnel failed: %s" % exc)
-        return 3
+        choice = int(input("  number: ").strip() or "1")
+    except (ValueError, EOFError):
+        choice = 1
+    choice = max(1, min(len(candidates), choice))
+    service = candidates[choice - 1]
+    return service[2][0], service[0]["port"]
 
-    def progress(percent, *args):
-        sys.stdout.write("\r  install      %3d%%" % int(percent))
+
+async def find_service(udid, peer_ip, host, port, timeout=6):
+    if host:
+        return host, port
+    services = mdns.browse(mdns.REMOTE_PAIRING, timeout=timeout)
+    return _choose_host(services, udid, peer_ip, host, port)
+
+
+# --------------------------------------------------------------------------
+# The tunnel / install flow
+# --------------------------------------------------------------------------
+
+class Session:
+    def __init__(self, tunnel, stack, services, properties, xpc=None):
+        self.tunnel = tunnel
+        self.xpc = xpc
+        self.stack = stack
+        self.services = services
+        self.properties = properties
+        self.udid = normalise_udid(properties.get("UniqueDeviceID", ""))
+        self.address = tunnel["server_address"]
+
+    async def close(self):
+        await self.stack.close()
+        if self.xpc is not None:
+            try:
+                await self.xpc.close()
+            except Exception:                                  # noqa: BLE001
+                pass
+        try:
+            await self.tunnel["stream"].wait_closed()
+        except Exception:                                       # noqa: BLE001
+            pass
+
+
+async def open_session(record, host, port, identity_udid=""):
+    tunnel = await rpp_tunnel.open_tunnel(host, port, record)
+    stack = tcp6.TcpStack(tunnel["link"], tunnel["client_address"])
+    await stack.start()
+    try:
+        connection = await stack.connect(tunnel["server_address"], tunnel["rsd_port"], timeout=20)
+        services, properties, xpc = await remote_xpc.connect_rsd(connection, connection)
+    except Exception:
+        await stack.close()
+        raise
+    _say("  device       %s" % (properties.get("ProductType", "?")))
+    return Session(tunnel, stack, services, properties, xpc)
+
+
+async def install(session, ipa, record_path):
+    install_port = remote_xpc.service_port(session.services, device_services.INSTALL_SERVICE)
+    afc_port = remote_xpc.service_port(session.services, device_services.AFC_SERVICE)
+    bundle_id = ipa_bundle_id(ipa)
+    _say("  installing   %s" % os.path.basename(ipa))
+
+    def progress(done, total):
+        percent = int(done * 100 / max(1, total))
+        sys.stdout.write("\r  upload       %3d%%" % percent)
         sys.stdout.flush()
 
+    await device_services.install_ipa(
+        session.stack, session.address, install_port, afc_port, ipa,
+        progress=progress,
+        log=lambda text: _say("\r  install      %s" % text))
+    _say("\r  install      ok")
+
+    if not bundle_id:
+        bundle_id = ipa_bundle_id(ipa)
+    if record_path and os.path.isfile(record_path) and bundle_id:
+        await _write_pairing_file(session, bundle_id, record_path)
+
+
+async def _write_pairing_file(session, bundle_id, record_path):
+    with open(record_path, "rb") as handle:
+        data = handle.read()
+    if bundle_id.startswith("com.altstore.AltStore"):
+        documents_only, names = True, ("ALTPairingFile.plist", "ALTPairingFile.mobiledevicepairing")
+    elif bundle_id.startswith("com.SideStore.SideStore"):
+        documents_only, names = True, ("ALTPairingFile.mobiledevicepairing", "ALTPairingFile.plist")
+    elif bundle_id.startswith("com.kdt.livecontainer"):
+        documents_only, names = False, ("SideStore/Documents/ALTPairingFile.mobiledevicepairing",)
+    else:
+        return
+    port = remote_xpc.service_port(session.services, device_services.HOUSE_ARREST_SERVICE)
     try:
-        async with InstallationProxyService(lockdown=rsd) as service:
-            await service.install_from_local(ipa, developer=True, handler=progress)
-        _say("")
-        _say("  installed")
-        if normalized:
-            await write_pairing_file(rsd, ipa, normalized)
-            _say("  pairing file ready for AltStore/SideStore")
-        return 0
+        afc, connection = await device_services.vend_container(
+            session.stack, session.address, port, bundle_id, documents_only=documents_only)
+        try:
+            for name in names:
+                directory = os.path.dirname(name)
+                if directory:
+                    await afc.makedirs("/" + directory)
+                await afc.upload("/" + name, data)
+            _say("  pairing file written into %s" % bundle_id)
+        finally:
+            await connection.close()
     except Exception as exc:                                    # noqa: BLE001
+        _say("  ! pairing file not written into the app: %s" % exc)
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def check():
+    _say("  python       %s" % platform.python_version())
+    try:
+        import cryptography
+        _say("  cryptography %s" % getattr(cryptography, "__version__", "?"))
+    except Exception as exc:                                    # noqa: BLE001
+        _say("  ! cryptography: %s" % exc)
+        return 1
+    try:
+        import tls_psk, tcp6, remote_xpc, device_services, pairing, rpp_tunnel, mdns  # noqa: F401
+    except Exception as exc:                                    # noqa: BLE001
+        _say("  ! engine import failed: %s: %s" % (type(exc).__name__, exc))
+        return 1
+    _say("  engine       pure Python, no qh3/sslpsk/native wheel")
+    _say("  tunnel       TLS 1.2 PSK 0x00AF/0x008C + userspace TCP")
+    _say("  status       ready (device path untested)")
+    return 0
+
+
+def _record_identity():
+    identity = pairing.HostIdentity.load_or_create(IDENTITY_PATH)
+    return identity
+
+
+def _load_record():
+    try:
+        return rpp_tunnel.load_record(RECORD_PATH)
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
+async def _run(args):
+    state = load_state()
+    identity = _record_identity()
+    record = _load_record()
+    udid = normalise_udid(args.get("udid") or state.get("udid") or "")
+    peer_ip = state.get("peer_ip") or ""
+    timeout = args.get("timeout") or 300
+
+    if args.get("repair"):
+        # A fresh host identity is the only way to make an already-paired target
+        # offer a new pairing prompt.
+        identity = pairing.HostIdentity.generate()
+        identity.save(IDENTITY_PATH)
+        record = None
+    if record is None:
+        _say("  no pairing file yet; pairing the target first")
+        info, peer_ip = await pair_target(timeout, identity)
+        pseudo = pairing.PairingRecord(identity, info)
+        record_path = save_record(pseudo)
+        udid = normalise_udid(info.get("udid", ""))
+        save_state(paired=True, udid=udid, peer_ip=peer_ip,
+                   peer_name=info.get("name", ""), record=record_path)
+        _say("  paired       %s" % (info.get("name") or "target"))
+        _say("  UDID         %s" % (udid or "(will read it from the tunnel)"))
+        record = rpp_tunnel.load_record(record_path)
+    else:
+        _say("  pairing file %s" % RECORD_PATH)
+
+    host, port = args.get("host", ""), args.get("port", 0)
+    if not host:
+        for attempt in range(3):
+            host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
+            if host and port:
+                break
+            await asyncio.sleep(2)
+    if args.get("host") and not port:
+        _say("  ! --host needs --port (the _remotepairing service port)")
+        return 2
+    if not host or not port:
+        _say("  ! the target's _remotepairing service was not found")
+        _say("    both devices must be on the same Wi-Fi and the target unlocked")
+        return 2
+    _say("  target       %s:%d" % (host, port))
+
+    session = None
+    try:
+        session = await asyncio.wait_for(open_session(record, host, port, udid), 90)
+        if session.udid:
+            if udid and udid != session.udid:
+                _say("  ! the tunnel reports a different UDID than the pairing record")
+            udid = session.udid
+            save_state(udid=udid, paired=True)
+        if not udid:
+            _say("  ! could not read the target's UDID from the tunnel")
+            return 2
+        _say("  UDID         %s" % udid)
+        if args.get("pair_only"):
+            _say("  done         pairing file and UDID saved")
+            return 0
+
+        ipa = find_ipa(args.get("ipa"))
+        if not ipa:
+            _say("  ! no signed IPA found")
+            _say("    sign on the signer first (sh bin/barisign sign), or pass --ipa FILE")
+            return 2
+        await install(session, ipa, RECORD_PATH)
         _say("")
-        _say("  ! install failed: %s" % exc)
-        return 3
+        _say("  next         on the target: Settings > General > VPN & Device Management")
+        _say("               trust the developer, then open the app")
+        return 0
+    finally:
+        if session is not None:
+            await session.close()
 
 
 def main(argv):
-    explicit_ipa = ""
-    pair_only = False
-    udid = ""
     if "--help" in argv or "-h" in argv:
         _say("sh bin/barisign pair                 pair the target and install the newest -signed.ipa")
         _say("sh bin/barisign pair --ipa FILE      use a specific signed IPA")
-        _say("sh bin/barisign pair --pair-only     pair only; print UDID, write pairing file")
-        _say("sh bin/barisign pair --pair-only --timeout 120")
-        _say("sh bin/barisign pair --udid UDID     install to an already paired device")
-        _say("sh bin/barisign pair --check         check python, cryptography and the engine")
-        _say("sh bin/barisign pair --setup         install the engine only")
-        _say("sh bin/barisign pair --ensure        install/update only when needed")
+        _say("sh bin/barisign pair --pair-only     pair only; save the UDID and pairing file")
+        _say("sh bin/barisign pair --udid UDID     use an already paired target")
+        _say("sh bin/barisign pair --host H --port P   skip Bonjour (debugging)")
+        _say("sh bin/barisign pair --timeout N     give up if the target never pairs")
+        _say("sh bin/barisign pair --check         verify the pure engine imports")
+        _say("sh bin/barisign pair --setup         verify the engine (no download needed)")
         return 0
-    if "--ipa" in argv:
-        position = argv.index("--ipa") + 1
-        if position < len(argv):
-            explicit_ipa = argv[position]
-    if "--udid" in argv:
-        position = argv.index("--udid") + 1
-        if position < len(argv):
-            udid = argv[position]
-    pair_only = "--pair-only" in argv
-    debug = "--debug" in argv
-    timeout = None
-    if "--timeout" in argv:
-        position = argv.index("--timeout") + 1
-        if position < len(argv):
-            try:
-                timeout = max(10, int(argv[position]))
-            except ValueError:
-                timeout = None
 
-    if platform_blocked():
-        _say("  ! qh3 (QUIC) has no iOS wheel; the pairing engine cannot run in a-Shell")
-        _say("    signing still works; the Wi-Fi install needs a native helper or a computer")
-        return 2
-    if "--ensure" in argv:
-        if engine_ready():
-            _say("  engine    ok  %s" % ENGINE_VERSION)
-            return 0
-        _say("  engine    installing/updating to %s" % ENGINE_VERSION)
-        if not setup() or not engine_ready():
-            _say("  ! engine is still not usable; see the pip output above")
-            return 1
-        _say("  engine    ok  %s" % ENGINE_VERSION)
-        return 0
+    def value(flag, default=""):
+        if flag in argv:
+            position = argv.index(flag) + 1
+            if position < len(argv):
+                return argv[position]
+        return default
+
+    args = {
+        "ipa": value("--ipa"),
+        "udid": value("--udid"),
+        "host": value("--host"),
+        "port": int(value("--port", "0") or 0),
+        "timeout": int(value("--timeout", "0") or 0) or None,
+        "pair_only": "--pair-only" in argv,
+        "repair": "--repair" in argv,
+        "debug": "--debug" in argv,
+    }
     if "--check" in argv:
         return check()
-    if "--setup" in argv:
-        return 0 if setup() else 1
-
-    if _import_engine(quiet=True) is None:
-        _say("  ! the pairing engine is not installed")
-        _say("    run: sh install.sh")
-        _say("    or:  sh bin/barisign pair --setup")
-        return 1
-
-    ipa = find_ipa(explicit_ipa)
+    if "--setup" in argv or "--ensure" in argv:
+        return check()
     try:
-        return asyncio.run(_run(ipa, pair_only=pair_only, udid=udid, timeout=timeout))
+        return asyncio.run(_run(args))
     except KeyboardInterrupt:
         _say("")
         return 130
     except Exception as exc:                                    # noqa: BLE001
         _say("  ! %s" % exc)
-        if debug:
+        if args["debug"]:
             traceback.print_exc()
         return 1
 

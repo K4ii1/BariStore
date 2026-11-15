@@ -69,6 +69,13 @@ download_all() {
     fetch poc/pair_probe.py                   poc/pair_probe.py                || fail=1
     fetch poc/pair_install.py                 poc/pair_install.py              || fail=1
     fetch poc/ashell_bonjour.py               poc/ashell_bonjour.py            || fail=1
+    fetch poc/tls_psk.py                      poc/tls_psk.py                   || fail=1
+    fetch poc/tcp6.py                         poc/tcp6.py                      || fail=1
+    fetch poc/remote_xpc.py                   poc/remote_xpc.py                || fail=1
+    fetch poc/device_services.py              poc/device_services.py           || fail=1
+    fetch poc/pairing.py                      poc/pairing.py                   || fail=1
+    fetch poc/rpp_tunnel.py                   poc/rpp_tunnel.py                || fail=1
+    fetch poc/mdns.py                         poc/mdns.py                      || fail=1
     fetch third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py || fail=1
     fetch third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py || fail=1
     fetch third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem || fail=1
@@ -85,7 +92,9 @@ check_compiles() {
     bad=""
     for f in poc/poc_login.py poc/poc_portal.py poc/barisign.py poc/signer.py \
              poc/download.py poc/pair_probe.py poc/pair_install.py \
-             poc/ashell_bonjour.py third_party/sideinstaller/signin.py \
+             poc/ashell_bonjour.py poc/tls_psk.py poc/tcp6.py poc/remote_xpc.py \
+             poc/device_services.py poc/pairing.py poc/rpp_tunnel.py poc/mdns.py \
+             third_party/sideinstaller/signin.py \
              third_party/sideinstaller/portal.py; do
         if ! python3 -c "compile(open('$f').read(), 'x', 'exec')" 2>/dev/null; then
             bad="$bad $f"
@@ -101,6 +110,7 @@ check_compiles() {
 works() {
     python3 poc/barisign.py --help >/dev/null 2>&1 \
         && python3 poc/poc_portal.py --help >/dev/null 2>&1 \
+        && python3 poc/pair_install.py --check >/dev/null 2>&1 \
         && sh -n bin/barisign && sh -n bin/update
 }
 
@@ -134,28 +144,19 @@ while [ "$attempt" -le 2 ]; do
 done
 
 
-# The pairing engine is a one-time pip install. One pip process only: a-Shell
-# refuses a second concurrent pip, and splitting the engine from its
-# dependencies caused that when a previous attempt was still finishing.
-setup_engine() {
+# The pairing engine is pure Python now: there is nothing to download and no
+# pip process.  This step only proves that every module imports with the
+# cryptography that a-Shell ships.
+check_engine() {
     printf '  engine    ...'
-    python3 -u poc/pair_install.py --ensure >engine.log 2>&1
-    code=$?
-    if [ "$code" -eq 0 ]; then
+    if python3 -u poc/pair_install.py --check >engine.log 2>&1; then
         printf '\r\033[2K  engine    ok\n'
         rm -f engine.log
         return 0
     fi
-    if [ "$code" -eq 2 ]; then
-        printf '\r\033[2K  engine    unavailable\n'
-        rm -f engine.log
-        printf '  ! qh3 (QUIC) has no iOS wheel; a-Shell cannot install the pairing engine.\n'
-        printf '  ! signing works; the Wi-Fi install needs a native helper or a computer.\n'
-        return 0
-    fi
     printf '\r\033[2K  engine    failed\n'
-    printf '  ! the pairing engine is not installed; signing still works.\n'
-    printf '  ! see engine.log; quit other pip/a-Shell windows, then run sh install.sh again.\n'
+    printf '  ! the pure pairing engine does not import; signing still works.\n'
+    printf '  ! see engine.log\n'
     return 1
 }
 
@@ -165,7 +166,7 @@ if [ "$fail" -ne 0 ] || ! works; then
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
     exit 1
 fi
-if ! setup_engine; then
+if ! check_engine; then
     exit 1
 fi
 printf '  ready     sh bin/barisign\n'

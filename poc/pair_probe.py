@@ -101,7 +101,10 @@ def _txt_record(items):
         value = value.encode("utf-8")
         if len(key) > 255 or len(value) > 255:
             continue
-        payload += bytes([len(key)]) + key + bytes([len(value)]) + value
+        entry = key + b"=" + value
+        if len(entry) > 255:
+            continue
+        payload += bytes([len(entry)]) + entry
     return payload
 
 

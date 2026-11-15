@@ -33,5 +33,6 @@ secrets*
 __pycache__/
 *.pyc
 
-# installer log from the one-time pairing-engine setup
+# installer log when the engine check fails
 /engine.log
+/tests/*.log

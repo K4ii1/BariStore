@@ -68,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.8.8"
+VERSION = "0.9.0"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
@@ -975,7 +975,7 @@ def cmd_udid(argv):
         print()
         pair = os.path.join(_HERE, "pair_install.py")
         code = subprocess.call([sys.executable, "-u", pair, "--pair-only",
-                                "--timeout", "120"])
+                                "--timeout", "180"])
         udid = extract_udid(load_state().get("udid", ""))
         if code != 0 or not udid:
             print("  pairing did not return a UDID; falling back to the page")
@@ -1337,7 +1337,7 @@ def cmd_guided(argv):
 
 
 def cmd_pair(argv):
-    """Pair the target and install the signed IPA (the engine in pair_install.py)."""
+    """Pair the target and install the signed IPA (pair_install.py)."""
     pair = os.path.join(_HERE, "pair_install.py")
     return subprocess.call([sys.executable, "-u", pair] + list(argv))
 
@@ -1366,7 +1366,7 @@ _OPTIONS = {
         ("--ipa FILE", "install this signed IPA"),
         ("--udid UDID", "reuse an existing pairing for this UDID"),
         ("--check", "python, cryptography and engine import only"),
-        ("--setup", "install the engine only"),
+        ("--setup", "verify the pure engine (nothing is downloaded)"),
         ("--timeout N", "give up if the target does not pair"),
     ),
     "login": (
