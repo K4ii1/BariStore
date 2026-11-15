@@ -4,10 +4,11 @@ Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classi
 **with no computer**, using your own free Apple ID. The design needs **two iOS/iPadOS devices on the
 same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 
-> **Current blocker:** the signer's Wi-Fi install engine needs **qh3**, a compiled QUIC library with
-> **no iOS wheel**. a-Shell cannot install or build it, so the pairing install cannot run in a-Shell
-> yet. Signing, the portal and the signed IPA are unaffected; the install needs a native helper or,
-> for development only, a computer until qh3 is replaced.
+> **New engine, device test pending:** `sh bin/barisign pair` now runs entirely in a-Shell. The
+> RPPairing host, TLS 1.2 PSK tunnel, userspace TCP, RSD, AFC and `installation_proxy` are pure Python
+> on the `cryptography` 3.4.8 that a-Shell ships — no qh3, no sslpsk, no pip, no native wheel, no
+> second app. The whole chain is tested on Linux; the **on-device run is the remaining gate**.
+> See `docs/NEXT_SESSION.md`.
 
 | Role | What it is | What it runs |
 |---|---|---|
@@ -18,9 +19,10 @@ Both devices may be an **iPhone or an iPad**; iOS and iPadOS both work. The role
 They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSign.
 
 > **Status:** the signer path is verified on a real device running iOS 27: Apple sign-in, the
-> developer portal, signing, and launching the signed app. The **pair-first UDID** and the fallback
-> **UDID page** are written; the **signer → target pairing install** is blocked by the native qh3
-> dependency described above.
+> developer portal, signing, and launching the signed app. The **pure pairing/tunnel/install engine**
+> is written and passes its Linux protocol tests; the **pair-first UDID** and the
+> **signer → target pairing install** still need the user's device run. The fallback **UDID page** is
+> written too.
 
 ---
 
@@ -40,10 +42,10 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
    (`Documents/ALTPairingFile.mobiledevicepairing`) so the installed app can refresh itself.
 6. On the target, trust the developer and open the app.
 
-> **Install blocker:** the pairing engine depends on qh3, a compiled QUIC module. PyPI has no iOS
-> wheel, and a-Shell cannot build native extensions. `sh bin/barisign pair` therefore stops with a
-> clear message; signing and the UDID page still work. The install needs a native helper or a computer
-> until a pure/native replacement is chosen.
+> **How the install works:** the same pairing record opens the target's `_remotepairing` service over
+> Wi-Fi. A pure TLS 1.2 PSK tunnel carries a small userspace TCP stack; `installation_proxy` installs
+> the staged IPA as a developer package, and house_arrest writes the pairing file into the app. The
+> target only trusts the developer and opens the app. **Untested on a device until the user runs it.**
 
 If pairing cannot produce a UDID (old target, Developer Mode not available), the signer falls back to
 a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<port>/`, installs the
@@ -58,10 +60,10 @@ a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<p
 | **Apple sign-in** (free ID, 2FA) | ✅ verified |
 | **Device, certificate, profile** (developer portal) | ✅ verified |
 | **Download + sign + verify** | ✅ verified — the signed IPA installs and the app launches on a device |
-| **UDID from pairing** (pair-first) | ❌ blocked by qh3 (no iOS wheel) |
+| **UDID from pairing** (pair-first) | ⚠️ pure engine written, Linux-tested; device run pending |
 | **UDID page** fallback served by the signer | ⚠️ written, untested on a device |
-| **Signer → target pairing install** (`sh bin/barisign pair`) | ❌ blocked by qh3 (no iOS wheel) |
-| **Two devices, no computer** | the design; the install engine needs a native replacement |
+| **Signer → target pairing install** (`sh bin/barisign pair`) | ⚠️ pure engine written, Linux-tested; device run pending |
+| **Two devices, no computer** | the design; the pure engine removes the last native dependency |
 
 ---
 
@@ -76,8 +78,8 @@ sh install.sh
 ```
 
 `sh bin/update` self-updates everything in one command: it reads the newest `install.sh` from the
-repository and applies it (files, engine, and `bin/update` itself). Your saved state in `state/` is kept.
-`install.sh` installs the pairing engine; `sh bin/update` keeps it in sync (only reinstalls when the pinned version changes); `pair` never starts a second download.
+repository and applies it (files and `bin/update` itself). Your saved state in `state/` is kept.
+There is **no engine download and no pip step**: the pairing engine is part of the program files.
 
 ```
 sh bin/barisign          # guided: check -> variant -> download -> pair/UDID -> Apple -> portal -> sign -> install
@@ -96,7 +98,7 @@ sh bin/barisign --help   # every command
 | Apple account | a **free** Apple ID — no paid Developer Program membership |
 | **Signer** | **a-Shell** (free, App Store) — BariSign runs here |
 | **Target** | no extra app; Safari and Settings only |
-| Computer | **none** for signing; the Wi-Fi install is blocked until qh3 is replaced |
+| Computer | **none** — signing and the Wi-Fi install are designed to run entirely on the signer |
 | Network | both devices on the same **Wi-Fi**; internet for Apple and the IPA download |
 | On the target | LocalDevVPN for SideStore to refresh apps after install |
 
@@ -164,5 +166,5 @@ and you are shown which version you are about to get. `variants.json` is the mac
 BariSign's own code is **MIT**. `third_party/sideinstaller/` is under that project's own
 **non-commercial** licence, so **the repository as a whole may not be used commercially**. The forks
 planned in `docs/FORK_PLAN.md` are **AGPL-3.0** (SideStore, AltStore and LiveContainer are all AGPL-3.0).
-`bin/barisign pair` installs `pymobiledevice3` (GPL-3.0) separately on the signer; it is not vendored.
-Details in `THIRD_PARTY_NOTICES.md`.
+The pure pairing engine was written from the MIT `jkcoxson/idevice` protocol sources and Apple's public
+formats; no GPL code is vendored or installed at run time. Details in `THIRD_PARTY_NOTICES.md`.

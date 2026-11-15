@@ -66,10 +66,17 @@ as-is; no code is copied from them here.
 | isideload (`nab138/isideload`) | MIT | protocol reference; **preferred source** for reimplementation |
 | idevice (`jkcoxson/idevice`) | MIT | protocol reference; **preferred source** for reimplementation |
 | zsign (`zhlynn/zsign`) | MIT | reference for the Apple CMS layout |
-| pymobiledevice3 (`doronz88/pymobiledevice3`) | GPL-3.0 | runtime dependency for `bin/barisign pair`; installed **separately** on the device into `state/pymd3` and imported there. No code is copied into this repository and it is not redistributed by it. |
+| pymobiledevice3 (`doronz88/pymobiledevice3`) | GPL-3.0 | protocol reference only for the pure engine; **not installed at run time**, not vendored and not redistributed. No code is copied into this repository. |
 | a-Shell (`holzschu/a-Shell`) | BSD-3-Clause | the on-device runtime (user installs it) |
 | LocalDevVPN / StosVPN | see upstream | runtime dependency (user installs it) |
 | anisette servers | see upstream | network service at runtime |
+
+## The pure pairing engine
+
+`poc/tls_psk.py`, `tcp6.py`, `remote_xpc.py`, `device_services.py`, `pairing.py`, `rpp_tunnel.py` and
+`mdns.py` are original MIT implementations written from the **MIT** `jkcoxson/idevice` protocol
+sources (`remote_pairing/`, `xpc/`, `services/`) and Apple's publicly documented wire formats. They
+contain no code from `pymobiledevice3` (GPL-3.0) or `third_party/sideinstaller/` (non-commercial).
 
 ## Licence policy for future work
 

@@ -29,11 +29,13 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
   free-profile apps on iOS 27: `MIInstallerErrorDomain` 111, *"free provisioning profile ... not
   allowed to be installed from this source"*. The intended signer command is `sh bin/barisign pair`;
   the target picks **BariSign** under Settings → Developer → Paired Macs and enters the code.
-- **Blocker (2026-11-15): qh3 has no iOS wheel.** `pymobiledevice3`'s RPPairing tunnel imports
-  `qh3`, a compiled QUIC library; PyPI publishes only platform wheels (no iOS) and a-Shell cannot
-  build native extensions. The pure a-Shell pairing engine therefore cannot run. Signing/portal
-  work; the no-computer install needs a native helper (MIT `idevice`) or a computer until a
-  replacement is chosen. See `docs/PAIRING_INSTALL.md` and `docs/RESULTS.md`.
+- **Pure pairing engine (2026-11-15, replaces the qh3 blocker).** `pymobiledevice3` needs `qh3`
+  (native, no iOS wheel) and APIs newer than a-Shell's `cryptography` 3.4.8, so it is no longer used.
+  `sh bin/barisign pair` now runs a self-contained MIT Python stack: RPPairing host (SRP-6a, TLV8,
+  OPACK), pair-verify, **TLS 1.2 PSK** (0x00AF/0x008C — the suites iOS actually negotiates, *not*
+  TLS 1.3), a minimal IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and
+  `installation_proxy`. No pip, no native wheel, no GPL runtime. The Linux tests are in `tests/`;
+  the **on-device run is the remaining gate**. See `docs/NEXT_SESSION.md` and `docs/RESULTS.md`.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.
 - Test devices are roles, not hardware: either device can be the signer or the target. Both run
   iOS/iPadOS 27+; a-Shell is installed only on the signer.
@@ -54,9 +56,9 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
   licence text, attribution and a list of our changes), so the repo as a whole cannot be MIT or
   commercial. Never copy that code into MIT files; prefer reimplementing from MIT sources
   (`nab138/isideload`, `jkcoxson/idevice`). See `THIRD_PARTY_NOTICES.md`.
-- **pymobiledevice3** (GPL-3.0) is installed **separately** on the signer by `bin/barisign pair`; it is not
-  vendored and no code from it is copied into this repository. The wrapper is MIT; if redistributed
-  with the library, treat that combination as GPL-3.0.
+- **No GPL runtime anymore.** The pure engine is written from the MIT `jkcoxson/idevice` protocol
+  sources and Apple's public formats; `pymobiledevice3` is a protocol reference only and is not
+  installed by BariSign. Do not copy GPL code into `poc/`.
 - Step 1 PoC: `poc/poc_login.py` (MIT) + `third_party/sideinstaller/signin.py` (non-MIT).
 
 ## What we are building
@@ -123,9 +125,9 @@ The a-Shell interface (no Shortcuts):
 
 - Budget ~5 USD total. Be token-frugal: grep/head/tail instead of dumping whole files.
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
-- Stages 1–2 are verified on device, 3 is written; the plan is `docs/PLAN_V2.md`, the verified facts
-  are in `docs/RESULTS.md`.
-- Next: resolve the qh3 blocker (native helper or a pure replacement); signing works meanwhile.
+- Stages 1–2 are verified on device; the pairing/tunnel/install engine is written and Linux-tested
+  but not device-verified. The plan is `docs/PLAN_V2.md`, verified facts are in `docs/RESULTS.md`.
+- Next: run the on-device gates in `docs/NEXT_SESSION.md` (`pair --check`, `--pair-only`, `pair`).
 
 ## Verified / unverified convention
 

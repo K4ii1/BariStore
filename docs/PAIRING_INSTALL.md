@@ -1,91 +1,70 @@
 # Pairing + `installation_proxy` on iOS 27 — what is possible
 
-Status: **blocked on 2026-11-15.** The pure-Python route in section 0 cannot run in a-Shell:
-`pymobiledevice3`'s RPPairing tunnel imports `qh3`, a **compiled QUIC library**, and PyPI has no
-iOS wheel. a-Shell cannot build native extensions, and pip's attempt to build qh3 from its sdist
-is what produced the "Too many instances" metadata error. Signing/portal still work; the Wi-Fi
-install needs a native helper (MIT `idevice`) or a computer until qh3 is replaced.
+Status (2026-11-15): **the pure route is implemented.** `sh bin/barisign pair` now pairs the target
+from Settings, opens the RPPairing tunnel and installs the signed IPA with `installation_proxy`,
+entirely in a-Shell with no pip, no native wheel and no second app. The engine is Linux-tested; the
+**on-device run is the remaining gate** (`docs/NEXT_SESSION.md`).
 
-The question: can BariSign install its signed IPA on the **target** device with **no computer**, using
-pairing plus `installation_proxy`, and generate pairing files that AltStore and SideStore can
-use?
+The question was: can BariSign install its signed IPA on the **target** with **no computer**, using
+pairing plus `installation_proxy`, and generate pairing files that AltStore and SideStore can use?
 
-Short answer: **the pure-Python route is blocked.** `pymobiledevice3`'s `remote pair-host` and
-userspace tunnel look ideal, but the tunnel imports **qh3**, a compiled QUIC library with no iOS
-wheel. a-Shell cannot install/build it, so the engine cannot run there. The remaining routes are a
-native helper built from the MIT `idevice`/`isideload` stack, a one-time computer, or a pure/native
-replacement for qh3 (a security-critical port, not a small patch).
+Short answer: **yes, with a self-contained pure-Python protocol stack.** `pymobiledevice3` itself is
+not usable here (it imports `qh3`, and its recent releases use `cryptography` APIs newer than
+a-Shell's 3.4.8), so BariSign implements the needed subset from the MIT `jkcoxson/idevice` sources and
+Apple's public formats.
 
-## 0. The pure-Python route (test this first)
+## 0. The pure route, as built
 
-`pymobiledevice3` (GPL-3.0, separate tool — not vendored, no app, no certificate) implements exactly
-the missing pieces:
+1. **Pairing host.** `poc/pairing.py` advertises
+   `_remotepairing-pairable-host._tcp` through the system DNS-SD API. The target pairs from
+   **Settings → Privacy & Security → Developer Mode → Paired Macs**; the signer prints the PIN. The
+   exchange is Apple Pair-Setup M1–M6: SRP-6a (3072-bit group, SHA-512), TLV8, ChaCha20-Poly1305 and
+   an OPACK identity blob. The signer saves its Ed25519 identity and the normalized record in
+   `state/` (`PairingFile_RemoteRP.plist`, `ALTPairingFile.plist`,
+   `ALTPairingFile.mobiledevicepairing`).
+2. **UDID.** The target's `remotepairing_udid` arrives in M5. If it is empty, the signer opens the
+   tunnel once and reads `UniqueDeviceID` from the RSD handshake.
+3. **Discovery.** `poc/mdns.py` browses `_remotepairing._tcp` (`DNSServiceBrowse`/`Resolve` on
+   a-Shell, raw mDNS on Linux), preferring the target's source IP from the pairing connection and
+   then the UDID from the TXT record. `--host/--port` bypasses discovery for debugging.
+4. **Control channel.** `poc/rpp_tunnel.py` connects to the target's `_remotepairing` port, runs
+   pair-verify (X25519 + Ed25519 + ChaCha20-Poly1305), and asks for a TCP listener.
+5. **Tunnel.** It connects to that port and runs a **TLS 1.2 PSK** handshake (`0x00AF`
+   `AES-256-CBC-SHA384` or `0x008C` `AES-128-CBC-SHA`) with the X25519 shared secret as the PSK, then
+   the `CDTunnel` handshake. The result carries raw IPv6 packets. **TLS 1.3 is not what iOS uses
+   here**; the TLS 1.2 PSK suites are the tested path.
+6. **Userspace TCP.** `poc/tcp6.py` implements the small TCP client the tunnel needs (no TUN, no
+   root): handshake, cumulative ACKs, MSS segmentation, retransmission, out-of-order receive.
+7. **RSD.** `poc/remote_xpc.py` speaks the minimal HTTP/2 + XPC handshake Apple's RSD uses (empty
+   HEADERS, no HPACK) and returns the service-port map.
+8. **Services.** `poc/device_services.py` uses the classic length-prefixed plist framing for RSD
+   check-in, AFC upload to `/PublicStaging`, `installation_proxy` with
+   `PackageType: "Developer"`, and house_arrest to write the pairing file into the installed app.
 
-- `pymobiledevice3 remote pair-host` — advertises `_remotepairing-pairable-host._tcp`, accepts the
-  iOS 27 **device-initiated** pairing and prints the 6-digit code. On the **target**:
-  **Settings → Developer → Paired Macs** (Developer Mode on), pick the host, enter the code.
-- The remote pairing record it writes is reused by `remote start-tunnel`.
-- The tunnel has a **userspace backend** (`pmd-pytcp`, pure Python asyncio; no `utun`, no root) on
-  top of either QUIC or TCP. **QUIC uses qh3, which is compiled and has no iOS wheel**; this is the
-  blocker. The TCP path needs `sslpsk`, also native.
-- `pymobiledevice3 install <ipa>` then installs through `installation_proxy` over that tunnel — the
-  developer source, so the free-profile restriction that blocks AirDrop does not apply.
-- The pairing result also carries the target's **UDID** (peer info, and the RSD tunnel reports it).
-  `sh bin/barisign pair --pair-only` prints both and saves the hardware UDID into `state/barisign.json`. If that
-  works, the median/UDID page is unnecessary; the signer pairs first, registers the UDID, signs, and
-  installs over the same record.
-
-So the intended flow is still: the **signer** advertises, the **target** pairs from Settings, the
-signer installs. But the engine cannot be installed in a-Shell because of qh3; the pure route is
-blocked. Do not retry pip after seeing the qh3 metadata error.
-
-Gates, in order:
-
-1. **Bonjour from a-Shell on the signer.** Run `python3 -u poc/pair_probe.py --seconds 600`, then on the
-   target open Settings → Developer → Paired Macs. If the host appears and the probe prints an
-   `RPPairing` connection, the advertisement and Local Network permission are fine.
-2. **`pymobiledevice3` imports on a-Shell.** The package metadata asks for `cryptography>=43` and
-   many dependencies; a-Shell ships 3.4.8. Install with `--no-deps` and add only the pure-Python
-   dependencies, then import `pymobiledevice3.remote.userspace_tunnel`. If the used APIs are older
-   than the metadata floor, it works; if not, a small compatibility patch/vendored subset is needed.
-   `pymobiledevice3`'s `MDNSResponder` uses raw multicast; if iOS refuses it, replace it with the
-   `DNSServiceRegister` call the probe already uses.
-3. **Pair, tunnel, install.** `remote pair-host` → record; `remote start-tunnel` → RSD;
-   `pymobiledevice3 install`. The tunnel is pure Python and the signer is foreground, so neither
-   suspension nor a TUN device is involved.
-
-If gate 2 is clean, this is the project's answer and no native helper is needed. If gate 2 fails on
-3.4.8, the choice is a compatibility port or a native helper.
-
-### One command
-
-`bin/barisign pair` wires the gates together. On the signer:
+Commands (all on the signer):
 
 ```sh
-sh bin/barisign pair            # pair and install; install.sh already installed the engine
-sh bin/barisign pair --check    # python, cryptography and engine import only
-sh bin/barisign pair --setup    # install the engine only
-sh bin/barisign pair --pair-only --timeout 120   # pair, print peer/tunnel UDID, save it
+sh bin/barisign pair --check                 # imports the pure engine; no qh3/sslpsk/native wheel
+sh bin/barisign udid --pair                  # pair, save the UDID and the pairing file
+sh bin/barisign pair                         # pair (if needed) and install over Wi-Fi
+sh bin/barisign pair --pair-only --timeout 180
+sh bin/barisign pair --ipa FILE              # a specific signed IPA
+sh bin/barisign pair --host IP --port PORT   # skip Bonjour (debugging)
+sh bin/barisign pair --repair                # new host identity: the target offers a new prompt
+sh bin/barisign pair --debug                 # traceback on failure
 ```
 
-It finds the newest `*-signed.ipa` in the BariSign folder (or `--ipa FILE`), advertises as
-`BariSign`, prints the 6-digit code, then installs with `--userspace` `installation_proxy`.
-`install.sh` installs the engine into state/pymd3 once (one pip process); `sh bin/update` keeps it
-at the pinned version. If it was skipped, `sh bin/barisign pair --setup` does it. `poc/ashell_bonjour.py` replaces
-pymobiledevice3's raw-multicast responder with `DNSServiceRegister` when `TERM_PROGRAM=a-Shell`.
+There is no engine install: `install.sh` only fetches the program files, and `pair --check` proves
+the imports. The Linux tests for each layer are in `tests/` (TLS-PSK interop with OpenSSL, a full
+Pair-Setup round-trip, pair-verify + tunnel against a mock device, the TCP stack against the Linux
+kernel through TUN, and RSD + AFC + `installation_proxy` over that stack).
 
-**Do not try to vendor a newer `cryptography`.** It is a compiled native extension (OpenSSL/Rust),
-not pure Python; a-Shell cannot build or load a different build. The only options are the shipped
-3.4.8, a compatibility shim for any missing API, or a reimplementation of the calls.
+### Licensing
 
-A **full port of the latest `cryptography` to another language/runtime** (Lua, JavaScript, WASM) is not
-planned: it is not a packaging swap but a reimplementation of OpenSSL/X.509/TLS and constant-time
-primitives, which is large and easy to get subtly wrong. The pairing/tunnel code only needs RSA, Ed25519,
-X25519, ChaCha20-Poly1305, HKDF, SHA-256 and AES-GCM — all present in 3.4.8; the imports were checked
-against it. If an API turns out to be missing, patch that call, not the library.
-
-`pymobiledevice3` itself is GPL-3.0 and is not vendored either: `bin/barisign pair` installs it separately, so the
-repository does not distribute it.
+The engine is MIT. Protocol references: `jkcoxson/idevice` (MIT) and Apple's public pairing/XPC/AFC
+formats; `pymobiledevice3` (GPL-3.0) is read as a reference only and is **not** installed or copied.
+`third_party/sideinstaller/` remains isolated under its non-commercial licence and is never mixed
+into `poc/`.
 
 ## 1. Why AirDrop and OTA are out
 
@@ -191,7 +170,7 @@ options, easiest first:
 | **A. SideInstaller as bootstrap** | yes (app from its official page) | yes for installed apps; SideInstaller itself is a shared-cert build | none | Proven on iOS 27. LocalDevVPN. Then SideStore/AltStore run; SideInstaller can install a custom IPA. |
 | **B. Fork SideInstaller into a BariSign installer** | yes, if distributed the same way | yes | medium | Non-commercial code, isolated from the AGPL forks. Bootstrap of the fork has the same problem as A. |
 | **C. Clean native helper from MIT `idevice`/`isideload`** | yes, once installed | yes | large | AGPL-compatible. RPPairing host + tunnel + installation_proxy + AFC pairing-file writer. Still needs a bootstrap (PC once, or a shared-cert web install). |
-| **D. a-Shell/Python on the signer, `pymobiledevice3`** | **maybe** | yes | test first | `remote pair-host` + pure-Python userspace tunnel; no native app, no cert. Open risks: cryptography 3.4.8, deps, raw mDNS. This is the only all-constraints path; test gates above. |
+| **D. a-Shell/Python on the signer, pure engine** | **yes (implemented)** | yes | done | `poc/` implements the subset itself: RPPairing host, TLS 1.2 PSK, userspace TCP, RSD, AFC, `installation_proxy`. No native app, no cert, no pip. Linux-tested; device run pending. |
 
 There is **no** pure own-cert + no-PC + no-third-party-app path on iOS 27: a free-profile app
 cannot be AirDropped or OTA-installed, and a free-signed helper can only be installed through a
@@ -213,31 +192,30 @@ A merged plist containing both the RPPairing keys and the lockdown keys is the s
 new apps; AltStore ignores the lockdown half, SideStore uses the remote half on 26.4+. The file
 is written over AFC/house_arrest, exactly as AltServer and SideInstaller do.
 
-`bin/barisign pair` normalizes pymobiledevice3's record (`host_identifier`/`host_alt_irk` become
-`identifier`/`alt_irk`, which SideInstaller's `PairingFileKind` requires) and saves it under `state/`
-as `PairingFile_RemoteRP.plist`, `ALTPairingFile.plist` and `ALTPairingFile.mobiledevicepairing`.
-After a successful install it writes the appropriate file into the installed app's container with
-`house_arrest`/AFC.
+`bin/barisign pair` writes the record itself: `poc/pairing.py` stores our Ed25519 public/private
+keys, `identifier` and `alt_irk` (plus `host_identifier`/`host_alt_irk` aliases for older consumers)
+under `state/` as `PairingFile_RemoteRP.plist`, `ALTPairingFile.plist` and
+`ALTPairingFile.mobiledevicepairing`. After a successful install it writes the appropriate file into
+the installed app's container with `house_arrest`/AFC.
 
 ## 6. Recommended order
 
-1. **Test the pure-Python route on the signer** (section 0). `pair_probe.py` is in the repo and needs no
-   new dependency. If the target's Paired Macs screen shows the host, the Bonjour half is proven.
-2. **Test `pymobiledevice3` on a-Shell** with `--no-deps` and the pure dependencies. If it imports
-   and `remote pair-host` runs, pair the target and try `remote start-tunnel` + `install`.
-3. If that works: BariSign keeps signing on the signer, the signer installs, and the same tool writes
-   the RPPairing record into AltStore/SideStore over AFC (section 5). No PC, no SideInstaller, no
-   certificate.
-4. If a-Shell's 3.4.8 blocks it: either port the needed subset or fall back to a native helper.
-5. **Do not** spend more time on AirDrop/OTA for free profiles.
+1. **Run the Linux tests** (they need no device): TLS-PSK interop, pairing host, pair-verify + tunnel,
+   TCP, RSD + AFC + installation_proxy.
+2. **Run the on-device gates** in `docs/NEXT_SESSION.md`: `pair --check`, `pair --pair-only`, `pair`.
+   The signer stays in a-Shell; the target only uses Settings.
+3. If a gate fails, report the exact output (use `--debug`). The next session fixes that layer; do
+   not retry the same failing step twice.
+4. **Do not** spend more time on AirDrop/OTA for free profiles.
 
 ## 7. Unverified / risks
 
 - SideInstaller's iOS 27 no-PC claim is the author's and is consistent with the source, but this
   project has not independently run it on the target yet.
-- The pure-Python tunnel is the open question: `pymobiledevice3` advertises a userspace backend, but
-  it has not been run under a-Shell's `cryptography` 3.4.8 and Python build. If it imports and pairs,
-  the native helper is unnecessary; if not, the fallback is a compatibility port or a native helper.
+- The pure-Python tunnel has not run on a device yet. The risky details are the target's window/ACK
+  behaviour under the userspace TCP stack, the DNS-SD browse on a-Shell, and whether iOS 27 accepts
+  the exact `installation_proxy` options. Each failure has a precise message; see
+  `docs/NEXT_SESSION.md`.
 - AltStore 2.3's Remote AltServer is a separate feature; it is not the same as on-device
   RPPairing and still points at a server.
 - Pairing-file compatibility across AltStore/SideStore versions changes quickly; test each

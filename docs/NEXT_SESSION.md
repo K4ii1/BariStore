@@ -1,100 +1,95 @@
 # Next session — handoff (2026-11-15)
 
-State: version **0.8.8**, HEAD **33c228f**, working tree clean, self-updater in place.
-This file is the handoff for the one remaining engineering problem: a **pure a-Shell** RPPairing
-tunnel that installs the signed IPA on the target without a PC, without a native wheel and without
-a third-party app.
+State: version **0.9.0**, pure on-device pairing/tunnel/install engine, working tree clean after
+commit. Signing, the developer portal, the UDID fallback page and the self-updater are unchanged and
+still work. The **new engine is Linux-tested but not device-tested** — the device run below is the
+only remaining gate.
 
-## What works now
+## What changed
 
-- `sh bin/barisign` — guided signer flow: variant, UDID, Apple sign-in, portal, signing.
-- `sh bin/update` — self-updating bootstrapper: reads the newest `install.sh` (pinned to the newest
-  commit) and applies every file, including itself. No manual curl/git.
-- Signing/portal/UDID page; signed IPA is valid.
-- `sh bin/barisign pair` exists but is blocked on a-Shell (see below).
-- Two roles: **signer** (a-Shell + BariSign) and **target** (Safari + Settings only); either may be
-  an iPhone or iPad, both iOS/iPadOS 27+, same Wi-Fi. No PC, no AirDrop, no OTA, no SideInstaller,
-  no enterprise certificate.
+The `qh3`/`sslpsk`/`pymobiledevice3` route is gone. `sh bin/barisign pair` now runs a self-contained
+MIT Python stack in `poc/` on top of the `cryptography` **3.4.8** that a-Shell ships:
 
-## The blocker
+| File | Job |
+|---|---|
+| `poc/pairing.py` | device-initiated pairing host: SRP-6a (3072-bit, SHA-512), TLV8, OPACK, Ed25519 identity, SipHash `authTag` |
+| `poc/rpp_tunnel.py` | RPPairing control channel (pair-verify), `createListener`, TLS 1.2 PSK tunnel, CDTunnel handshake, IPv6 link |
+| `poc/tls_psk.py` | TLS 1.2 PSK client, cipher suites `0x00AF` (`AES-256-CBC-SHA384`) and `0x008C` (`AES-128-CBC-SHA`) |
+| `poc/tcp6.py` | minimal userspace IPv6/TCP client (handshake, ACKs, retransmit, out-of-order) over the tunnel |
+| `poc/remote_xpc.py` | RSD: minimal HTTP/2 + Apple XPC objects, returns the service-port map |
+| `poc/device_services.py` | length-prefixed plists, RSDCheckin, AFC upload, house_arrest, `installation_proxy` |
+| `poc/mdns.py` | Bonjour register/browse; DNS-SD on a-Shell, raw mDNS on Linux |
+| `poc/pair_install.py` | the CLI orchestration (pair → UDID → tunnel → install → pairing file) |
 
-`pymobiledevice3` 11.49.0's RPPairing tunnel imports **qh3**, a compiled QUIC library. PyPI has no
-iOS wheel for any qh3 release (0.15–2.1 checked); a-Shell cannot build native extensions. pip falls
-back to the sdist and dies preparing qh3 metadata. The **TCP** tunnel path needs **sslpsk**, also
-native. `aioquic` is pure Python but needs native `pylsqpack` and `cryptography>=43`; not usable with
-a-Shell's shipped `cryptography` 3.4.8.
+No pip process, no engine download, no native wheel, no GPL runtime. `install.sh` only fetches files
+and then runs `pair --check`.
 
-`pair_install.py` currently detects a-Shell/iOS and exits with code 2, explaining this. `install.sh`
-and `bin/update` treat that as "engine unavailable, signing still works".
+**Important protocol fact:** the RPPairing tunnel is **TLS 1.2 PSK**, not TLS 1.3. The iOS-negotiated
+suites are CBC-SHA (`0x00AF`/`0x008C`), exactly what MIT `idevice` implements and what the Linux
+interop test proves against OpenSSL.
 
-## The one component to build
+## What the user should run (in order)
 
-A **pure-Python TLS-PSK tunnel** that replaces `sslpsk` (and avoids qh3), or an equivalent pure
-QUIC. The more tractable route:
+1. `sh bin/update` — must print `files ok`, `check ok`, `engine ok`, `ready`. No pip, no repeated curl.
+2. `sh bin/barisign pair --check` — must import the engine and report
+   `pure Python, no qh3/sslpsk/native wheel`.
+3. `sh bin/barisign udid --pair` (or `sh bin/barisign pair --pair-only --timeout 180`):
+   the signer prints `advertising as BariSign` and a 6-digit code; on the target open
+   **Settings → Privacy & Security → Developer Mode → Paired Macs**, pick **BariSign**, enter the
+   code. The signer must save the UDID and write
+   `state/PairingFile_RemoteRP.plist` + `state/ALTPairingFile.*`.
+4. `sh bin/barisign pair` — the signer installs the newest `*-signed.ipa` over Wi-Fi. On the target,
+   trust the developer and open the app.
 
-1. **Keep** pymobiledevice3's pure-Python `userspace_tunnel`/`pmd-pytcp` TCP stack and
-   `installation_proxy`/RSD code.
-2. **Replace** `sslpsk` with a pure-Python **TLS 1.3 PSK** client (HKDF key schedule, transcript,
-   AEAD with cryptography 3.4.8: AES-GCM/ChaCha20-Poly1305, SHA-256).
-3. Open the RPPairing tunnel over TCP, let `pmd-pytcp` carry RSD/RemoteXPC, then run
-   `installation_proxy`.
-4. Remove the qh3 dependency from imports (a stub for the QUIC classes is enough for the
-   pairing-only path; the install path must not touch qh3).
-
-References (read, do not blindly copy):
-
-- `jkcoxson/idevice` — **MIT** — `remote_pairing`, `tunnel_tcp_stack`, RPPairing host, TLS-PSK
-  tunnel, AFC/house_arrest, `installation_proxy`. The preferred clean-room source.
-- `pymobiledevice3` — **GPL-3.0** — `remote/tunnel_service.py`, `remote/userspace_tunnel.py`,
-  `services/installation_proxy.py`, `services/house_arrest.py`. Protocol reference; do not copy GPL
-  code into MIT files; keep any GPL-derived file isolated and documented.
-- `FrizzleM/SideInstaller` — non-commercial, isolated in `third_party/sideinstaller/`; architecture
-  reference only. Never mix it into AGPL forks or MIT files.
-- `sslpsk`/OpenSSL TLS-PSK semantics; `idevice`'s tunnel implementation is the known-good behaviour.
-
-## Useful facts already verified
-
-- The RPPairing host itself (SRP-6a, Ed25519, pairing record) is pure Python and does not use qh3 at
-  runtime; the qh3 import is only at module top. A qh3 **import stub** can let
-  `serve_pairable_host` run and produce the pairing record/UDID. The **install tunnel** is the part
-  that must be pure.
-- `pmd-pytcp` (pure asyncio TCP stack) and `pymobiledevice3`'s `userspace_tunnel` are pure Python.
-- Pairing record keys expected by AltStore/SideStore: AltStore `Documents/ALTPairingFile.plist`;
-  SideStore `Documents/ALTPairingFile.mobiledevicepairing`; RPPairing keys `public_key`,
-  `private_key`, `identifier`, `alt_irk`. `pair_install.py` already normalizes
-  (`host_identifier`→`identifier`, `host_alt_irk`→`alt_irk`) and writes via house_arrest/AFC.
-- `pymobiledevice3` is pinned to **11.49.0**; `install.sh`/`bin/update` use one pip process with
-  `--only-binary=:all:` and a clean `state/pymd3`. Do not reintroduce qh3/sslpsk/cryptography
-  upgrades.
-- a-Shell ships `cryptography` 3.4.8; it has RSA, Ed25519, X25519, ChaCha20-Poly1305, HKDF, SHA-256,
-  AES-GCM and `_serialization`. Do not vendor/replace cryptography (native extension).
-
-## Files
-
-- `poc/barisign.py` — CLI, guided flow, UDID HTTP page, `pair` command.
-- `poc/pair_install.py` — engine install, pairing host, tunnel, install, pairing-file writer.
-- `poc/ashell_bonjour.py` — DNSServiceRegister shim for pymobiledevice3's mDNS on a-Shell.
-- `install.sh` — one instruction file: fetch all files pinned to a commit, install engine once.
-- `bin/update` — self-updating bootstrapper (fetch newest install.sh and run it).
-- `docs/PAIRING_INSTALL.md`, `docs/RESULTS.md`, `AGENTS.md` — constraints and verified facts.
+Run any failing step with `sh bin/barisign pair --debug` and send the full output. Do not retry the
+same failing step more than twice; the next session needs the error text.
 
 ## Acceptance gates
 
-1. `sh bin/update` clean; no repeated curl; files/engine synced.
-2. `sh bin/barisign pair --check` imports the engine on a-Shell **without qh3/sslpsk/native wheels**
-   and with `cryptography` 3.4.8.
-3. `sh bin/barisign pair --pair-only` pairs the target from Settings, saves the UDID and writes the
-   normalized pairing file, with **no** qh3/sslpsk.
-4. `sh bin/barisign pair` installs the signed IPA over Wi-Fi with `installation_proxy`; target
-   trusts the developer and the app opens.
-5. Signing/portal/`sh bin/update` still work; no PC, no AirDrop/OTA, no third-party app/cert.
-6. Label anything not device-tested **untested**; never claim success without the user's device run.
+1. `sh bin/update` clean; files/engine synced; no repeated curl/git; no pip.
+2. `pair --check` imports on a-Shell with cryptography 3.4.8, no qh3/sslpsk/native wheel.
+3. `pair --pair-only` pairs from Settings, saves the UDID and the normalized pairing file.
+4. `pair` installs over Wi-Fi; the target trusts the developer and the app opens.
+5. Signing/portal/UDID page/self-update still work; no PC, no AirDrop/OTA, no third-party app.
 
-## Process
+## Where it can still fail (device-only unknowns)
 
-- Linux unit tests for the TLS-PSK state machine (RFC 8448 vectors where possible), packet framing,
-  HKDF/transcript, and the userspace TCP path. No device access here.
-- Keep the self-updater and signing path untouched; add the pure tunnel behind the existing
-  `pair_install` interface.
-- If the same failure happens twice, stop and report instead of guessing.
-- Do not name test hardware; use signer/target roles.
+- **Bonjour browse/registration in a-Shell.** Registration is the existing DNS-SD shim; browsing was
+  added with `DNSServiceBrowse`/`DNSServiceResolve`. If the target's `_remotepairing._tcp` is not
+  found, the tool reports it after three 4-second attempts. Debug path: pass `--host <target-ip>
+  --port <port>`; the port can be read from a Mac's `dns-sd -B _remotepairing._tcp` or from the
+  target's Paired Macs screen by a second session.
+- **Pairing host visibility.** If BariSign does not appear in Paired Macs: allow **Local Network**
+  in a-Shell, same Wi-Fi, and confirm the signer's mDNS registration did not fail.
+- **Pair-verify after pairing.** The target recognizes the host by `identifier`; if the record is
+  stale, `pair --repair` generates a new host identity so the target offers a fresh pairing prompt.
+- **Tunnel/TCP details.** The TCP client was proven against the Linux kernel (1 MiB echo, two
+  connections, 300 KiB AFC upload through RSD); the device's window/ACK behaviour may still differ.
+  The log shows which stage failed.
+- **installation_proxy options.** It sends `PackageType: "Developer"`; if iOS 27 rejects it, the
+  response text is printed verbatim.
+- **Pairing file path.** Written after install via house_arrest; if the app is not installed yet or
+  the bundle id is unknown, the step is skipped and the copies in `state/` remain for manual import.
+
+## Linux tests (all should pass here)
+
+```
+python3 tests/test_protocol.py        # XPC, AFC, RSD, mDNS, OPACK, SRP, SipHash vectors
+python3 tests/test_tls_psk.py         # TLS 1.2 PSK interop with OpenSSL, both suites
+python3 tests/test_pairing_host.py    # full Pair-Setup round-trip (mock target)
+python3 tests/test_pair_tunnel.py     # pair-verify + TLS-PSK + CDTunnel (mock device)
+python3 tests/test_tcp6.py            # TCP stack against the Linux kernel through TUN
+python3 tests/test_rsd_over_tcp.py    # RSD + AFC 300 KiB + installation_proxy over that stack
+```
+
+The TUN tests use `sudo` to create a point-to-point IPv6 interface (`baritun`); they are Linux-only.
+
+## Constraints that still apply
+
+- Everything on the signer is pure Python + the shipped `cryptography`; never add a native wheel.
+- Keep `sh bin/update` self-updating: `install.sh` must remain the single file it applies.
+- Do not name or describe the user's test hardware; use signer/target roles.
+- Do not claim device success without the user's confirmation. Mark untested code **untested**.
+- `third_party/sideinstaller/` stays isolated (non-commercial); never copy it into `poc/`.
+- Prefer the MIT `jkcoxson/idevice` sources for protocol changes; `pymobiledevice3` is GPL reference
+  only and is no longer installed.

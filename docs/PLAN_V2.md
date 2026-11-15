@@ -61,11 +61,12 @@ Facts that make it possible, checked 2026-10-29/31:
   code. SideInstaller uses this to pair with no computer.
 - SideStore, AltStore and LiveContainer also accept an **imported** pairing file, which is how the module's
   output gets consumed.
-- `pymobiledevice3` implements the device-initiated pairing host and a **pure-Python userspace tunnel**
-  (no root/TUN) plus `installation_proxy`; `bin/barisign pair` is the first implementation of that route.
+- The pure engine implements the device-initiated pairing host, pair-verify, the TLS 1.2 PSK tunnel,
+  a userspace TCP stack, RSD and `installation_proxy`; `bin/barisign pair` is the first implementation
+  of that route, written from the MIT `idevice` protocol sources.
 - Licences: SideStore **AGPL-3.0**, AltStore **AGPL-3.0**, LiveContainer **AGPL-3.0**; SideInstaller is
-  "Other"/non-commercial and stays isolated in `third_party/sideinstaller/`. `pymobiledevice3` is GPL-3.0
-  and is installed separately, not vendored.
+  "Other"/non-commercial and stays isolated in `third_party/sideinstaller/`. The engine is MIT and
+  uses no GPL runtime; `pymobiledevice3` is a protocol reference only.
 
 Cost accepted with the decision: our patch to three AGPL projects, rebuilt on every upstream release, plus
 the `bin/barisign pair` engine on the signer.
@@ -73,6 +74,8 @@ the `bin/barisign pair` engine on the signer.
 ## Status
 
 - Verified on the signer (iOS 27): Apple sign-in, portal, signing, app launch.
-- Written, not yet device-verified: the pair-first UDID, the fallback UDID page and the signer→target
-  pairing install.
-- The target page's HTTP handler is tested on Linux; the tunnel and mDNS path need a device run.
+- The pairing/tunnel/install engine is now pure Python (`poc/tls_psk.py`, `tcp6.py`, `remote_xpc.py`,
+  `device_services.py`, `pairing.py`, `rpp_tunnel.py`, `mdns.py`); no pip, no qh3, no native wheel.
+  All layers pass their Linux tests.
+- Not yet device-verified: the pair-first UDID, the fallback UDID page, the signer→target pairing
+  install and the pairing-file writer. The device gates are in `docs/NEXT_SESSION.md`.

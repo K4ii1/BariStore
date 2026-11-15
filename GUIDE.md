@@ -9,8 +9,9 @@ Either device can be an **iPhone or an iPad** (iOS/iPadOS 27+). They must be on 
 a-Shell and BariSign are installed on the **signer only**.
 
 **Status:** Apple sign-in, the developer portal, signing and launching the signed app are verified on
-a real device. The **pairing install is blocked**: its engine needs qh3, a compiled QUIC library with
-no iOS wheel, and a-Shell cannot build it. Signing and the **UDID page** still work.
+a real device. The **pairing/tunnel/install engine is now pure Python** (no qh3, no pip, no native
+wheel) and passes its Linux protocol tests; the **on-device run is the remaining gate**. The fallback
+**UDID page** also still works.
 
 ---
 
@@ -32,9 +33,6 @@ sh bin/barisign status     # what is saved
 ---
 
 ## UDID (pairing first)
-
-> **Blocked:** pair-first needs the same qh3 engine as the install. Until it is replaced, use the
-> fallback page below for the UDID; signing works, but the Wi-Fi install does not.
 
 The normal flow takes the target's UDID **from the pairing**, so no median profile is needed:
 
@@ -101,9 +99,8 @@ sh bin/barisign sign --ipa X.ipa  # sign a file you already have
 
 ## INSTALL on the target (signer + target)
 
-> **Blocked:** `sh bin/barisign pair` cannot install the engine on a-Shell because qh3 has no iOS
-> wheel. The command reports this clearly. Signing and the UDID page are unaffected; the install
-> needs a native helper or a computer until qh3 is replaced.
+> **Untested on a device:** the pure engine passes its Linux protocol tests, but the signer → target
+> install has not run on hardware yet. If a step fails, run the same command with `--debug`.
 
 ```
 sh bin/barisign pair
@@ -118,7 +115,9 @@ sh bin/barisign pair
    `Documents/ALTPairingFile.mobiledevicepairing`. A copy stays under `state/` for manual import.
 5. On the target, tap **Trust** for the developer and open the app.
 
-`sh install.sh` installs the networking engine; `sh bin/update` updates it when the pinned version changes. If it was skipped, run `sh bin/barisign pair --setup`.
+There is no separate engine install: `sh install.sh` fetches the program files, and
+`sh bin/barisign pair --check` confirms every pure-Python module imports with the `cryptography`
+version a-Shell ships. `sh bin/update` updates the same files.
 
 The app installs **only on the target whose UDID is in the profile**: a development-signed app is
 refused on any other device or Apple ID. To use another target, register its UDID and sign again.
