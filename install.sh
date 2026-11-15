@@ -47,10 +47,12 @@ else
 fi
 
 fetch() {   # fetch <file-in-repo> <destination>
-    if curl -sSL -H 'Cache-Control: no-cache' "$RAW/$1" -o "$2" 2>/dev/null && [ -s "$2" ]; then
+    # -f is essential: without it a 404 HTML page is non-empty and would be
+    # accepted as a source file (the installer would then compile an error page).
+    if curl -fsSL -H 'Cache-Control: no-cache' "$RAW/$1" -o "$2" 2>/dev/null && [ -s "$2" ]; then
         return 0
     fi
-    if curl -sSL -H 'Cache-Control: no-cache' \
+    if curl -fsSL -H 'Cache-Control: no-cache' \
             "https://raw.githubusercontent.com/barismd/barisign/main/$1" -o "$2" 2>/dev/null \
        && [ -s "$2" ]; then
         return 0
@@ -77,6 +79,7 @@ download_all() {
     fetch poc/rpp_tunnel.py                   poc/rpp_tunnel.py                || fail=1
     fetch poc/mdns.py                         poc/mdns.py                      || fail=1
     fetch poc/bonjour_check.py                poc/bonjour_check.py             || fail=1
+    fetch poc/raw_mdns.py                     poc/raw_mdns.py                  || fail=1
     fetch third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py || fail=1
     fetch third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py || fail=1
     fetch third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem || fail=1
@@ -95,7 +98,7 @@ check_compiles() {
              poc/download.py poc/pair_probe.py poc/pair_install.py \
              poc/ashell_bonjour.py poc/tls_psk.py poc/tcp6.py poc/remote_xpc.py \
              poc/device_services.py poc/pairing.py poc/rpp_tunnel.py poc/mdns.py \
-             poc/bonjour_check.py \
+             poc/bonjour_check.py poc/raw_mdns.py \
              third_party/sideinstaller/signin.py \
              third_party/sideinstaller/portal.py; do
         if ! python3 -c "compile(open('$f').read(), 'x', 'exec')" 2>/dev/null; then
@@ -116,34 +119,76 @@ works() {
         && sh -n bin/barisign && sh -n bin/update
 }
 
-# A small moving indicator so a slow Wi-Fi download visibly keeps working.
-_progress_pid=""
-progress_start() {
-    _progress_label="$1"
-    ( while :; do
-        for _dots in '.  ' '.. ' '...' '   '; do
-            printf '\r\033[2K  %-9s %s' "$_progress_label" "$_dots"
-            sleep 1
-        done
-      done ) &
-    _progress_pid=$!
+# Run one phase in the background while a foreground loop animates the
+# indicator.  A "done" file (not kill -0) ends the loop, so the spinner can
+# never become an orphan and the phase always ends with ok/failed.  The
+# phase writes its result to the same directory.
+progress_run() {   # <label> <phase-function>
+    _label="$1"
+    _fn="$2"
+    _dir="$PWD/.progress.$$"
+    rm -rf "$_dir"
+    mkdir -p "$_dir" || {
+        PROGRESS_STATUS=1
+        PROGRESS_FAILED=""
+        PROGRESS_BAD=""
+        return 1
+    }
+    PROGRESS_DIR="$_dir"
+    export PROGRESS_DIR
+    "$_fn" &
+    _pid=$!
+    _active_pid="$_pid"
+    _i=0
+    _dots=''
+    while [ ! -f "$_dir/done" ] && [ "$_i" -lt 3600 ]; do
+        case "$_dots" in
+            '') _dots='.';;
+            '.') _dots='..';;
+            '..') _dots='...';;
+            *) _dots='';;
+        esac
+        printf '\r\033[2K  %-9s %s' "$_label" "$_dots"
+        sleep 1
+        _i=$((_i + 1))
+    done
+    wait "$_pid" 2>/dev/null
+    _active_pid=""
+    PROGRESS_STATUS=$(cat "$_dir/status" 2>/dev/null || echo 1)
+    PROGRESS_FAILED=$(cat "$_dir/failed" 2>/dev/null || echo "")
+    PROGRESS_BAD=$(cat "$_dir/bad" 2>/dev/null || echo "")
+    rm -rf "$_dir"
+    return 0
 }
-progress_stop() {
-    if [ -n "${_progress_pid:-}" ]; then
-        kill "$_progress_pid" 2>/dev/null
-        wait "$_progress_pid" 2>/dev/null
-        _progress_pid=""
+
+fetch_phase() {
+    trap ': > "$PROGRESS_DIR/done"' 0
+    download_all
+    printf '%s' "$fail" > "$PROGRESS_DIR/status"
+    printf '%s' "${FAILED:-}" > "$PROGRESS_DIR/failed"
+    : > "$PROGRESS_DIR/done"
+}
+
+check_phase() {
+    trap ': > "$PROGRESS_DIR/done"' 0
+    _bad=$(check_compiles)
+    _rc=0
+    if [ -n "$_bad" ] || ! works; then
+        _rc=1
     fi
+    printf '%s' "$_rc" > "$PROGRESS_DIR/status"
+    printf '%s' "$_bad" > "$PROGRESS_DIR/bad"
+    : > "$PROGRESS_DIR/done"
 }
-trap 'progress_stop' 0
-trap 'progress_stop; exit 130' 1 2 15
+
+trap 'if [ -n "${_active_pid:-}" ]; then kill "$_active_pid" 2>/dev/null; fi; rm -rf "$PWD/.progress.$$"; exit 130' 1 2 15
 
 attempt=1
 while [ "$attempt" -le 2 ]; do
     FAILED=""
-    progress_start "files"
-    download_all
-    progress_stop
+    progress_run "files" fetch_phase
+    fail="$PROGRESS_STATUS"
+    FAILED="$PROGRESS_FAILED"
     if [ "$fail" -eq 0 ]; then
         printf '\r\033[2K  files     ok\n'
     else
@@ -151,14 +196,12 @@ while [ "$attempt" -le 2 ]; do
         printf '  ! could not fetch:%s\n' "$FAILED"
     fi
 
-    progress_start "check"
-    COMPILE_BAD=""
-    if [ "$fail" -eq 0 ] && COMPILE_BAD=$(check_compiles) && works; then
-        progress_stop
+    progress_run "check" check_phase
+    COMPILE_BAD="$PROGRESS_BAD"
+    if [ "$fail" -eq 0 ] && [ "$PROGRESS_STATUS" -eq 0 ]; then
         printf '\r\033[2K  check     ok\n'
         break
     fi
-    progress_stop
     printf '\r\033[2K  check     failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
         printf '  ! does not compile:%s\n' "$COMPILE_BAD"

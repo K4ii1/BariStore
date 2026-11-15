@@ -124,8 +124,10 @@ def raw_multicast(target=""):
             print("  join group     ok")
         except OSError as exc:
             print("  join group     FAILED: %s" % exc)
+    send_ok = False
     try:
         sender.sendto(_query(), (MCAST, 5353))
+        send_ok = True
         print("  multicast send ok")
     except OSError as exc:
         print("  multicast send FAILED: %s" % exc)
@@ -155,12 +157,15 @@ def raw_multicast(target=""):
     if sender is not sock:
         sender.close()
     sock.close()
-    if not bound and not seen:
-        print("  raw mDNS       not usable (no 5353 bind and no answer)")
-    elif seen:
-        print("  raw mDNS       SOME traffic arrived; a raw fallback may work")
+    if send_ok and seen:
+        print("  raw mDNS       send works and traffic arrived; raw advertising is worth testing")
+    elif send_ok:
+        print("  raw mDNS       send works; advertising may work even with no reply")
+    elif not bound:
+        print("  raw mDNS       not usable (no 5353 bind and send failed)")
     else:
-        print("  raw mDNS       bound but no traffic; multicast may be filtered")
+        print("  raw mDNS       bound but send failed; multicast is filtered")
+    return send_ok
 
 
 def main(argv):
@@ -190,11 +195,15 @@ def main(argv):
         position = argv.index("--target") + 1
         if position < len(argv):
             target = argv[position]
-    raw_multicast(target)
-    print("\nIf raw multicast send/receive worked, a raw mDNS fallback is worth testing.")
-    print("If it did not, the pairing host needs an app with the right Info.plist.")
-    print("A pairing file from such a host can still be imported:")
-    print("  sh bin/barisign pair --import FILE --host <target-ip>")
+    sent = raw_multicast(target)
+    print()
+    if sent:
+        print("Multicast SEND works. The next step is a raw advertising test:")
+        print("open Paired Macs on the target while `sh bin/barisign pair --raw-mdns` runs.")
+    else:
+        print("Multicast send failed; the pairing host needs an app with the right")
+        print("Info.plist, or import a pairing file obtained elsewhere:")
+        print("  sh bin/barisign pair --import FILE --host <target-ip>")
     return 0
 
 

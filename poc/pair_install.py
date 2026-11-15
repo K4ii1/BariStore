@@ -39,6 +39,7 @@ for _path in (HERE, ROOT):
 import device_services
 import mdns
 import pairing
+import raw_mdns
 import remote_xpc
 import rpp_tunnel
 import tcp6
@@ -124,7 +125,7 @@ def find_ipa(explicit=None):
 # Pairing
 # --------------------------------------------------------------------------
 
-async def pair_target(timeout, identity):
+async def pair_target(timeout, identity, raw=False, target_ip=""):
     """Advertise BariSign, accept one device-initiated pairing."""
     result = asyncio.get_running_loop().create_future()
 
@@ -168,14 +169,40 @@ async def pair_target(timeout, identity):
     _say("          (or Settings > Developer > Paired Macs)")
     _say("          pick BariSign, then enter the code printed here")
     _say("")
-    async with mdns.register(mdns.PAIRABLE_HOST, "BariSign", port, txt):
+
+    registration = None
+    advertiser = None
+    try:
+        if raw:
+            advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
+            _say("  advertising  raw mDNS multicast (experimental, %s)"
+                 % ("port 5353" if advertiser.bound else "ephemeral source port"))
+        else:
+            try:
+                registration = mdns.register(mdns.PAIRABLE_HOST, "BariSign", port, txt)
+                await registration.__aenter__()
+            except RuntimeError as exc:
+                if "-65555" not in str(exc) and "NoAuth" not in str(exc):
+                    raise
+                _say("  ! DNS-SD is blocked in a-Shell; trying raw multicast")
+                registration = None
+                advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
+                _say("  advertising  raw mDNS multicast (experimental, %s)"
+                     % ("port 5353" if advertiser.bound else "ephemeral source port"))
         try:
             return await asyncio.wait_for(result, timeout)
         except asyncio.TimeoutError:
             raise RuntimeError("timed out: the target never paired")
-        finally:
-            server.close()
-            await server.wait_closed()
+    finally:
+        if registration is not None:
+            try:
+                await registration.__aexit__(None, None, None)
+            except Exception:                                   # noqa: BLE001
+                pass
+        if advertiser is not None:
+            advertiser.stop()
+        server.close()
+        await server.wait_closed()
 
 
 # --------------------------------------------------------------------------
@@ -404,7 +431,9 @@ async def _run(args):
     if record is None:
         _say("  no pairing file yet; pairing the target first")
         try:
-            info, peer_ip = await pair_target(timeout, identity)
+            info, peer_ip = await pair_target(timeout, identity,
+                                              raw=args.get("raw", False),
+                                              target_ip=args.get("target_ip", ""))
         except Exception as exc:                            # noqa: BLE001
             text = str(exc)
             if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
@@ -495,6 +524,8 @@ def main(argv):
         _say("sh bin/barisign pair --udid UDID     use an already paired target")
         _say("sh bin/barisign pair --import FILE   use a pairing file from another host")
         _say("sh bin/barisign pair --host H --port P   skip Bonjour; port defaults to 49152")
+        _say("sh bin/barisign pair --raw-mdns     advertise with raw multicast (experimental)")
+        _say("sh bin/barisign pair --target-ip IP  also send unicast mDNS to the target")
         _say("sh bin/barisign pair --timeout N     give up if the target never pairs")
         _say("sh bin/barisign pair --check         verify the pure engine imports")
         _say("sh bin/barisign pair --setup         verify the engine (no download needed)")
@@ -513,6 +544,8 @@ def main(argv):
         "host": value("--host"),
         "port": int(value("--port", "0") or 0),
         "import": value("--import"),
+        "target_ip": value("--target-ip"),
+        "raw": "--raw-mdns" in argv,
         "timeout": int(value("--timeout", "0") or 0) or None,
         "pair_only": "--pair-only" in argv,
         "repair": "--repair" in argv,
