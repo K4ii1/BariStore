@@ -135,10 +135,12 @@ The a-Shell interface (no Shortcuts):
 - Budget ~5 USD total. Be token-frugal: grep/head/tail instead of dumping whole files.
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
 - Stages 1–2 are verified on device; the tunnel/install engine is written and Linux-tested. The
-  pairing advertisement is blocked inside a-Shell (`-65555` NoAuth). The plan is `docs/PLAN_V2.md`,
-  verified facts are in `docs/RESULTS.md`.
-- Next: choose a pairing-host path in `docs/NEXT_SESSION.md` (host with the right Info.plist,
-  SideInstaller for pairing only, a one-time computer, or a raw-mDNS check).
+  pairing advertisement is blocked inside a-Shell (`-65555` NoAuth, no multicast entitlement), and
+  iOS 27 accepts only device-initiated network pairing — so a-Shell cannot start pairing at all.
+  The plan is `docs/PLAN_V2.md`, verified facts are in `docs/RESULTS.md`.
+- Next: decide the pairing-host bootstrap in `docs/NEXT_SESSION.md` (option A, B or C). Do not
+  spend more effort on a-Shell-only pairing paths: DNS-SD, raw mDNS and host-initiated dialing are
+  all ruled out with device evidence.
 
 ## Verified / unverified convention
 

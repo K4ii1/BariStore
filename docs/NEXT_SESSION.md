@@ -71,6 +71,13 @@ interop test proves against OpenSSL.
   `raw mDNS: multicast send failed: [Errno 65] No route to host`. iOS requires the multicast
   entitlement to send multicast; a-Shell does not have it (same class of blocker as the missing
   `NSBonjourServices` entry). No code running inside a-Shell can advertise the pairing host.
+- **E. Host-initiated pairing (signer dials the target) — RULED OUT for iOS 27.** SideInstaller
+  proved on devices (issues #52, two networks): iOS 27 lockdownd resets Wi-Fi pairing TCP
+  immediately, no Trust prompt; "the way iOS 27 pairs over a network is the device-initiated one".
+  pymobiledevice3's own manual-pairing command targets Apple TV/visionOS only
+  ("Standard iOS devices usually do not need this"). A fresh iPhone listens on nothing until it
+  sees a pairable host in Settings — so there is nothing to dial. Our `pairing.py` responder is
+  the right side of the protocol; it is the advertisement that cannot run in a-Shell.
 - **E. Fork a-Shell** with the `NSBonjourServices` entry and distribute it. Developer-only, not an
   end-user path.
 
