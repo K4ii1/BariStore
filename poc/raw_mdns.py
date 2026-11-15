@@ -78,8 +78,8 @@ class Advertiser:
         self.error = ""
 
     def start(self):
-        if not self.ipv4:
-            raise RuntimeError("raw mDNS: no Wi-Fi IPv4 address")
+        if not self.ipv4 or self.ipv4.startswith(("127.", "169.254.", "0.")):
+            raise RuntimeError("raw mDNS: no usable Wi-Fi IPv4 address")
         self.packet = build_announcement(self.identity, self.port, self.ipv4)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

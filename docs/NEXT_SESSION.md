@@ -67,14 +67,19 @@ interop test proves against OpenSSL.
 - **C. One-time computer.** Pair the target with a Mac/Xcode Device Hub, copy the Mac's remote
   pairing record to `state/PairingFile_RemoteRP.plist`, then `sh bin/barisign pair --udid UDID`
   installs from a-Shell. No third-party app; a computer is needed once.
-- **D. Raw mDNS fallback — first probe failed, second probe pending.** The first
-  `bonjour_check.py` run reported `NoAuth` for `_barisign-check._tcp`, `_http._tcp` and the
-  pairable-host type; binding 5353 failed (`EADDRINUSE`, mDNSResponder owns it) and multicast send
-  failed (`No route to host`). That send error is consistent with **not selecting the Wi-Fi
-  interface** (`IP_MULTICAST_IF`), so the probe was updated: it now binds with `SO_REUSEPORT`, sets
-  `IP_MULTICAST_IF` to the default-route address, and can send a **unicast** query to a target
-  (`--target <target-ip>`). Rerun:
-  `python3 poc/bonjour_check.py --target <target-ip>`. If this still fails, raw mDNS is ruled out.
+- **D. Raw mDNS fallback — implemented, device test needed.** The first probe reported `NoAuth` for
+  every DNS-SD type; bind 5353 failed and multicast send had no route. That send error was consistent
+  with not selecting the Wi-Fi interface, so:
+  - `bonjour_check.py` v2 sets `SO_REUSEPORT`, `IP_MULTICAST_IF` (default-route address) and can
+    send a unicast query (`--target IP`).
+  - `poc/raw_mdns.py` now publishes the real PTR/SRV/TXT/A records directly over multicast, and
+    `pair_install` falls back to it automatically on `-65555`; `--raw-mdns` forces it and
+    `--target-ip IP` also sends unicast. If 5353 can be shared, it answers incoming queries too.
+  - **Easy test (no target IP):** run `sh bin/barisign pair` and open Paired Macs on the target. If
+    **BariSign** appears, raw mDNS works and pairing can continue. If it prints
+    `raw mDNS: multicast send failed`, D is ruled out and options A–C remain.
+  - The advertiser logs its Wi-Fi IPv4; if the signer has a VPN active, the default-route address may
+    be the VPN address and the target cannot reach it — turn the VPN off on the signer.
 - **E. Fork a-Shell** with the `NSBonjourServices` entry and distribute it. Developer-only, not an
   end-user path.
 

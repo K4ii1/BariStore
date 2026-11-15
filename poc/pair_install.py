@@ -175,8 +175,9 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
     try:
         if raw:
             advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-            _say("  advertising  raw mDNS multicast (experimental, %s)"
-                 % ("port 5353" if advertiser.bound else "ephemeral source port"))
+            _say("  advertising  raw mDNS %s, %s (experimental)"
+                 % (advertiser.ipv4,
+                    "port 5353" if advertiser.bound else "ephemeral source port"))
         else:
             try:
                 registration = mdns.register(mdns.PAIRABLE_HOST, "BariSign", port, txt)
@@ -187,8 +188,9 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
                 _say("  ! DNS-SD is blocked in a-Shell; trying raw multicast")
                 registration = None
                 advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-                _say("  advertising  raw mDNS multicast (experimental, %s)"
-                     % ("port 5353" if advertiser.bound else "ephemeral source port"))
+                _say("  advertising  raw mDNS %s, %s (experimental)"
+                     % (advertiser.ipv4,
+                        "port 5353" if advertiser.bound else "ephemeral source port"))
         try:
             return await asyncio.wait_for(result, timeout)
         except asyncio.TimeoutError:
