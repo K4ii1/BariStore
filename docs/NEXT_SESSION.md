@@ -63,6 +63,10 @@ same failing step more than twice; the next session needs the error text.
   in a-Shell, same Wi-Fi, and confirm the signer's mDNS registration did not fail.
 - **Pair-verify after pairing.** The target recognizes the host by `identifier`; if the record is
   stale, `pair --repair` generates a new host identity so the target offers a fresh pairing prompt.
+  The same applies if `state/PairingFile_RemoteRP.plist` is deleted while `state/pairing_host.plist`
+  is kept: the target will not prompt again for the same identity, so use `--repair`.
+- **Only a link-local IPv6 address is advertised.** `--host <routable-ip> --port <port>` bypasses
+  Bonjour; the port is the `_remotepairing` SRV port. Home Wi-Fi normally advertises IPv4.
 - **Tunnel/TCP details.** The TCP client was proven against the Linux kernel (1 MiB echo, two
   connections, 300 KiB AFC upload through RSD); the device's window/ACK behaviour may still differ.
   The log shows which stage failed.

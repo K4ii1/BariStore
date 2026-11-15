@@ -350,22 +350,23 @@ class RemoteXpc:
 
     async def receive_response(self):
         while True:
-            buf = self._data[ROOT_CHANNEL]
-            if buf:
+            for channel in (ROOT_CHANNEL, REPLY_CHANNEL):
+                buf = self._data.get(channel, b"")
+                if not buf:
+                    continue
                 try:
                     flags, message_id, value = decode_wrapper(buf)
                 except XpcError as exc:
                     if "truncated" in str(exc):
-                        pass
-                    else:
-                        raise
-                else:
-                    consumed = 24 + struct.unpack("<Q", buf[8:16])[0]
-                    self._data[ROOT_CHANNEL] = buf[consumed:]
-                    if isinstance(value, dict) and value:
+                        continue
+                    raise
+                consumed = 24 + struct.unpack("<Q", buf[8:16])[0]
+                self._data[channel] = buf[consumed:]
+                if isinstance(value, dict):
+                    if value:
                         return value
-                    if value is not None and not isinstance(value, dict):
-                        return value
+                elif value is not None:
+                    return value
             frame = await self._read_frame()
             await self._handle_frame(frame)
 

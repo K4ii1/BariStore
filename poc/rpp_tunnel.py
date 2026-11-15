@@ -209,6 +209,8 @@ class RemotePairingLink:
         })
         listener = response.get("createListener") or {}
         port = listener.get("port")
+        if isinstance(port, str) and port.isdigit():
+            port = int(port)
         if not isinstance(port, int):
             raise PairingTunnelError("the target did not return a tunnel port")
         return port
@@ -273,6 +275,8 @@ async def open_tunnel(host, port, record, timeout=20):
     address = client.get("address")
     server_address = response.get("serverAddress")
     rsd_port = response.get("serverRSDPort")
+    if isinstance(rsd_port, str) and rsd_port.isdigit():
+        rsd_port = int(rsd_port)
     if not address or not server_address or not isinstance(rsd_port, int):
         raise PairingTunnelError("incomplete CDTunnel handshake: %r" % (response,))
     return {

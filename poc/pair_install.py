@@ -154,8 +154,13 @@ async def pair_target(timeout, identity):
             except Exception:                                   # noqa: BLE001
                 pass
 
-    server = await asyncio.start_server(handle, "0.0.0.0", 0)
-    port = server.sockets[0].getsockname()[1]
+    # Bind IPv4 and IPv6 on the same port: the target may resolve the signer's
+    # .local name to either family.  A throwaway server picks a free port first.
+    probe = await asyncio.start_server(handle, "0.0.0.0", 0)
+    port = probe.sockets[0].getsockname()[1]
+    probe.close()
+    await probe.wait_closed()
+    server = await asyncio.start_server(handle, host=None, port=port)
     txt = pairing.mdns_txt(identity)
     _say("")
     _say("  signer: advertising as BariSign")
