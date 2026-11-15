@@ -24,7 +24,7 @@ else
 fi
 
 tmp=".install.sh.update"
-curl -sSL -H 'Cache-Control: no-cache' "$BASE/install.sh" -o "$tmp" || {
+curl -fsSL --connect-timeout 15 --max-time 60 -H 'Cache-Control: no-cache' "$BASE/install.sh" -o "$tmp" || {
     echo "! no network; could not reach the repository"
     exit 1
 }

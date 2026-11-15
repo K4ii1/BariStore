@@ -65,30 +65,39 @@ fetch() {   # fetch <file-in-repo> <destination>
 
 download_all() {
     fail=0
-    fetch poc/poc_login.py                    poc/poc_login.py                 || fail=1
-    fetch poc/poc_portal.py                   poc/poc_portal.py                || fail=1
-    fetch poc/barisign.py                     poc/barisign.py                  || fail=1
-    fetch poc/signer.py                       poc/signer.py                    || fail=1
-    fetch poc/download.py                     poc/download.py                  || fail=1
-    fetch poc/pair_probe.py                   poc/pair_probe.py                || fail=1
-    fetch poc/pair_install.py                 poc/pair_install.py              || fail=1
-    fetch poc/ashell_bonjour.py               poc/ashell_bonjour.py            || fail=1
-    fetch poc/tls_psk.py                      poc/tls_psk.py                   || fail=1
-    fetch poc/tcp6.py                         poc/tcp6.py                      || fail=1
-    fetch poc/remote_xpc.py                   poc/remote_xpc.py                || fail=1
-    fetch poc/device_services.py              poc/device_services.py           || fail=1
-    fetch poc/pairing.py                      poc/pairing.py                   || fail=1
-    fetch poc/rpp_tunnel.py                   poc/rpp_tunnel.py                || fail=1
-    fetch poc/mdns.py                         poc/mdns.py                      || fail=1
-    fetch poc/bonjour_check.py                poc/bonjour_check.py             || fail=1
-    fetch poc/raw_mdns.py                     poc/raw_mdns.py                  || fail=1
-    fetch third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py || fail=1
-    fetch third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py || fail=1
-    fetch third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem || fail=1
-    fetch third_party/ca-bundle/cacert.pem    third_party/ca-bundle/cacert.pem || fail=1
-    fetch variants.json                       variants.json                    || fail=1
-    fetch bin/barisign                        bin/barisign                     || fail=1
-    fetch bin/update                          bin/update                       || fail=1
+    for _pair in "poc/poc_login.py poc/poc_login.py" \
+                 "poc/poc_portal.py poc/poc_portal.py" \
+                 "poc/barisign.py poc/barisign.py" \
+                 "poc/signer.py poc/signer.py" \
+                 "poc/download.py poc/download.py" \
+                 "poc/pair_probe.py poc/pair_probe.py" \
+                 "poc/pair_install.py poc/pair_install.py" \
+                 "poc/ashell_bonjour.py poc/ashell_bonjour.py" \
+                 "poc/tls_psk.py poc/tls_psk.py" \
+                 "poc/tcp6.py poc/tcp6.py" \
+                 "poc/remote_xpc.py poc/remote_xpc.py" \
+                 "poc/device_services.py poc/device_services.py" \
+                 "poc/pairing.py poc/pairing.py" \
+                 "poc/rpp_tunnel.py poc/rpp_tunnel.py" \
+                 "poc/mdns.py poc/mdns.py" \
+                 "poc/bonjour_check.py poc/bonjour_check.py" \
+                 "poc/raw_mdns.py poc/raw_mdns.py" \
+                 "third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py" \
+                 "third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py" \
+                 "third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem" \
+                 "third_party/ca-bundle/cacert.pem third_party/ca-bundle/cacert.pem" \
+                 "variants.json variants.json" \
+                 "bin/barisign bin/barisign" \
+                 "bin/update bin/update"; do
+        # shellcheck disable=SC2086
+        set -- $_pair
+        if fetch "$1" "$2"; then
+            printf '.'
+        else
+            printf 'x'
+            fail=1
+        fi
+    done
     chmod +x bin/* 2>/dev/null
     return $fail
 }
@@ -121,73 +130,28 @@ works() {
         && sh -n bin/barisign && sh -n bin/update
 }
 
-# A moving indicator while a phase runs.  The spinner is a background
-# subshell that stops when a "stop" file appears, so it can never become an
-# orphan loop and no PID bookkeeping is needed (dash/ash unset $! under
-# `set -u` in some builds).  The phase itself runs in the foreground.
-progress_start() {
-    _dir="$PWD/.progress.$$"
-    rm -rf "$_dir"
-    mkdir -p "$_dir" || _dir=""
-    [ -n "$_dir" ] || return 0
-    _label="$1"
-    (
-        _i=0
-        _d=''
-        while [ ! -f "$_dir/stop" ] && [ "$_i" -lt 600 ]; do
-            case "$_d" in
-                '') _d='.';;
-                '.') _d='..';;
-                '..') _d='...';;
-                *) _d='';;
-            esac
-            printf '\r\033[2K  %-9s %s' "$_label" "$_d"
-            sleep 1
-            _i=$((_i + 1))
-        done
-        : > "$_dir/stopped"
-    ) &
-}
-
-progress_stop() {
-    [ -n "${_dir:-}" ] || return 0
-    : > "$_dir/stop"
-    _k=0
-    while [ ! -f "$_dir/stopped" ] && [ "$_k" -lt 5 ]; do
-        sleep 1
-        _k=$((_k + 1))
-    done
-    rm -rf "$_dir"
-    _dir=""
-}
-
-# On any exit (including a set -u error or Ctrl-C) stop the indicator, so a
-# failed run can never leave a spinner looping in the terminal.
-trap 'progress_stop' 0
-trap 'progress_stop; exit 130' 1 2 15
-
+# No background jobs: a-Shell's shell can leave a background spinner
+# looping in the terminal.  Progress is one dot per downloaded file,
+# printed in the foreground as each fetch finishes.
 attempt=1
 while [ "$attempt" -le 2 ]; do
     FAILED=""
-    progress_start "files"
+    printf '  files     '
     download_all
-    progress_stop
     if [ "$fail" -eq 0 ]; then
-        printf '\r\033[2K  files     ok\n'
+        printf ' ok\n'
     else
-        printf '\r\033[2K  files     failed\n'
+        printf ' failed\n'
         printf '  ! could not fetch:%s\n' "$FAILED"
     fi
 
-    progress_start "check"
+    printf '  check     '
     COMPILE_BAD=""
     if [ "$fail" -eq 0 ] && COMPILE_BAD=$(check_compiles) && works; then
-        progress_stop
-        printf '\r\033[2K  check     ok\n'
+        printf 'ok\n'
         break
     fi
-    progress_stop
-    printf '\r\033[2K  check     failed\n'
+    printf 'failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
         printf '  ! does not compile:%s\n' "$COMPILE_BAD"
     fi
