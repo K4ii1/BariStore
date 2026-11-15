@@ -153,6 +153,7 @@ and you are shown which version you are about to get. `variants.json` is the mac
 | `docs/PLAN_V2.md` | the current architecture and why |
 | `docs/FORK_PLAN.md` | the pairing module inside the forked apps: licences, CI, risks |
 | `docs/RESULTS.md` | what is verified on device, and the device quirks we had to work around |
+| `docs/NEXT_SESSION.md` | handoff for the remaining pure a-Shell tunnel work |
 | `variants.json` | the variant registry and runtime resolution rules |
 | `bin/barisign` | the single entry point on the signer |
 | `sh bin/barisign pair` | the signer → target pairing install |
