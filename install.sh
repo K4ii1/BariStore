@@ -65,6 +65,7 @@ fetch() {   # fetch <file-in-repo> <destination>
 
 download_all() {
     fail=0
+    _n=0
     for _pair in "poc/poc_login.py poc/poc_login.py" \
                  "poc/poc_portal.py poc/poc_portal.py" \
                  "poc/barisign.py poc/barisign.py" \
@@ -92,11 +93,19 @@ download_all() {
         # shellcheck disable=SC2086
         set -- $_pair
         if fetch "$1" "$2"; then
-            printf '.'
+            _n=$((_n + 1))
         else
-            printf 'x'
+            _n=$((_n + 1))
             fail=1
         fi
+        # Same cycling indicator as the other stages: one line,
+        # rewritten in place (. → .. → ... → .), no background job.
+        case $((_n % 3)) in
+            1) _d='.';;
+            2) _d='..';;
+            *) _d='...';;
+        esac
+        printf '\r\033[2K  files     %s' "$_d"
     done
     chmod +x bin/* 2>/dev/null
     return $fail
@@ -136,22 +145,21 @@ works() {
 attempt=1
 while [ "$attempt" -le 2 ]; do
     FAILED=""
-    printf '  files     '
     download_all
     if [ "$fail" -eq 0 ]; then
-        printf ' ok\n'
+        printf '\r\033[2K  files     ok\n'
     else
-        printf ' failed\n'
+        printf '\r\033[2K  files     failed\n'
         printf '  ! could not fetch:%s\n' "$FAILED"
     fi
 
-    printf '  check     '
+    printf '  check     ...'
     COMPILE_BAD=""
     if [ "$fail" -eq 0 ] && COMPILE_BAD=$(check_compiles) && works; then
-        printf 'ok\n'
+        printf '\r\033[2K  check     ok\n'
         break
     fi
-    printf 'failed\n'
+    printf '\r\033[2K  check     failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
         printf '  ! does not compile:%s\n' "$COMPILE_BAD"
     fi
