@@ -49,10 +49,12 @@ fi
 fetch() {   # fetch <file-in-repo> <destination>
     # -f is essential: without it a 404 HTML page is non-empty and would be
     # accepted as a source file (the installer would then compile an error page).
-    if curl -fsSL -H 'Cache-Control: no-cache' "$RAW/$1" -o "$2" 2>/dev/null && [ -s "$2" ]; then
+    # The timeouts stop one dead connection from hanging the whole install.
+    if curl -fsSL --connect-timeout 15 --max-time 120 -H 'Cache-Control: no-cache' \
+            "$RAW/$1" -o "$2" 2>/dev/null && [ -s "$2" ]; then
         return 0
     fi
-    if curl -fsSL -H 'Cache-Control: no-cache' \
+    if curl -fsSL --connect-timeout 15 --max-time 120 -H 'Cache-Control: no-cache' \
             "https://raw.githubusercontent.com/barismd/barisign/main/$1" -o "$2" 2>/dev/null \
        && [ -s "$2" ]; then
         return 0
@@ -159,6 +161,9 @@ progress_stop() {
     _dir=""
 }
 
+# On any exit (including a set -u error or Ctrl-C) stop the indicator, so a
+# failed run can never leave a spinner looping in the terminal.
+trap 'progress_stop' 0
 trap 'progress_stop; exit 130' 1 2 15
 
 attempt=1
