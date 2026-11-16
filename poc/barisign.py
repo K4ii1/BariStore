@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.11"
+VERSION = "0.9.12"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -136,9 +136,23 @@ _wire_progress()
 def load_state():
     try:
         with open(STATE_FILE) as handle:
-            return json.load(handle)
+            state = json.load(handle)
     except Exception:                                         # noqa: BLE001
         return {}
+    if not isinstance(state, dict):
+        return {}
+    # Bundle ids that were wrong in an earlier variants.json; fix silently
+    # once so the portal stops registering the wrong App ID (AltStore Classic
+    # is com.rileytestut.AltStore upstream, not com.altstore.AltStore).
+    fixed = {"com.altstore.AltStore": "com.rileytestut.AltStore"}
+    if state.get("bundle_id") in fixed:
+        state["bundle_id"] = fixed[state["bundle_id"]]
+        try:
+            with open(STATE_FILE, "w") as handle:
+                json.dump(state, handle, indent=2)
+        except Exception:                                     # noqa: BLE001
+            pass
+    return state
 
 
 def save_state(state):
