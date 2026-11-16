@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
@@ -1210,45 +1210,126 @@ def _sign_progress(label):
 
 def _choose_variant(state, variants):
     """The one-line menu; remembers the choice in state."""
-    _stage("Variant")
-    for index, item in enumerate(variants, 1):
-        print("  %d  %s" % (index, item["name"]))
-    print("  %d  custom IPA file (already on the signer)" % (len(variants) + 1))
-    choice = _ask("  choose 1-%d: " % (len(variants) + 1), "1")
-    if choice == str(len(variants) + 1):
-        return _choose_custom_ipa(state)
-    if not (choice.isdigit() and 1 <= int(choice) <= len(variants)):
-        choice = "1"
-    chosen = variants[int(choice) - 1]
-    update_state(variant=chosen["id"], bundle_id=chosen["bundle_id"])
-    print("  %s" % chosen["name"])
-    return chosen
+    while True:
+        _stage("Variant")
+        for index, item in enumerate(variants, 1):
+            print("  %d  %s" % (index, item["name"]))
+        print("  %d  custom IPA file (pick from this device)" % (len(variants) + 1))
+        choice = _ask("  choose 1-%d: " % (len(variants) + 1), "1")
+        if choice == str(len(variants) + 1):
+            chosen = _choose_custom_ipa(state)
+            if chosen is not None:
+                return chosen
+            continue
+        if not (choice.isdigit() and 1 <= int(choice) <= len(variants)):
+            choice = "1"
+        chosen = variants[int(choice) - 1]
+        update_state(variant=chosen["id"], bundle_id=chosen["bundle_id"])
+        print("  %s" % chosen["name"])
+        return chosen
+
+
+def _find_signer_ipas(limit=40):
+    """IPAs already on this signer, newest first.
+
+    Looks where a user can realistically put a file: the Files app's
+    a-Shell folder (~/Documents, a couple of levels deep), the BariSign
+    folder and the state folder. Skips anything tiny (not an IPA).
+    """
+    roots = []
+    for root in (os.path.join(os.path.expanduser("~"), "Documents"),
+                 ROOT, STATE_DIR):
+        if os.path.isdir(root) and root not in roots:
+            roots.append(root)
+    found = []
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root):
+            if os.path.relpath(dirpath, root).count(os.sep) > 2:
+                dirnames[:] = []
+                continue
+            for name in sorted(filenames):
+                if not name.lower().endswith(".ipa"):
+                    continue
+                full = os.path.join(dirpath, name)
+                try:
+                    if os.path.getsize(full) < 1024 * 1024 or not os.path.isfile(full):
+                        continue
+                except OSError:
+                    continue
+                if full not in found:
+                    found.append(full)
+            if len(found) >= limit:
+                break
+        if len(found) >= limit:
+            break
+    try:
+        found.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    except OSError:
+        pass
+    return found[:limit]
+
+
+def _resolve_ipa_path(typed):
+    """Turn what the user typed into an IPA path, or ''.
+
+    Accepts absolute paths, ~/ paths and bare file names (looked up in the
+    same places the picker scans).
+    """
+    if not typed:
+        return ""
+    candidates = [os.path.abspath(os.path.expanduser(typed)),
+                  os.path.join(os.path.expanduser("~"), "Documents", typed)]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and candidate.lower().endswith(".ipa"):
+            return candidate
+    for found in _find_signer_ipas():
+        if os.path.basename(found) == os.path.basename(typed):
+            return found
+    return ""
 
 
 def _choose_custom_ipa(state):
-    """A user-supplied IPA: validate it and adopt its bundle id.
+    """Let the user pick an IPA already on the signer.
 
-    Each distinct bundle id needs its own App ID, and a free Apple ID has 10
-    App ID slots — the portal step will say so when they run out.
+    A numbered list when IPAs are found; otherwise (or additionally) a path
+    can be pasted. A distinct bundle id needs its own App ID, and a free
+    Apple ID has 10 App ID slots.
     """
+    found = _find_signer_ipas()
+    if found:
+        print("  IPAs on this signer (newest first):")
+        for index, path in enumerate(found, 1):
+            try:
+                size = os.path.getsize(path) / 1048576.0
+            except OSError:
+                size = 0
+            print("  %d  %s  (%.1f MB)" % (index, _display_path(path), size))
+        print("  or paste a path below.")
+    else:
+        print("  no IPA found on this signer yet.")
+        print("  save it with the Files app first:")
+        print("    Files > On My iPhone/iPad > a-Shell > paste it here,")
+        print("  then pick it below.")
     for _attempt in range(3):
-        path = _ask("  custom IPA path: ").strip()
-        if not path:
-            print("  no file; keeping the saved variant")
+        typed = _ask("  number or path (empty = back): ").strip()
+        if not typed:
             return None
-        full = os.path.abspath(os.path.expanduser(path))
-        if not os.path.isfile(full):
-            print("  ! not found: %s" % full)
+        if typed.isdigit() and found and 1 <= int(typed) <= len(found):
+            path = found[int(typed) - 1]
+        else:
+            path = _resolve_ipa_path(typed)
+        if not path:
+            print("  ! not found, try again")
             continue
-        bundle_id = _ipa_bundle_id(full)
+        bundle_id = _ipa_bundle_id(path)
         if not bundle_id:
-            print("  ! not an IPA (no Payload/*.app/Info.plist): %s" % full)
+            print("  ! not an IPA (no Payload/*.app/Info.plist)")
             continue
-        update_state(variant="custom", bundle_id=bundle_id, ipa=full)
-        print("  custom   %s" % os.path.basename(full))
+        update_state(variant="custom", bundle_id=bundle_id, ipa=path)
         print("  bundle   %s" % bundle_id)
-        return {"id": "custom", "name": os.path.basename(full),
-                "bundle_id": bundle_id, "custom_ipa": full}
+        return {"id": "custom", "name": os.path.basename(path),
+                "bundle_id": bundle_id, "custom_ipa": path}
+    return None
 
 
 def _ipa_bundle_id(path):
@@ -1380,7 +1461,7 @@ def cmd_sign(argv):
 
 
 def cmd_guided(argv):
-    """check -> variant -> udid -> login -> portal -> download -> sign -> zip."""
+    """check -> variant -> Apple ID -> pairing -> download -> install."""
     state = load_state()
     print("BariSign %s" % VERSION)
     if poc_login._selftest(quiet=True) != 0:
@@ -1392,6 +1473,23 @@ def cmd_guided(argv):
     if variants:
         _choose_variant(state, variants)
         state = load_state()
+
+    email = state.get("email") or ""
+    if not email:
+        # Same rule as `login`: the stage comes first, the address is asked on it.
+        _stage("Apple sign-in")
+        email = _ask("  Apple ID: ").strip()
+        if not email:
+            print("no Apple ID")
+            return 2
+    account = _sign_in(email, staged=not state.get("email"))
+    update_state(email=email)
+
+    if state.get("udid") and _yes("  keep UDID %s?" % state["udid"], True):
+        pass
+    elif cmd_udid([]) != 0:
+        return 1
+    state = load_state()
 
     print("  on the target, open:")
     print("    Settings > Privacy & Security > Developer Mode")
@@ -1407,23 +1505,6 @@ def cmd_guided(argv):
         if _adopt_custom_bundle_id(_info["bundle_id"]) is None:
             return 1
         state = load_state()
-
-    if state.get("udid") and _yes("  keep UDID %s?" % state["udid"], True):
-        pass
-    elif cmd_udid([]) != 0:
-        return 1
-    state = load_state()
-
-    email = state.get("email") or ""
-    if not email:
-        # Same rule as `login`: the stage comes first, the address is asked on it.
-        _stage("Apple sign-in")
-        email = _ask("  Apple ID: ").strip()
-        if not email:
-            print("no Apple ID")
-            return 2
-    account = _sign_in(email, staged=not state.get("email"))
-    update_state(email=email)
 
     result = _portal(account, email, state.get("udid", ""), state.get("bundle_id", ""),
                      "BariSign device",
