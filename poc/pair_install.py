@@ -51,6 +51,15 @@ def _say(text=""):
     print(text, flush=True)
 
 
+def _ask(prompt, default=""):
+    try:
+        entered = input(prompt)
+    except EOFError:
+        entered = ""
+    entered = (entered or "").strip()
+    return entered or default
+
+
 def _clear_screen():
     sys.stdout.write("\033[2J\033[3J\033[1;1H")
     sys.stdout.flush()
@@ -105,6 +114,130 @@ def display_path(path):
     if full == docs or full.startswith(docs + os.sep):
         return "Device/a-Shell/" + os.path.relpath(full, docs).replace(os.sep, "/")
     return path
+
+
+REGISTRY_PATH = os.path.join(STATE_DIR, "paired_devices.json")
+PAIRINGS_DIR = os.path.join(STATE_DIR, "pairings")
+
+
+def _norm_id(value):
+    return re.sub(r"[^0-9a-f]", "", str(value or "").lower())
+
+
+def load_registry():
+    try:
+        with open(REGISTRY_PATH) as handle:
+            entries = json.load(handle)
+        if isinstance(entries, list):
+            return [entry for entry in entries
+                    if isinstance(entry, dict) and entry.get("file")
+                    and os.path.isfile(entry["file"])]
+    except Exception:                                           # noqa: BLE001
+        pass
+    return []
+
+
+def save_registry(entries):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = REGISTRY_PATH + ".tmp"
+    with open(tmp, "w") as handle:
+        json.dump(entries, handle, indent=2)
+    os.replace(tmp, REGISTRY_PATH)
+
+
+def registry_migrate():
+    """Adopt the pre-menu single record file as the first registry entry."""
+    entries = load_registry()
+    if entries:
+        return entries
+    try:
+        record = rpp_tunnel.load_record(RECORD_PATH)
+    except Exception:                                           # noqa: BLE001
+        return []
+    udid = normalise_udid(record.get("peer_udid") or "")
+    key = _norm_id(udid) or _norm_id(record.get("peer_identifier")) or "device"
+    os.makedirs(PAIRINGS_DIR, exist_ok=True)
+    path = os.path.join(PAIRINGS_DIR, key + ".plist")
+    if not os.path.isfile(path):
+        with open(path, "wb") as handle:
+            handle.write(plistlib.dumps(record))
+        os.chmod(path, 0o600)
+    entry = {"udid": udid,
+             "name": record.get("peer_name") or "target",
+             "model": record.get("peer_model") or "",
+             "identifier": record.get("peer_identifier") or "",
+             "file": path,
+             "peer_ip": load_state().get("peer_ip") or "",
+             "last_used": 0}
+    save_registry([entry])
+    return [entry]
+
+
+def registry_upsert(info, record_path, peer_ip):
+    """Store/refresh the entry for a freshly paired device (newest first)."""
+    entries = load_registry()
+    udid = normalise_udid(info.get("udid", ""))
+    key = _norm_id(udid) or _norm_id(info.get("identifier")) or "device"
+    os.makedirs(PAIRINGS_DIR, exist_ok=True)
+    path = os.path.join(PAIRINGS_DIR, key + ".plist")
+    with open(record_path, "rb") as handle:
+        data = handle.read()
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as handle:
+        handle.write(data)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    entries = [entry for entry in entries
+               if _norm_id(entry.get("udid")) != _norm_id(udid) or not udid]
+    import time as _time
+    entry = {"udid": udid,
+             "name": info.get("name") or "target",
+             "model": info.get("model") or "",
+             "identifier": info.get("identifier") or "",
+             "file": path,
+             "peer_ip": peer_ip or "",
+             "last_used": int(_time.time())}
+    entries.insert(0, entry)
+    save_registry(entries)
+    return entries
+
+
+def registry_activate(entry):
+    """Make an entry's record the active one; return the loaded record."""
+    with open(entry["file"], "rb") as handle:
+        data = handle.read()
+    for name in ("PairingFile_RemoteRP.plist", "ALTPairingFile.plist",
+                 "ALTPairingFile.mobiledevicepairing"):
+        path = os.path.join(STATE_DIR, name)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    record = rpp_tunnel.load_record(RECORD_PATH)
+    udid = normalise_udid(record.get("peer_udid") or entry.get("udid") or "")
+    save_state(paired=True, udid=udid, peer_ip=entry.get("peer_ip") or "",
+               peer_name=entry.get("name") or "", record=RECORD_PATH)
+    return record, udid
+
+
+def choose_device(entries):
+    """Interactive device menu. Returns ('entry', entry), ('new', None)."""
+    _stage("Pairing", ["previously paired devices:"])
+    for index, entry in enumerate(entries, 1):
+        label = entry.get("name") or "target"
+        model = entry.get("model") or ""
+        udid = entry.get("udid") or ""
+        _say("  %d  %s%s  %s" % (index, label,
+                                 (" (%s)" % model) if model else "", udid))
+    _say("  %d  pair a new device" % (len(entries) + 1))
+    _say("")
+    choice = _ask("  choose 1-%d: " % (len(entries) + 1), "1")
+    if choice == str(len(entries) + 1):
+        return "new", None
+    if choice.isdigit() and 1 <= int(choice) <= len(entries):
+        return "entry", entries[int(choice) - 1]
+    return "entry", entries[0]
 
 
 def save_record(record):
@@ -203,10 +336,9 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
         host = pairing.PairableHost(reader, writer, identity, log=log)
 
         def pin(code):
-            _stage("Pair", instructions + [
-                "pairing code:  %s" % code,
-                "enter it on the TARGET now",
-            ])
+            _say("")
+            _say("  pairing code:  %s" % code)
+            _say("  enter it on the TARGET now")
             log("PIN shown: %s" % code)
 
         try:
@@ -260,7 +392,7 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
                 registration = None
                 advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
                 transports = advertiser.transports
-        _stage("Pair", instructions + ["advertising via %s" % transports])
+        _stage("Pairing", instructions + ["advertising via %s" % transports])
         try:
             return await asyncio.wait_for(result, timeout)
         except asyncio.TimeoutError:
@@ -402,18 +534,14 @@ def _id_match(value, *candidates):
 
 
 async def pair_fresh(identity, timeout, raw=False, target_ip=""):
-    """Run one device-initiated pairing; save record+UDID; return (record, udid, peer_ip)."""
+    """Run one device-initiated pairing; save record+UDID; return (record, udid, peer_ip, info)."""
     info, peer_ip = await pair_target(timeout, identity, raw=raw, target_ip=target_ip)
     pseudo = pairing.PairingRecord(identity, info)
     record_path = save_record(pseudo)
     udid = normalise_udid(info.get("udid", ""))
     save_state(paired=True, udid=udid, peer_ip=peer_ip,
                peer_name=info.get("name", ""), record=record_path)
-    _stage("Pair", [
-        "paired:  %s" % (info.get("name") or "target"),
-        "UDID is read from the tunnel next",
-    ])
-    return rpp_tunnel.load_record(record_path), udid, peer_ip
+    return rpp_tunnel.load_record(record_path), udid, peer_ip, info
 
 
 async def sweep_target(record, udid=""):
@@ -683,9 +811,15 @@ async def _run(args):
         except Exception as exc:                            # noqa: BLE001
             _say("  ! cannot read the pairing file %s: %s" % (source, exc))
             return 2
-        save_record(imported)
+        record_path = save_record(imported)
+        imported_udid = normalise_udid(imported.get("peer_udid") or "")
+        imported_info = {"udid": imported_udid,
+                         "name": imported.get("peer_name") or "",
+                         "model": imported.get("peer_model") or "",
+                         "identifier": imported.get("peer_identifier") or ""}
+        registry_upsert(imported_info, record_path, "")
         record = imported
-        udid = normalise_udid(args.get("udid") or imported.get("peer_udid") or udid)
+        udid = normalise_udid(args.get("udid") or imported_udid or udid)
         save_state(paired=True, udid=udid, record=RECORD_PATH)
         _say("  imported     %s" % source)
         if udid:
@@ -693,9 +827,13 @@ async def _run(args):
         if args.get("pair_only"):
             _say("  done         pairing file imported")
             return 0
+
+    entries = registry_migrate()
+    just_paired = False
     if record is None:
+        # No record at all (fresh run or --repair): pair now, no menu.
         try:
-            record, udid, peer_ip = await pair_fresh(
+            record, udid, peer_ip, info = await pair_fresh(
                 identity, timeout,
                 raw=args.get("raw", False), target_ip=args.get("target_ip", ""))
         except Exception as exc:                            # noqa: BLE001
@@ -704,85 +842,124 @@ async def _run(args):
                 _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
                 return 2
             raise
+        entries = registry_upsert(info, RECORD_PATH, peer_ip)
+        just_paired = True
+
+    explicit_host = args.get("host", "") or ""
+    explicit_udid = normalise_udid(args.get("udid") or "")
+    interactive = sys.stdin.isatty()
+    if explicit_host:
+        host, port = explicit_host, args.get("port", 0) or 0
+    elif explicit_udid:
+        match = next((entry for entry in entries
+                      if _norm_id(entry.get("udid")) == _norm_id(explicit_udid)), None)
+        if match is not None:
+            record, udid = registry_activate(match)
+        host, port = match.get("peer_ip", "") if match else "", 0
+        if not host:
+            host, port = state.get("peer_ip") or peer_ip or "", 0
+    elif entries and interactive and not just_paired:
+        kind, picked = choose_device(entries)
+        if kind == "new":
+            try:
+                record, udid, peer_ip, info = await pair_fresh(
+                    identity, timeout,
+                    raw=args.get("raw", False), target_ip=args.get("target_ip", ""))
+            except Exception as exc:                        # noqa: BLE001
+                text = str(exc)
+                if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
+                    _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
+                    return 2
+                raise
+            entries = registry_upsert(info, RECORD_PATH, peer_ip)
+            just_paired = True
+            host, port = peer_ip, 0
+        else:
+            record, udid = registry_activate(picked)
+            host, port = picked.get("peer_ip", ""), 0
+    else:
+        if entries:
+            record, udid = registry_activate(entries[0])
+            host, port = entries[0].get("peer_ip", ""), 0
+        else:
+            host, port = state.get("peer_ip") or peer_ip or "", 0
+    if not host:
+        host, port = state.get("peer_ip") or peer_ip or "", 0
 
     # a-Shell can neither advertise nor browse Bonjour (-65555 on both), so
     # skip discovery there entirely: the paired address plus scans replace it.
     # Any browse failure (first -65555 included) is remembered, so later runs
     # do not even try.
-    blocked = bool(_ashell_limited() or load_state().get("bonjour_blocked"))
-    host, port = args.get("host", ""), args.get("port", 0)
-    if not host and not blocked:
-        for attempt in range(3):
+    if not host and not _ashell_limited() and not load_state().get("bonjour_blocked"):
+        for _attempt in range(2):
             try:
                 host, port = await find_service(udid, peer_ip, "", 0, timeout=4)
             except Exception:                                   # noqa: BLE001
                 save_state(bonjour_blocked=True)
-                blocked = True
                 host, port = "", 0
                 break
             if host and (port or peer_ip):
                 break
             await asyncio.sleep(2)
     if not host:
-        host, port = peer_ip, 0
+        host = peer_ip or load_state().get("peer_ip") or ""
+    port = port or 0
     if not host:
-        _stage("Tunnel", ["the target was not found"])
+        _stage("Pairing", ["the target was not found"])
         _say("  pass its Wi-Fi address directly:")
         _say("  target: Settings > Wi-Fi > (i) > IP Address, then")
         _say("  sh bin/barisign pair --host <target-ip>")
         return 2
-    _stage("Tunnel", ["target:  %s" % host])
+    _stage("Pairing", ["target:  %s" % host])
 
     session = None
+    explicit = bool(args.get("host", ""))
     try:
-        try:
-            session = await asyncio.wait_for(open_session(record, host, port, udid), 120)
-        except Exception as exc:                                # noqa: BLE001
-            first_error = exc
-            if args.get("pair_only") and udid:
-                _say("  ! tunnel/UDID check failed: %s" % exc)
-                _say("  UDID saved from the pairing: %s" % udid)
-                save_state(udid=udid, paired=True)
-                return 0
-            status, payload = "none", None
-            if not args.get("host", ""):
-                # The saved address goes stale when DHCP reassigns it; find
-                # the target again by its identifier instead of asking the
-                # user to look the address up in Settings.
+        while True:
+            try:
+                session = await asyncio.wait_for(open_session(record, host, port, udid), 120)
+                break
+            except Exception as exc:                            # noqa: BLE001
+                first_error = exc
+                if args.get("pair_only") and udid:
+                    _say("  ! tunnel/UDID check failed: %s" % exc)
+                    _say("  UDID saved from the pairing: %s" % udid)
+                    save_state(udid=udid, paired=True)
+                    return 0
+                if explicit:
+                    raise _friendly_error(host, exc)
+                status, payload = "none", None
                 try:
                     status, payload = await sweep_target(record, udid)
                 except Exception:                               # noqa: BLE001
                     status, payload = "none", None
-            if status == "match":
-                host, port = payload
-                _stage("Tunnel", ["target:  %s:%d" % (host, port)])
-                save_state(peer_ip=host)
-                try:
-                    session = await asyncio.wait_for(
-                        open_session(record, host, port, udid), 120)
-                except Exception as exc2:                           # noqa: BLE001
-                    raise _friendly_error(host, exc2)
-            elif status == "opens" and not args.get("repair"):
-                # Something on this Wi-Fi answers, but nothing matches our
-                # record and the saved path is silent: pair fresh instead of
-                # dying. A new identity makes the target show the prompt.
-                try:
-                    identity = pairing.HostIdentity.generate()
-                    identity.save(IDENTITY_PATH)
-                    record, udid, peer_ip = await pair_fresh(identity, timeout)
-                except Exception as exc2:                           # noqa: BLE001
-                    raise _friendly_error(host, exc2)
-                host, port = peer_ip, 0
-                if not host:
+                if status == "match":
+                    host, port = payload
+                    _stage("Pairing", ["target:  %s:%d" % (host, port)])
+                    save_state(peer_ip=host)
+                    continue
+                # Nothing usable on this Wi-Fi: ask instead of dying.
+                _say("  the target did not answer.")
+                _say("  same Wi-Fi on both devices? target awake and unlocked?")
+                _say("  1  try again")
+                _say("  2  pair again (fresh prompt on the target)")
+                if not sys.stdin.isatty():
                     raise _friendly_error(host, first_error)
-                _stage("Tunnel", ["target:  %s" % host])
-                try:
-                    session = await asyncio.wait_for(
-                        open_session(record, host, port, udid), 120)
-                except Exception as exc2:                           # noqa: BLE001
-                    raise _friendly_error(host, exc2)
-            else:
-                raise _friendly_error(host, first_error)
+                choice = _ask("  choose 1-2: ", "1")
+                if choice == "2":
+                    try:
+                        identity = pairing.HostIdentity.generate()
+                        identity.save(IDENTITY_PATH)
+                        record, udid, peer_ip, info = await pair_fresh(identity, timeout)
+                    except Exception as exc2:                       # noqa: BLE001
+                        raise _friendly_error(host, exc2)
+                    entries = registry_upsert(info, RECORD_PATH, peer_ip)
+                    host, port = peer_ip, 0
+                    if not host:
+                        raise _friendly_error(host, first_error)
+                    continue
+                # try again: loop re-scans and re-sweeps
+                continue
         if session.udid:
             if udid and udid != session.udid:
                 _say("  ! the tunnel reports a different UDID than the pairing record")
@@ -793,14 +970,14 @@ async def _run(args):
             return 2
         device = session.properties.get("ProductType", "") or "device"
         if args.get("pair_only"):
-            _stage("Tunnel", [
+            _stage("Pairing", [
                 "target:  %s" % host,
                 "device:  %s" % device,
                 "UDID:    %s" % udid,
                 "pairing file saved",
             ])
             return 0
-        _stage("Tunnel", [
+        _stage("Pairing", [
             "target:  %s" % host,
             "device:  %s" % device,
             "UDID:    %s" % udid,

@@ -23,6 +23,49 @@ def test_id_match():
     assert not pair_install._id_match(None, "abc")
 
 
+def test_registry():
+    import plistlib
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="registry-")
+    pair_install.REGISTRY_PATH = os.path.join(tmp, "paired_devices.json")
+    pair_install.PAIRINGS_DIR = os.path.join(tmp, "pairings")
+    real_save_state = pair_install.save_state
+    pair_install.save_state = lambda **kwargs: {}
+    try:
+        assert pair_install.load_registry() == []
+        record = {"private_key": b"\x01" * 32, "public_key": b"\x02" * 32,
+                  "identifier": "HOST-1", "alt_irk": b"\x03" * 16,
+                  "peer_udid": "a" * 40, "peer_name": "Phone",
+                  "peer_model": "iPhone14,5", "peer_identifier": "PEER-1"}
+        record_path = os.path.join(tmp, "record.plist")
+        with open(record_path, "wb") as handle:
+            plistlib.dump(record, handle)
+        info = {"udid": "a" * 40, "name": "Phone", "model": "iPhone14,5",
+                "identifier": "PEER-1"}
+        entries = pair_install.registry_upsert(info, record_path, "192.168.1.20")
+        assert len(entries) == 1 and entries[0]["udid"] == "a" * 40
+        assert pair_install.load_registry()[0]["peer_ip"] == "192.168.1.20"
+        second = os.path.join(tmp, "record2.plist")
+        with open(second, "wb") as handle:
+            plistlib.dump(dict(record, peer_udid="b" * 40, peer_name="Pad"), handle)
+        info2 = {"udid": "b" * 40, "name": "Pad", "model": "iPad13,1",
+                 "identifier": "PEER-2"}
+        entries = pair_install.registry_upsert(info2, second, "192.168.1.21")
+        assert [e["udid"] for e in entries] == ["b" * 40, "a" * 40]
+        record2, udid2 = pair_install.registry_activate(entries[1])
+        assert udid2 == "a" * 40
+        assert record2["peer_name"] == "Phone"
+    finally:
+        pair_install.save_state = real_save_state
+    assert pair_install._id_match("00008110-001431ea22eb601e",
+                                  "00008110-001431EA22EB601E")
+    assert pair_install._id_match("6ED01484-3C84-4CBE-BD38-16AF897697E4",
+                                  "6ed01484-3c84-4cbe-bd38-16af897697e4")
+    assert not pair_install._id_match("abc", "def")
+    assert not pair_install._id_match("", "abc")
+    assert not pair_install._id_match(None, "abc")
+
+
 def test_scan_and_probe():
     async def main():
         device = test_pair_tunnel.MockDevice()
@@ -50,3 +93,5 @@ if __name__ == "__main__":
     print("ok  test_id_match")
     test_scan_and_probe()
     print("ok  test_scan_and_probe")
+    test_registry()
+    print("ok  test_registry")
