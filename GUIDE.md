@@ -104,8 +104,8 @@ sh bin/barisign sign --ipa X.ipa  # sign a file you already have
 
 Put a custom IPA in Files > On My iPhone/iPad > a-Shell > Custom IPAs first; the guided
 run lists that folder (newest first) as its last menu item and reads the bundle id from the
-IPA itself. Downloaded originals and signed outputs live in `barisign/ipa/` instead, so the
-program folder stays tidy. The portal registers a separate App ID for a custom bundle id
+IPA itself. Downloaded originals live in `barisign/ipa/unsigned/`, signed outputs in
+`barisign/ipa/signed/`, so the program folder stays tidy. The portal registers a separate App ID for a custom bundle id
 (a free Apple ID has 10 slots), and the install step verifies the embedded profile (expiry +
 target UDID) before uploading anything.
 

@@ -70,12 +70,14 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.10"
+VERSION = "0.9.11"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
 # custom inputs live in ~/Documents/Custom IPAs (outside, user-managed).
 IPA_DIR = os.path.join(os.path.dirname(STATE_DIR), "ipa")
+UNSIGNED_DIR = os.path.join(IPA_DIR, "unsigned")
+SIGNED_DIR = os.path.join(IPA_DIR, "signed")
 CUSTOM_IPA_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Custom IPAs")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
 
@@ -748,13 +750,13 @@ def cmd_reset(_argv):
     for variant in load_variants():
         identifier = variant.get("id")
         if identifier:
-            for directory in (folder, IPA_DIR):
+            for directory in (folder, IPA_DIR, UNSIGNED_DIR):
                 path = os.path.join(directory, identifier + ".ipa")
                 if os.path.isfile(path):
                     files.append(path)
     for pattern in ("*-signed.ipa", "*-signed.zip", "*.ipa.part", "*.zip.part"):
         files.extend(sorted(glob.glob(os.path.join(folder, pattern))))
-        files.extend(sorted(glob.glob(os.path.join(IPA_DIR, pattern))))
+        files.extend(sorted(glob.glob(os.path.join(SIGNED_DIR, pattern))))
     files = sorted(set(files))
 
     if not folders and not files:
@@ -1382,12 +1384,20 @@ def _obtain_ipa(state, argv):
         variant = _choose_variant(state, variants)
         state = load_state()
 
-    folder = IPA_DIR
+    folder = UNSIGNED_DIR
     try:
         info = download.resolve(variant)
     except download.DownloadError as exc:
-        saved = os.path.join(folder, (variant.get("id") or "barisign") + ".ipa")
-        if os.path.isfile(saved) and os.path.getsize(saved) > 0:
+        # Offline fallback: the current unsigned/ folder, then the old
+        # program-folder location from before the split.
+        saved = ""
+        for candidate in (os.path.join(folder, (variant.get("id") or "barisign") + ".ipa"),
+                          os.path.join(os.path.dirname(STATE_DIR),
+                                       (variant.get("id") or "barisign") + ".ipa")):
+            if os.path.isfile(candidate) and os.path.getsize(candidate) > 0:
+                saved = candidate
+                break
+        if saved:
             _result("IPA", "%s (no GitHub; using the saved file)"
                     % os.path.basename(saved))
             return saved, {"version": "saved file"}
@@ -1425,11 +1435,12 @@ def _sign_now(ipa, saved, argv, hint=True, make_zip=None):
         make_zip = "--no-zip" not in argv
     out = argv_get(argv, "--out")
     if not out:
-        # Signed outputs live in ipa/ inside BariSign, not next to the input.
-        os.makedirs(IPA_DIR, exist_ok=True)
+        # Signed outputs live in ipa/signed/ inside BariSign: originals stay
+        # in ipa/unsigned/, custom inputs stay in ~/Documents/Custom IPAs.
+        os.makedirs(SIGNED_DIR, exist_ok=True)
         base = os.path.basename(ipa)
         stem = base[:-4] if base.lower().endswith(".ipa") else base
-        out = os.path.join(IPA_DIR, stem + "-signed.ipa")
+        out = os.path.join(SIGNED_DIR, stem + "-signed.ipa")
     try:
         result = signer.sign_ipa(ipa, saved["profile"], saved["key"], saved["cert"],
                                  output_ipa=out,
