@@ -1240,8 +1240,9 @@ def _find_signer_ipas(limit=40):
     folder and the state folder. Skips anything tiny (not an IPA).
     """
     roots = []
+    repo_root = os.path.dirname(_HERE)
     for root in (os.path.join(os.path.expanduser("~"), "Documents"),
-                 ROOT, STATE_DIR):
+                 repo_root, STATE_DIR):
         if os.path.isdir(root) and root not in roots:
             roots.append(root)
     found = []
