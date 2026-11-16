@@ -4,16 +4,12 @@ Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classi
 **with no computer**, using your own free Apple ID. The design needs **two iOS/iPadOS devices on the
 same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 
-> **Current blocker (device-confirmed): a-Shell cannot advertise the pairing service.**
-> `DNSServiceRegister` returns **-65555 (NoAuth)** because iOS only allows Bonjour types listed in
-> the app's signed `NSBonjourServices` allowlist, and a-Shell has no entry for
-> `_remotepairing-pairable-host._tcp`. Python cannot edit that Info.plist. So the target's
-> Settings → Paired Macs cannot discover BariSign from a-Shell. A **raw mDNS fallback** is now
-> implemented (`poc/raw_mdns.py`): `pair` tries it automatically when DNS-SD returns `-65555`, so the
-> easy test is just `sh bin/barisign pair` and open Paired Macs on the target. If that still fails,
-> the install needs a pairing record from a host that can advertise; import it with
-> `pair --import FILE --host <target-ip>`. The **signing/portal/UDID-page** path and the **pure
-> tunnel/install engine** are unaffected. Options: `docs/NEXT_SESSION.md`.
+> **Pairing works from a-Shell via raw broadcast.** iOS only allows Bonjour types listed in an
+> app's signed `NSBonjourServices` allowlist, so a-Shell's `DNSServiceRegister` call fails with
+> `-65555` — but BariSign announces `_remotepairing-pairable-host._tcp` over raw multicast/broadcast
+> instead, no setup needed: run `sh bin/barisign pair` and open Paired Macs on the target. The
+> **signing/portal/UDID-page** path and the **pure tunnel/install engine** are unaffected.
+> Details and fallbacks (`--host`, `--import`): `docs/NEXT_SESSION.md`.
 
 | Role | What it is | What it runs |
 |---|---|---|
@@ -23,35 +19,35 @@ same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 Both devices may be an **iPhone or an iPad**; iOS and iPadOS both work. The role is chosen at run time.
 They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSign.
 
-> **Status:** the signer path is verified on a real device running iOS 27: Apple sign-in, the
-> developer portal, signing, and launching the signed app. The pure tunnel/install engine is written
-> and Linux-tested, but **pairing from Settings is blocked by a-Shell's Bonjour allowlist**
-> (see above). The fallback **UDID page** works for the UDID; it does not produce a pairing record.
+> **Status:** verified on a real device running iOS 27: Apple sign-in, the developer portal,
+> signing, launching the signed app — and device-initiated pairing (M1–M6, UDID saved). The pure
+> tunnel/install engine is Linux-tested end to end; the on-device install is next.
 
 ---
 
 ## How the flow works
 
 1. On the **signer**, install a-Shell and BariSign, then run `sh bin/barisign`.
-2. The signer downloads the chosen variant's **original** IPA and offers to share it to the target.
-   If the target has never had Developer Mode, install that IPA once; the Developer Mode switch
-   appears after the failed launch attempt. (This is only a trigger; it is not the app we sign.)
-3. Pair the target: on the **target** open **Settings → Privacy & Security → Developer Mode →
-   Paired Macs**, pick **BariSign**, enter the code. The signer takes the target's **UDID from the
-   pairing** and continues; the median page is not needed. **This step currently fails inside
-   a-Shell** because it cannot advertise the Bonjour type; see the blocker above.
-4. Signer: Apple sign-in, developer portal (device + App ID + certificate + profile), sign.
-5. Install with the same pairing record: `sh bin/barisign pair`. The signer advertises again, the target
-   enters the code, and the signer installs over Wi-Fi with `installation_proxy`. The pairing file is
-   saved under `state/` and written into AltStore (`Documents/ALTPairingFile.plist`) or SideStore
-   (`Documents/ALTPairingFile.mobiledevicepairing`) so the installed app can refresh itself.
+2. Sign in with your Apple ID. On the **target**, check Settings → Developer Mode:
+   if the switch is missing, the guided run walks you through a one-time trigger
+   install that makes it appear.
+3. Pair the target: on the **target** open Settings → Developer Mode (or Settings →
+   Developer) → Paired Macs, pick **BariSign**, enter the code. The signer takes the
+   target's **UDID from the pairing** and continues; the median page is only a fallback.
+4. Pick the variant, then the signer downloads its **original** IPA, registers the
+   target in the developer portal (device + App ID + certificate + profile), and signs.
+5. Install over Wi-Fi with `installation_proxy`. The pairing file is saved under
+   `state/` and written into the installed app (AltStore `Documents/ALTPairingFile.plist`;
+   SideStore `Documents/ALTPairingFile.mobiledevicepairing` plus `PairingFile_RemoteRP.plist`;
+   LiveContainer's built-in SideStore the same two names under `SideStore/Documents/`)
+   so the installed app can refresh itself.
 6. On the target, trust the developer and open the app.
 
-> **How the install works (once a pairing record exists):** the record opens the target's
-> `_remotepairing` service over Wi-Fi. A pure TLS 1.2 PSK tunnel carries a small userspace TCP stack;
-> `installation_proxy` installs the staged IPA as a developer package, and house_arrest writes the
-> pairing file into the app. The target only trusts the developer and opens the app. **Untested on a
-> device; the pairing advertisement is the current blocker.**
+> **How the install works:** a pairing record (made by pairing once from Settings) opens
+> the target's `_remotepairing` service over Wi-Fi. A pure TLS 1.2 PSK tunnel carries a small
+> userspace TCP stack; `installation_proxy` installs the staged IPA as a developer package, and
+> house_arrest writes the pairing file into the app. The target only trusts the developer and
+> opens the app. Device-tested through pairing; the install step is next in line for a device run.
 
 If pairing cannot produce a UDID (old target, Developer Mode not available), the signer falls back to
 a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<port>/`, installs the
@@ -66,10 +62,10 @@ a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<p
 | **Apple sign-in** (free ID, 2FA) | ✅ verified |
 | **Device, certificate, profile** (developer portal) | ✅ verified |
 | **Download + sign + verify** | ✅ verified — the signed IPA installs and the app launches on a device |
-| **UDID from pairing** (pair-first) | ❌ a-Shell cannot advertise the service (`-65555` NoAuth) |
-| **UDID page** fallback served by the signer | ⚠️ written, untested on a device |
-| **Signer → target pairing install** (`sh bin/barisign pair`) | ❌ discovery blocked; engine ready once a pairing record exists |
-| **Two devices, no computer** | blocked at the pairing-host advertisement; `docs/NEXT_SESSION.md` lists the options |
+| **UDID from pairing** (pair-first) | ✅ verified on a device |
+| **UDID page** fallback served by the signer | written (rarely needed now) |
+| **Signer → target pairing install** (`sh bin/barisign pair`) | ⚠️ engine + discovery ready; on-device install is next |
+| **Two devices, no computer** | the design; pairing proven, install pending a device run |
 
 ---
 
@@ -88,7 +84,7 @@ repository and applies it (files and `bin/update` itself). Your saved state in `
 There is **no engine download and no pip step**: the pairing engine is part of the program files.
 
 ```
-sh bin/barisign          # guided: check -> variant -> download -> pair/UDID -> Apple -> portal -> sign -> install
+sh bin/barisign          # guided: check -> Apple ID -> devmode -> pairing/UDID -> variant -> download -> portal -> sign -> install
 sh bin/barisign pair     # pair the target and install over Wi-Fi
 sh bin/barisign status   # what is already known
 sh bin/barisign --help   # every command

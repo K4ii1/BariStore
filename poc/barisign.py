@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.14"
+VERSION = "0.9.15"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1498,7 +1498,7 @@ def cmd_sign(argv):
 
 
 def cmd_guided(argv):
-    """check -> variant -> Apple ID -> Developer Mode? -> UDID/pairing ->
+    """check -> Apple ID -> Developer Mode? -> pairing/UDID -> variant ->
     download -> portal -> sign -> [trigger] -> install."""
     state = load_state()
     print("BariSign %s" % VERSION)
@@ -1506,11 +1506,6 @@ def cmd_guided(argv):
         print("check  fail: run 'sh bin/barisign check' for the details")
         return 1
     print("check  ok")
-
-    variants = load_variants()
-    if variants:
-        _choose_variant(state, variants)
-        state = load_state()
 
     email = state.get("email") or ""
     if not email:
@@ -1522,23 +1517,35 @@ def cmd_guided(argv):
             return 2
     account = _sign_in(email, staged=not state.get("email"))
     update_state(email=email)
+    state = load_state()
 
-    _stage("Developer Mode")
-    print("  on the target, open:")
-    print("    Settings > Privacy & Security > Developer Mode")
-    print("    (or Settings > Developer)")
-    # Developer Mode gates the Paired Macs screen, so without it pairing is
-    # impossible: take the UDID from the page and pair after the trigger
-    # install enables Developer Mode.
-    have_devmode = _yes("  is Developer Mode there?",
-                        default=bool(state.get("paired")))
-    if have_devmode:
+    # Pairing needs the Paired Macs screen, which needs Developer Mode — so
+    # the question comes before any pairing attempt. A saved pairing means
+    # Developer Mode is already there: refresh the UDID and move on.
+    has_record = os.path.isfile(os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist"))
+    if has_record:
+        have_devmode = True
         if cmd_udid([]) != 0:
             return 1
         state = load_state()
     else:
-        if cmd_udid(["--page"]) != 0:
-            return 1
+        _stage("Developer Mode")
+        print("  on the target, open:")
+        print("    Settings > Privacy & Security > Developer Mode")
+        print("    (or Settings > Developer)")
+        have_devmode = _yes("  is Developer Mode there?",
+                            default=bool(state.get("paired")))
+        if have_devmode:
+            if cmd_udid([]) != 0:
+                return 1
+        else:
+            if cmd_udid(["--page"]) != 0:
+                return 1
+        state = load_state()
+
+    variants = load_variants()
+    if variants:
+        _choose_variant(state, variants)
         state = load_state()
 
     _stage("Download")

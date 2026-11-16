@@ -1,24 +1,17 @@
-# Next session — handoff (2026-11-15)
+# Next session — handoff (2026-11-16)
 
-State: version **0.9.0**, pure on-device pairing/tunnel/install engine, working tree clean after
-commit. Signing, the developer portal, the UDID fallback page and the self-updater are unchanged and
-still work.
+State: version **0.9.10**, guided flow reordered (Apple ID → devmode check → pairing/UDID →
+variant → download → portal → sign → install). Signing, the developer portal, the UDID fallback
+page and the self-updater are unchanged and still work.
 
-**Confirmed blocker (device, 2026-11-15): a-Shell cannot advertise the pairing service.**
-`sh bin/barisign pair` stops at `DNSServiceRegister: -65555 (NoAuth)`. `-65555` is
-`kDNSServiceErr_NoAuth`: iOS only lets an app register a Bonjour type listed in its **signed
-`Info.plist` `NSBonjourServices`** allowlist. a-Shell has no `_remotepairing-pairable-host._tcp`
-entry (its `Info.plist` has `NSLocalNetworkUsageDescription` but no `NSBonjourServices`), and Python
-cannot edit a signed app. So the target's **Settings → Paired Macs** cannot discover BariSign when
-BariSign runs inside a-Shell. This is not a protocol bug in the pure engine; the pairing host simply
-never gets advertised.
+**Pairing works from a-Shell (device-verified 2026-11-15/16).** DNS-SD itself is still blocked
+(`-65555`: a-Shell's signed `Info.plist` has no `NSBonjourServices` entry), but raw broadcast
+advertising works: the target lists BariSign, M1–M6 completes, the signer prints the PIN and
+saves the UDID plus `state/PairingFile_*.plist`. `--repair` forces a fresh host identity when
+the target stops offering a prompt.
 
-The **tunnel/install half of the engine remains valid**: it needs a pairing record, not the
-advertisement. If a record is already in `state/PairingFile_RemoteRP.plist` (from a host that can
-advertise), `sh bin/barisign pair --udid UDID` still uses the pure engine to install.
-
-`udid --pair` is no longer needed: `sh bin/barisign udid` pairs automatically (or falls back to the
-page), and `sh bin/barisign pair` pairs by itself when no record exists.
+`udid --pair` is gone: `sh bin/barisign udid` pairs automatically (or falls back to the page),
+and `sh bin/barisign pair` pairs by itself when no record exists.
 
 ## What changed
 

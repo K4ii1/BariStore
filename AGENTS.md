@@ -35,16 +35,12 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
   OPACK), pair-verify, **TLS 1.2 PSK** (0x00AF/0x008C — the suites iOS actually negotiates, *not*
   TLS 1.3), a minimal IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and
   `installation_proxy`. No pip, no native wheel, no GPL runtime. The Linux tests are in `tests/`.
-- **Blocker (device-confirmed, 2026-11-15): a-Shell cannot advertise the pairing service.**
-  `DNSServiceRegister` returns **-65555 (NoAuth)**: iOS only allows Bonjour types listed in the app's
-  signed `NSBonjourServices`, and a-Shell has no `_remotepairing-pairable-host._tcp` entry. Python
-  cannot edit a signed Info.plist, so the target's Paired Macs cannot discover BariSign from a-Shell.
-  A raw mDNS fallback (`poc/raw_mdns.py`) now publishes the real PTR/SRV/TXT/A records directly over
-  multicast, with `IP_MULTICAST_IF` set to the Wi-Fi address; `pair` falls back to it automatically
-  on `-65555` (and `--raw-mdns` forces it). **Device test needed:** `sh bin/barisign pair` + Paired
-  Macs; no target IP is required. If multicast send fails, a pairing record from a host that can
-  advertise is needed (`pair --import FILE --host IP`). Options and evidence:
-  `docs/NEXT_SESSION.md`; do not claim the pairing install works.
+- DNS-SD registration stays blocked inside a-Shell (`-65555` NoAuth: no `NSBonjourServices`
+  entry), so `pair` advertises over raw broadcast instead (device-verified: the target lists
+  BariSign and M1–M6 completes). Raw multicast needs no entitlement; subnet broadcast covers
+  the rest. If broadcast ever fails, `pair --import FILE --host IP` uses a pairing record from
+  a host that can advertise. The tunnel/install engine still works on any valid record.
+  Options and evidence: `docs/NEXT_SESSION.md`; install success on device is still untested.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.
 - Test devices are roles, not hardware: either device can be the signer or the target. Both run
   iOS/iPadOS 27+; a-Shell is installed only on the signer.
@@ -136,13 +132,12 @@ The a-Shell interface (no Shortcuts):
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
 - Bump `VERSION` in `poc/barisign.py` on every functional commit: the installer title prints
   the version being installed, so the user can see the update arrived.
-- Stages 1–2 are verified on device; the tunnel/install engine is written and Linux-tested. The
-  pairing advertisement is blocked inside a-Shell (`-65555` NoAuth, no multicast entitlement), and
-  iOS 27 accepts only device-initiated network pairing — so a-Shell cannot start pairing at all.
-  The plan is `docs/PLAN_V2.md`, verified facts are in `docs/RESULTS.md`.
-- Next: decide the pairing-host bootstrap in `docs/NEXT_SESSION.md` (option A, B or C). Do not
-  spend more effort on a-Shell-only pairing paths: DNS-SD, raw mDNS and host-initiated dialing are
-  all ruled out with device evidence.
+- Stages 1–2 are verified on device; pairing (M1–M6 over raw broadcast) is verified on
+  device; the tunnel/install engine is written and Linux-tested. iOS 27 accepts only
+  device-initiated network pairing, which is what BariSign does. The plan is `docs/PLAN_V2.md`,
+  verified facts are in `docs/RESULTS.md`.
+- Next: the on-device install (`pair` to Trust + open). Do not spend more effort on a-Shell-only
+  pairing paths: DNS-SD, raw mDNS and host-initiated dialing are settled with device evidence.
 
 ## Verified / unverified convention
 
