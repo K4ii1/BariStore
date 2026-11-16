@@ -85,12 +85,12 @@ interop test proves against OpenSSL.
 signer prints the PIN and saves the UDID (`00008110-…` ECID form) plus `state/PairingFile_*.plist`.
 Frame log: `state/pair_debug.log` (every RX/TX frame; send it back after any pairing run).
 
-**Discovery without Bonjour (this commit):** browse is skipped on a-Shell and retried at most
-3× elsewhere; any -65555 is remembered in state so later runs never try. Fallback chain: paired
-address → port scan (49152 first) → subnet sweep matching the handshake identifier against the
-pairing record. The sweep found the port open on three LAN hosts but none answered RPPairing —
-the target was likely locked, asleep, on another network, or its DHCP address changed. Errors are
-now one plain line (awake/unlocked/same-Wi-Fi), with a `--debug` pointer and the debug-log path.
+**Discovery without Bonjour:** browse is skipped on a-Shell and any -65555 is remembered in
+state so later runs never try. Fallback chain: paired address → port scan (49152 first) →
+subnet sweep matching the handshake identifier against the pairing record. When the sweep finds
+open ports but nothing matching, plain `pair` pairs fresh automatically (new identity → prompt
+on the target) instead of dying on the stale address. Errors are one plain line
+(awake/unlocked/same-Wi-Fi); `--debug` and `state/pair_debug.log` only on failure.
 `--host <ip>` skips all of this.
 
 **Still untested on a device:** tunnel + RSD + AFC + `installation_proxy` install, and the

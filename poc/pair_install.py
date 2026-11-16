@@ -385,23 +385,36 @@ def _id_match(value, *candidates):
     return False
 
 
+async def pair_fresh(identity, timeout, raw=False, target_ip=""):
+    """Run one device-initiated pairing; save record+UDID; return (record, udid, peer_ip)."""
+    info, peer_ip = await pair_target(timeout, identity, raw=raw, target_ip=target_ip)
+    pseudo = pairing.PairingRecord(identity, info)
+    record_path = save_record(pseudo)
+    udid = normalise_udid(info.get("udid", ""))
+    save_state(paired=True, udid=udid, peer_ip=peer_ip,
+               peer_name=info.get("name", ""), record=record_path)
+    _say("  paired       %s" % (info.get("name") or "target"))
+    _say("  UDID         %s" % (udid or "(will read it from the tunnel)"))
+    return rpp_tunnel.load_record(record_path), udid, peer_ip
+
+
 async def sweep_target(record, udid=""):
-    """Find our target on the signer's /24 without any address from the user.
+    """Look for our target on the signer's /24 without any address from the user.
 
     Sweeps port 49152 across the subnet, handshakes each open host (no UI on
-    the target) and returns the address whose identifier matches the pairing
-    record (or --udid). Stale DHCP leases make the saved peer_ip wrong; this
-    needs no lookup in Settings.
+    the target) and returns ("match", (host, port)), ("opens", [hosts]) when
+    something answered but nothing matched, or ("none", None). Stale DHCP
+    leases make the saved peer_ip wrong; this needs no lookup in Settings.
     """
     me = raw_mdns.wifi_ipv4()
     parts = me.split(".") if me else []
     if len(parts) != 4:
-        return None
+        return "none", None
     try:
         if int(parts[3]) < 0 or int(parts[3]) > 255:
-            return None
+            return "none", None
     except ValueError:
-        return None
+        return "none", None
     prefix = ".".join(parts[:3])
     _say("  sweep        looking for the target on this Wi-Fi")
     candidates = ["%s.%d" % (prefix, i) for i in range(1, 255)
@@ -418,7 +431,7 @@ async def sweep_target(record, udid=""):
             *[check(ip) for ip in candidates[chunk:chunk + 48]])
         open_hosts.extend(ip for ip in results if ip)
     if not open_hosts:
-        return None
+        return "none", None
     want_udid = (record or {}).get("peer_udid") or udid
     want_identifier = (record or {}).get("peer_identifier", "")
     for host in open_hosts:
@@ -426,8 +439,8 @@ async def sweep_target(record, udid=""):
         if not peer:
             continue
         if _id_match(peer.get("identifier"), want_udid, want_identifier, udid):
-            return host, 49152
-    return None
+            return "match", (host, 49152)
+    return "opens", open_hosts
 
 
 def _friendly_error(host, exc):
@@ -619,26 +632,15 @@ async def _run(args):
     if record is None:
         _say("  no pairing file yet; pairing the target first")
         try:
-            info, peer_ip = await pair_target(timeout, identity,
-                                              raw=args.get("raw", False),
-                                              target_ip=args.get("target_ip", ""))
+            record, udid, peer_ip = await pair_fresh(
+                identity, timeout,
+                raw=args.get("raw", False), target_ip=args.get("target_ip", ""))
         except Exception as exc:                            # noqa: BLE001
             text = str(exc)
             if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
                 _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
-                _say("    (DNSServiceRegister -65555: the app's Info.plist has no")
-                _say("    NSBonjourServices entry, and Python cannot change it).")
-                _say("    If Paired Macs shows no BariSign, see docs/NEXT_SESSION.md.")
                 return 2
             raise
-        pseudo = pairing.PairingRecord(identity, info)
-        record_path = save_record(pseudo)
-        udid = normalise_udid(info.get("udid", ""))
-        save_state(paired=True, udid=udid, peer_ip=peer_ip,
-                   peer_name=info.get("name", ""), record=record_path)
-        _say("  paired       %s" % (info.get("name") or "target"))
-        _say("  UDID         %s" % (udid or "(will read it from the tunnel)"))
-        record = rpp_tunnel.load_record(record_path)
     else:
         _say("  pairing file %s" % display_path(RECORD_PATH))
 
@@ -681,19 +683,39 @@ async def _run(args):
                 _say("  UDID saved from the pairing: %s" % udid)
                 save_state(udid=udid, paired=True)
                 return 0
-            swept = None
+            status, payload = "none", None
             if not args.get("host", ""):
                 # The saved address goes stale when DHCP reassigns it; find
                 # the target again by its identifier instead of asking the
                 # user to look the address up in Settings.
                 try:
-                    swept = await sweep_target(record, udid)
+                    status, payload = await sweep_target(record, udid)
                 except Exception:                               # noqa: BLE001
-                    swept = None
-            if swept is not None:
-                host, port = swept
+                    status, payload = "none", None
+            if status == "match":
+                host, port = payload
                 _say("  target       %s:%d" % (host, port))
                 save_state(peer_ip=host)
+                try:
+                    session = await asyncio.wait_for(
+                        open_session(record, host, port, udid), 120)
+                except Exception as exc2:                           # noqa: BLE001
+                    raise _friendly_error(host, exc2)
+            elif status == "opens" and not args.get("repair"):
+                # Something on this Wi-Fi answers, but nothing matches our
+                # record and the saved path is silent: pair fresh instead of
+                # dying. A new identity makes the target show the prompt.
+                _say("  pairing again")
+                try:
+                    identity = pairing.HostIdentity.generate()
+                    identity.save(IDENTITY_PATH)
+                    record, udid, peer_ip = await pair_fresh(identity, timeout)
+                except Exception as exc2:                           # noqa: BLE001
+                    raise _friendly_error(host, exc2)
+                host, port = peer_ip, 0
+                if not host:
+                    raise _friendly_error(host, first_error)
+                _say("  target       %s" % host)
                 try:
                     session = await asyncio.wait_for(
                         open_session(record, host, port, udid), 120)

@@ -37,6 +37,9 @@ def test_scan_and_probe():
         assert peer.get("udid") == "b" * 40
         assert peer.get("identifier") == "MOCK"
         assert await rpp_tunnel.probe_handshake("127.0.0.1", 1, timeout=1) is None
+        record = {"peer_udid": "b" * 40, "peer_identifier": "MOCK"}
+        status, payload = await pair_install.sweep_target(record, "b" * 40)
+        assert status in ("match", "opens", "none"), (status, payload)
         device.server.close()
         await device.server.wait_closed()
     asyncio.run(main())
