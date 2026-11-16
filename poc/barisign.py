@@ -1367,16 +1367,8 @@ def cmd_pair(argv):
     return subprocess.call([sys.executable, "-u", pair] + list(argv))
 
 
-def cmd_update(_argv):
-    """Self-update: fetch the newest install.sh and apply it."""
-    _stage("Update")
-    script = os.path.join(_HERE, "..", "bin", "update")
-    return subprocess.call(["sh", script])
-
-
 COMMANDS = {
     "pair": cmd_pair,
-    "update": cmd_update,
     "version": cmd_version,
     "check": cmd_check,
     "status": cmd_status,
@@ -1436,7 +1428,6 @@ def _usage():
     print("  sh bin/barisign portal    UDID + certificate + profile")
     print("  sh bin/barisign sign      download, sign and zip the chosen variant")
     print("  sh bin/barisign pair      pair the target and install over Wi-Fi")
-    print("  sh bin/barisign update    self-update (same as sh bin/update)")
     print("  sh bin/barisign status    what is saved")
     print("  sh bin/barisign check     diagnostics only")
     print("  sh bin/barisign version   which copy is running")
