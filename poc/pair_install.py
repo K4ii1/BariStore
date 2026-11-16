@@ -482,8 +482,8 @@ def _choose_host(services, udid, peer_ip, host=None, port=0):
         _say("    %d. %s  %s" % (index, name, addresses[0]))
     _say("")
     try:
-        choice = int(input("  number: ").strip() or "1")
-    except (ValueError, EOFError):
+        choice = int(_ask("  number: ", "1"))
+    except ValueError:
         choice = 1
     choice = max(1, min(len(candidates), choice))
     service = candidates[choice - 1]
