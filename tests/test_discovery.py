@@ -23,6 +23,43 @@ def test_id_match():
     assert not pair_install._id_match(None, "abc")
 
 
+def test_pairing_target_paths():
+    sidestore = pair_install.pairing_target("com.SideStore.SideStore.TEAMID")
+    assert sidestore is not None
+    documents_only, names = sidestore
+    assert documents_only is True
+    assert "ALTPairingFile.mobiledevicepairing" in names
+    assert "PairingFile_RemoteRP.plist" in names
+    live = pair_install.pairing_target("com.kdt.livecontainer.TEAMID")
+    assert live is not None
+    documents_only, names = live
+    assert documents_only is False
+    assert "SideStore/Documents/ALTPairingFile.mobiledevicepairing" in names
+    assert "SideStore/Documents/PairingFile_RemoteRP.plist" in names
+    altstore = pair_install.pairing_target("com.rileytestut.AltStore.TEAMID")
+    assert altstore is not None
+    documents_only, names = altstore
+    assert documents_only is True
+    assert names == ("ALTPairingFile.plist",)
+    assert pair_install.pairing_target("com.rileytestut.AltStore.Beta.TEAMID") is None
+    assert pair_install.pairing_target("com.example.Custom") is None
+
+
+def test_remote_only_record():
+    import plistlib
+    import tempfile
+    record = {"public_key": b"\x01" * 32, "private_key": b"\x02" * 32,
+              "identifier": "HOST-1", "alt_irk": b"\x03" * 16,
+              "host_identifier": "HOST-1", "peer_udid": "a" * 40}
+    path = os.path.join(tempfile.mkdtemp(prefix="pairing-file-"), "record.plist")
+    with open(path, "wb") as handle:
+        handle.write(plistlib.dumps(record))
+    data = pair_install._remote_only(path)
+    parsed = plistlib.loads(data)
+    assert set(parsed) == {"public_key", "private_key", "identifier", "alt_irk"}
+    assert parsed["private_key"] == b"\x02" * 32
+
+
 def test_registry():
     import plistlib
     import tempfile
@@ -91,6 +128,10 @@ def test_scan_and_probe():
 if __name__ == "__main__":
     test_id_match()
     print("ok  test_id_match")
+    test_pairing_target_paths()
+    print("ok  test_pairing_target_paths")
+    test_remote_only_record()
+    print("ok  test_remote_only_record")
     test_scan_and_probe()
     print("ok  test_scan_and_probe")
     test_registry()

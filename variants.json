@@ -70,8 +70,8 @@
       "only_channel": true,
       "observed_asset_example": "AltStore_Classic_Notarized_2_3.ipa (40616419 bytes, updated 2026-09-30)",
       "no_nightly_reason": "altstoreio/AltStore has exactly ONE release; older tags exist but carry no release and no assets, so there is no installable nightly/beta IPA.",
-      "bundle_id": "com.altstore.AltStore",
-      "bundle_id_note": "the portal appends .<TEAMID>, as SideStore and AltStore do; verify against the IPA's Info.plist before relying on it"
+      "bundle_id": "com.rileytestut.AltStore",
+      "bundle_id_note": "verified against the 2.3 release IPA's Info.plist (CFBundleIdentifier com.rileytestut.AltStore); the portal appends .<TEAMID>. The beta (com.rileytestut.AltStore.Beta) is a different app: excluded from the pairing-file writer."
     }
   ]
 }

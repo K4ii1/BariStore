@@ -52,17 +52,39 @@ def _say(text=""):
 
 
 def _ask(prompt, default=""):
-    try:
-        entered = input(prompt)
-    except EOFError:
-        entered = ""
-    entered = (entered or "").strip()
-    return entered or default
+    entered = (_read_line(prompt) or "").strip()
+    return entered or (default or "")
+
+
+CLEAR = "\033[2J\033[1;1H"
 
 
 def _clear_screen():
-    sys.stdout.write("\033[2J\033[3J\033[1;1H")
+    """Same ordering as the guided flow: scroll the old page away first, and
+    only then drop the scrollback — otherwise a-Shell shows a blank page and
+    the view ends up somewhere the user has to scroll back to."""
+    try:
+        import shutil
+        rows = max(1, shutil.get_terminal_size((40, 24)).lines)
+    except Exception:                                           # noqa: BLE001
+        rows = 24
+    sys.stdout.write("\033[0m" + "\n" * (2 * rows) + "\033[3J" + "\n" * rows + CLEAR)
     sys.stdout.flush()
+
+
+def _read_line(prompt):
+    """One line, read byte by byte on a TTY.
+
+    Plain input() misbehaves on a-Shell once terminal modes were touched; our
+    own echo works even then. Non-TTY runs use input() so pipes keep working.
+    """
+    if sys.stdin.isatty():
+        import poc_login
+        return poc_login._masked_line(prompt, mask=False)
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
 
 
 def _stage(title, lines=()):
@@ -727,16 +749,58 @@ async def install(session, ipa, record_path):
         await _write_pairing_file(session, bundle_id, record_path)
 
 
-async def _write_pairing_file(session, bundle_id, record_path):
+REMOTE_KEYS = ("public_key", "private_key", "identifier", "alt_irk")
+
+
+def _remote_only(record_path):
+    """The RPPairing record alone, as an XML plist (what the apps read).
+
+    Matches idevice's RpPairingFile layout exactly: public_key, private_key
+    (32 bytes each), identifier, and alt_irk when present. Aliases
+    (host_identifier/...) and peer_* metadata stay in state's copies only:
+    SideStore nightlies reject a file holding both protocols as ambiguous,
+    and AltStore takes an RPPairing record on its own.
+    """
     with open(record_path, "rb") as handle:
-        data = handle.read()
-    if bundle_id.startswith("com.altstore.AltStore"):
-        documents_only, names = True, ("ALTPairingFile.plist", "ALTPairingFile.mobiledevicepairing")
-    elif bundle_id.startswith("com.SideStore.SideStore"):
-        documents_only, names = True, ("ALTPairingFile.mobiledevicepairing", "ALTPairingFile.plist")
-    elif bundle_id.startswith("com.kdt.livecontainer"):
-        documents_only, names = False, ("SideStore/Documents/ALTPairingFile.mobiledevicepairing",)
-    else:
+        record = plistlib.loads(handle.read())
+    return plistlib.dumps(
+        {key: record[key] for key in REMOTE_KEYS if record.get(key)},
+        fmt=plistlib.FMT_XML)
+
+
+def pairing_target(bundle_id):
+    """(documents_only, [remote names]) for a bundle id, or None when unknown.
+
+    Verified 2026-11-16 against current upstreams: SideStore's AppConstants
+    (ALTPairingFile.mobiledevicepairing; nightlies >= 0.7.0-20260920 read a
+    per-protocol PairingFile_RemoteRP.plist instead), SideInstaller's
+    PairingTargets table (LiveContainer's built-in SideStore lives under
+    SideStore/Documents/, legacy file still read), and AltStore 2.3.1+
+    (Documents/ALTPairingFile.plist, RPPairing only; beta explicitly out).
+    Custom IPAs are intentionally unmatched.
+    """
+    base = bundle_id or ""
+    if ".Beta" in base:
+        return None  # AltStore Beta is a different app (SideInstaller table)
+    if base == "com.rileytestut.AltStore" or base.startswith("com.rileytestut.AltStore."):
+        return True, ("ALTPairingFile.plist",)
+    if base == "com.SideStore.SideStore" or base.startswith("com.SideStore.SideStore."):
+        return True, ("ALTPairingFile.mobiledevicepairing", "PairingFile_RemoteRP.plist")
+    if base == "com.kdt.livecontainer" or base.startswith("com.kdt.livecontainer."):
+        return False, ("SideStore/Documents/ALTPairingFile.mobiledevicepairing",
+                       "SideStore/Documents/PairingFile_RemoteRP.plist")
+    return None
+
+
+async def _write_pairing_file(session, bundle_id, record_path):
+    target = pairing_target(bundle_id)
+    if target is None:
+        return
+    documents_only, names = target
+    try:
+        data = _remote_only(record_path)
+    except Exception as exc:                                    # noqa: BLE001
+        _say("  ! pairing file not written into the app: %s" % exc)
         return
     port = remote_xpc.service_port(session.services, device_services.HOUSE_ARREST_SERVICE)
     try:
@@ -994,11 +1058,16 @@ async def _run(args):
             return 2
         _stage("Install", ["installing:  %s" % os.path.basename(ipa)])
         await asyncio.wait_for(install(session, ipa, RECORD_PATH), 900)
-        _stage("Done", [
+        done_lines = [
             "installed:  %s" % os.path.basename(ipa),
             "on the target: Settings > General > VPN & Device Management",
             "trust the developer, then open the app",
-        ])
+        ]
+        variant_id = load_state().get("variant", "")
+        if "nightly" in variant_id and "sidestore" in ipa_bundle_id(ipa).lower():
+            done_lines.append("SideStore nightly: if it asks, import the pairing")
+            done_lines.append("file from its own Settings page")
+        _stage("Done", done_lines)
         return 0
     finally:
         if session is not None:

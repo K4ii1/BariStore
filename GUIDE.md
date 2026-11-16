@@ -112,22 +112,27 @@ target UDID) before uploading anything.
 
 ## INSTALL on the target (signer + target)
 
-> **Blocked at discovery:** the signer cannot advertise `_remotepairing-pairable-host._tcp` from
-> a-Shell (`-65555` NoAuth). The pure engine is ready, but the target cannot see BariSign until a
-> pairing host with the right Info.plist is used. See `docs/NEXT_SESSION.md` for the options.
+> DNS-SD advertising is blocked inside a-Shell, so `pair` announces itself with raw
+> broadcast instead — no setup needed. Bonjour stays as a fallback where it works.
 
 ```
 sh bin/barisign pair
 ```
 
-1. The signer advertises as **BariSign** and prints a 6-digit code. Keep the target **unlocked**
-   and on the same Wi-Fi for the whole step.
+If several devices were paired before, pick one from the list (model + name + UDID);
+`pair a new device` pairs another. The sweep finds a moved target by itself; if nothing
+answers, answer the retry / re-pair question.
+
+1. If no pairing exists yet, the signer advertises as **BariSign** and prints a 6-digit code.
+   Keep the target **unlocked** and on the same Wi-Fi for the whole step.
 2. On the **target**, open **Settings → Privacy & Security → Developer Mode → Paired Macs**
    (or **Settings → Developer → Paired Macs**), pick **BariSign**, and enter the code.
 3. The signer installs the newest `*-signed.ipa` over Wi-Fi with `installation_proxy`.
 4. The signer also writes the pairing file into the installed app:
-   AltStore `Documents/ALTPairingFile.plist`, SideStore
-   `Documents/ALTPairingFile.mobiledevicepairing`. A copy stays under `state/` for manual import.
+   AltStore `Documents/ALTPairingFile.plist`; SideStore
+   `Documents/ALTPairingFile.mobiledevicepairing` plus `Documents/PairingFile_RemoteRP.plist`
+   (newer nightlies read the per-protocol file); LiveContainer's built-in SideStore the same
+   two names under `SideStore/Documents/`. A copy stays under `state/` for manual import.
 5. On the target, tap **Trust** for the developer and open the app.
 
 There is no separate engine install: `sh install.sh` fetches the program files, and
