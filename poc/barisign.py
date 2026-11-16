@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.12"
+VERSION = "0.9.13"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1239,7 +1239,7 @@ def _choose_variant(state, variants):
         _stage("Variant")
         for index, item in enumerate(variants, 1):
             print("  %d  %s" % (index, item["name"]))
-        print("  %d  custom IPA file (pick from this device)" % (len(variants) + 1))
+        print("  %d  custom IPA (first drop the .ipa into Custom IPAs)" % (len(variants) + 1))
         choice = _ask("  choose 1-%d: " % (len(variants) + 1), "1")
         if choice == str(len(variants) + 1):
             chosen = _choose_custom_ipa(state)
@@ -1319,8 +1319,10 @@ def _choose_custom_ipa(state):
     Apple ID has 10 App ID slots.
     """
     found = _find_signer_ipas()
-    print("  first put the .ipa in Files > On My iPhone/iPad >")
-    print("  a-Shell > Custom IPAs, then pick it below.")
+    _stage("Custom IPA")
+    print("  put the .ipa in Files > On My iPhone/iPad >")
+    print("  a-Shell > Custom IPAs first, then pick it below.")
+    print()
     if found:
         print("  IPAs in Custom IPAs (newest first):")
         for index, path in enumerate(found, 1):
@@ -1524,6 +1526,7 @@ def cmd_guided(argv):
     account = _sign_in(email, staged=not state.get("email"))
     update_state(email=email)
 
+    _stage("Developer Mode")
     print("  on the target, open:")
     print("    Settings > Privacy & Security > Developer Mode")
     print("    (or Settings > Developer)")
@@ -1628,6 +1631,7 @@ _OPTIONS = {
         ("--raw-mdns", "force raw advertisement (automatic on a-Shell)"),
         ("--target-ip IP", "also send unicast mDNS to the target"),
         ("--repair", "new host identity; the target asks to pair again"),
+        ("--export [FILE]", "copy the pairing file out (default: ~/Documents)"),
         ("--debug", "print the full traceback on failure"),
     ),
     "login": (

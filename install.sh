@@ -146,7 +146,21 @@ works() {
 # place (. → .. → ... → .).  Each finished phase clears the screen, so a
 # finished installer always ends on one clean screen.
 clear_screen() {
-    printf '\033[2J\033[3J\033[1;1H'
+    # Same order as the guided flow: scroll the page away first, then drop
+    # the scrollback, or a-Shell shows a blank page the user must scroll
+    # back to. No tput/cut/rev on a-Shell; parse stty with the shell itself.
+    rows=$(stty size 2>/dev/null)
+    rows=${rows%% *}
+    case "$rows" in
+        ''|*[!0-9]*) rows=24;;
+    esac
+    printf '\033[0m'
+    i=0
+    while [ "$i" -lt "$((rows * 2))" ]; do printf '\n'; i=$((i + 1)); done
+    printf '\033[3J'
+    i=0
+    while [ "$i" -lt "$rows" ]; do printf '\n'; i=$((i + 1)); done
+    printf '\033[2J\033[1;1H'
 }
 
 clear_screen

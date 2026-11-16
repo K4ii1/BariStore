@@ -717,25 +717,10 @@ async def install(session, ipa, record_path):
 
     def progress(done, total):
         percent = int(done * 100 / max(1, total))
-        sys.stdout.write("\r\033[2K  upload       %3d%%" % percent)
+        sys.stdout.write("\r\033[2K  install      uploading %3d%%" % percent)
         sys.stdout.flush()
 
-    shown = {"status": None}
-
     def log(text):
-        # One scrolling line per install phase, one rewritten line for its
-        # percent. Upload progress already has its own moving line, so those
-        # messages are skipped; the first status line closes it.
-        if text.startswith("upload"):
-            return
-        status = text.rsplit(" ", 1)[0] if " " in text else text
-        if shown["status"] is None:
-            sys.stdout.write("\n")
-        if status != shown["status"]:
-            if shown["status"] is not None:
-                sys.stdout.write("\n")
-            shown["status"] = status
-            print("  install      %s" % status)
         sys.stdout.write("\r\033[2K  install      %s" % text)
         sys.stdout.flush()
 
@@ -823,6 +808,34 @@ async def _write_pairing_file(session, bundle_id, record_path):
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
+
+def export_record(dest):
+    """Copy the pairing file out, e.g. into Files for a manual in-app import."""
+    record = _load_record()
+    if record is None:
+        _say("  ! no pairing file yet; pair first")
+        return 2
+    if not dest or dest.startswith("-"):
+        udid = normalise_udid(record.get("peer_udid") or "")
+        dest = os.path.join(os.path.expanduser("~"), "Documents",
+                            "BariSign-Pairing-%s.mobiledevicepairing" % (udid[:8] or "device"))
+    dest = os.path.abspath(os.path.expanduser(dest))
+    try:
+        with open(RECORD_PATH, "rb") as handle:
+            data = handle.read()
+        directory = os.path.dirname(dest)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(dest, "wb") as handle:
+            handle.write(data)
+    except OSError as exc:                                      # noqa: BLE001
+        _say("  ! cannot write %s: %s" % (dest, exc))
+        return 1
+    _say("  exported     %s" % display_path(dest))
+    _say("  copy it with the Files app, then import it")
+    _say("  from the installed app's own settings page")
+    return 0
+
 
 def check():
     _say("  python       %s" % platform.python_version())
@@ -1063,6 +1076,7 @@ async def _run(args):
             "installed:  %s" % os.path.basename(ipa),
             "on the target: Settings > General > VPN & Device Management",
             "trust the developer, then open the app",
+            "pairing file: sh bin/barisign pair --export FILE for a manual copy",
         ]
         variant_id = load_state().get("variant", "")
         if "nightly" in variant_id and "sidestore" in ipa_bundle_id(ipa).lower():
@@ -1085,6 +1099,7 @@ def main(argv):
         _say("sh bin/barisign pair --host IP          use this target address (port is scanned)")
         _say("sh bin/barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
         _say("sh bin/barisign pair --target-ip IP  also send unicast mDNS to the target")
+        _say("sh bin/barisign pair --export [FILE] copy the pairing file out (for manual import)")
         _say("sh bin/barisign pair --timeout N     give up if the target never pairs")
         _say("sh bin/barisign pair --check         verify the pure engine imports")
         _say("sh bin/barisign pair --setup         verify the engine (no download needed)")
@@ -1109,7 +1124,10 @@ def main(argv):
         "pair_only": "--pair-only" in argv,
         "repair": "--repair" in argv,
         "debug": "--debug" in argv,
+        "export": value("--export"),
     }
+    if "--export" in argv:
+        return export_record(args["export"])
     if args["host"] and not args["port"]:
         # The device's RPPairing service listens on 49152 (SideStore/LocalDevVPN
         # documents the same port); allow --port when it differs.
@@ -1124,6 +1142,10 @@ def main(argv):
         _say("")
         return 130
     except Exception as exc:                                    # noqa: BLE001
+        # A moving line (pairing code, upload, install status) may be open;
+        # close it first so the error starts on its own clean line.
+        sys.stdout.write("\n")
+        sys.stdout.flush()
         _say("  ! %s" % exc)
         if args["debug"]:
             traceback.print_exc()
