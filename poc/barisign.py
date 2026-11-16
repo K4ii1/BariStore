@@ -1014,9 +1014,12 @@ def cmd_udid(argv):
     typed = [item for item in argv if not item.startswith("-")]
     udid = extract_udid(typed[0]) if typed else ""
     manual = "--manual" in argv or "--no-open" in argv
+    page_only = "--page" in argv
     # Pairing is the normal way to get the UDID, so `udid` pairs by itself;
-    # --pair is kept only as a compatibility no-op.
-    if not udid and not manual:
+    # --pair is kept only as a compatibility no-op. --page skips pairing and
+    # serves the UDID page straight away (fresh targets with no Developer
+    # Mode cannot reach Paired Macs yet, so pairing would only time out).
+    if not udid and not manual and not page_only:
         print("  Pairing the TARGET; the pairing gives its UDID.")
         print("  If Paired Macs shows nothing, the target needs")
         print("  Developer Mode first (guided run walks you through it).")
@@ -1463,7 +1466,8 @@ def cmd_sign(argv):
 
 
 def cmd_guided(argv):
-    """check -> variant -> Apple ID -> pairing -> download -> install."""
+    """check -> variant -> Apple ID -> Developer Mode? -> UDID/pairing ->
+    download -> portal -> sign -> [trigger] -> install."""
     state = load_state()
     print("BariSign %s" % VERSION)
     if poc_login._selftest(quiet=True) != 0:
@@ -1487,15 +1491,22 @@ def cmd_guided(argv):
     account = _sign_in(email, staged=not state.get("email"))
     update_state(email=email)
 
-    if cmd_udid([]) != 0:
-        return 1
-    state = load_state()
-
     print("  on the target, open:")
     print("    Settings > Privacy & Security > Developer Mode")
     print("    (or Settings > Developer)")
+    # Developer Mode gates the Paired Macs screen, so without it pairing is
+    # impossible: take the UDID from the page and pair after the trigger
+    # install enables Developer Mode.
     have_devmode = _yes("  is Developer Mode there?",
                         default=bool(state.get("paired")))
+    if have_devmode:
+        if cmd_udid([]) != 0:
+            return 1
+        state = load_state()
+    else:
+        if cmd_udid(["--page"]) != 0:
+            return 1
+        state = load_state()
 
     _stage("Download")
     ipa, _info = _obtain_ipa(state, argv)
@@ -1533,6 +1544,10 @@ def cmd_guided(argv):
         print("  after tapping: turn on Developer Mode on the target,")
         print("  then delete the shared file from the target.")
         _ask("  press Enter when done: ")
+        # Developer Mode is on now, so the Paired Macs screen is reachable.
+        if cmd_udid([]) != 0:
+            return 1
+        state = load_state()
     if "--no-install" not in argv and _yes("  install on the target now?", True):
         pair = os.path.join(_HERE, "pair_install.py")
         command = [sys.executable, "-u", pair, "--ipa", result["ipa"]]
@@ -1597,6 +1612,7 @@ _OPTIONS = {
     ),
     "udid": (
         ("--manual", "paste the UDID on the signer instead of serving the page"),
+        ("--page", "serve the UDID page without pairing first"),
     ),
 }
 
