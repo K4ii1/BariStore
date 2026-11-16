@@ -38,6 +38,7 @@ for _path in (HERE, ROOT):
         sys.path.insert(0, _path)
 
 import device_services
+from device_services import DeviceServiceError
 import mdns
 import pairing
 import raw_mdns
@@ -410,7 +411,7 @@ async def pair_fresh(identity, timeout, raw=False, target_ip=""):
                peer_name=info.get("name", ""), record=record_path)
     _stage("Pair", [
         "paired:  %s" % (info.get("name") or "target"),
-        "UDID:    %s" % (udid or "(reading it from the tunnel)"),
+        "UDID is read from the tunnel next",
     ])
     return rpp_tunnel.load_record(record_path), udid, peer_ip
 
@@ -529,25 +530,51 @@ class Session:
             pass
 
 
+def _preflight_ipa(ipa, udid):
+    """Fail fast when the signed IPA cannot install, before uploading 40 MB.
+
+    Catches the classic lapse: signing with a then-valid 7-day free profile
+    and installing after it expired — which installd reports only as a bare
+    ApplicationVerificationFailed at 40%.
+    """
+    import signer
+    try:
+        with zipfile.ZipFile(ipa) as archive:
+            names = [name for name in archive.namelist()
+                     if name.startswith("Payload/") and name.endswith(".app/embedded.mobileprovision")
+                     and name.count("/") == 2]
+            if not names:
+                raise DeviceServiceError(
+                    "the signed IPA has no embedded profile; sign it again")
+            blob = archive.read(names[0])
+    except zipfile.BadZipFile:
+        raise DeviceServiceError("not a readable IPA: %s" % ipa)
+    try:
+        profile = signer.parse_mobileprovision_blob(blob)
+    except Exception as exc:                                    # noqa: BLE001
+        raise DeviceServiceError("cannot read the embedded profile: %s" % exc)
+    problems = signer.install_preflight(profile, udid)
+    if problems:
+        raise DeviceServiceError("; ".join(problems))
+
+
 async def install(session, ipa, record_path):
     install_port = remote_xpc.service_port(session.services, device_services.INSTALL_SERVICE)
     afc_port = remote_xpc.service_port(session.services, device_services.AFC_SERVICE)
     bundle_id = ipa_bundle_id(ipa)
-    _say("  installing   %s" % os.path.basename(ipa))
+    _preflight_ipa(ipa, session.udid)
 
     def progress(done, total):
         percent = int(done * 100 / max(1, total))
-        sys.stdout.write("\r  upload       %3d%%" % percent)
+        sys.stdout.write("\r\033[2K  upload       %3d%%" % percent)
         sys.stdout.flush()
 
     await device_services.install_ipa(
         session.stack, session.address, install_port, afc_port, ipa,
         progress=progress,
-        log=lambda text: _say("\r  install      %s" % text))
-    _say("\r  install      ok")
+        log=lambda text: _say("  install      %s" % text))
+    _say("  install      ok")
 
-    if not bundle_id:
-        bundle_id = ipa_bundle_id(ipa)
     if record_path and os.path.isfile(record_path) and bundle_id:
         await _write_pairing_file(session, bundle_id, record_path)
 
@@ -759,7 +786,11 @@ async def _run(args):
             "UDID:    %s" % udid,
         ])
 
-        ipa = find_ipa(args.get("ipa"))
+        explicit = args.get("ipa") or ""
+        if explicit and not os.path.isfile(explicit):
+            _say("  ! not found: %s" % explicit)
+            return 2
+        ipa = find_ipa(explicit)
         if not ipa:
             _say("  ! no signed IPA found")
             _say("    sign on the signer first (sh bin/barisign sign), or pass --ipa FILE")

@@ -100,6 +100,12 @@ sh bin/barisign sign              # download (unless --ipa), sign, zip
 sh bin/barisign sign --ipa X.ipa  # sign a file you already have
 ```
 
+A custom IPA must already be on the signer (Files app, Safari download, …). The guided run
+offers it as the last menu item; it reads the bundle id from the IPA itself. Give the exact
+path when asked — `~/Documents` works as-is. The portal registers a separate App ID for it
+(a free Apple ID has 10 slots), and the install step verifies the embedded profile (expiry +
+target UDID) before uploading anything.
+
 ---
 
 ## INSTALL on the target (signer + target)

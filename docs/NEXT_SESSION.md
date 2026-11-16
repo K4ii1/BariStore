@@ -93,9 +93,12 @@ on the target) instead of dying on the stale address. Errors are one plain line
 (awake/unlocked/same-Wi-Fi); `--debug` and `state/pair_debug.log` only on failure.
 `--host <ip>` skips all of this.
 
-**Still untested on a device:** tunnel + RSD + AFC + `installation_proxy` install, and the
-pairing-file write into the app. The install reached AFC upload on-device; `FILE_OPEN` answers
-with opcode `0x0E` (`FILE_OPEN_RES`), which the client now accepts. Pair UI is staged
+**Install path (device):** the tunnel reaches AFC upload; `FILE_OPEN` answers with opcode `0x0E`
+(`FILE_OPEN_RES`), which the client now accepts. Before uploading, `install` runs a preflight on
+the signed IPA's embedded profile (expiry, target UDID, certificate dates) and refuses with a
+portal+sign pointer instead of failing at 40% with a bare ApplicationVerificationFailed — this
+covers the stale-asset case (e.g. installed days after signing, past the 7-day free profile).
+Still untested end to end on a device, as is the pairing-file write into the app. Pair UI is staged
 (Pair → Tunnel → Install → Done) with screen clears like the guided flow; a duplicate second
 connection is refused while one pair-setup runs. Run `sh bin/barisign pair` (plain; raw advertisement is now
 automatic on a-Shell, `--raw-mdns` only forces it elsewhere).

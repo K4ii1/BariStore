@@ -25,11 +25,13 @@ import shutil
 import socket
 import threading
 import re
+import plistlib
 import subprocess
 import sys
 import time
 import traceback
 import urllib.parse
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -68,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
@@ -275,6 +277,29 @@ _SPINNER = _Spinner()
 
 
 _STAGE = {"title": "", "note": ""}
+
+
+def _adopt_custom_bundle_id(bundle_id):
+    """Point the state at a custom IPA's bundle id (True), or refuse (None).
+
+    The portal signs profiles per bundle id, so a custom app needs its own App
+    ID — which uses one of the free account's 10 slots. Adopting it into state
+    keeps portal/sign/install consistent without extra flags.
+    """
+    state = load_state()
+    if not bundle_id:
+        return True
+    if state.get("bundle_id") == bundle_id:
+        return True
+    if state.get("bundle_id"):
+        print("  ! this IPA is %s" % bundle_id)
+        print("    the saved profile is for %s" % state.get("bundle_id"))
+        print("    run: sh bin/barisign portal --bundle-id %s" % bundle_id)
+        print("    (a custom App ID uses one of the 10 free slots)")
+        return None
+    update_state(bundle_id=bundle_id, variant="custom")
+    print("  bundle   %s (custom)" % bundle_id)
+    return True
 
 
 def _stage(title, note=""):
@@ -1187,7 +1212,10 @@ def _choose_variant(state, variants):
     _stage("Variant")
     for index, item in enumerate(variants, 1):
         print("  %d  %s" % (index, item["name"]))
-    choice = _ask("  choose 1-%d: " % len(variants), "1")
+    print("  %d  custom IPA file (already on the signer)" % (len(variants) + 1))
+    choice = _ask("  choose 1-%d: " % (len(variants) + 1), "1")
+    if choice == str(len(variants) + 1):
+        return _choose_custom_ipa(state)
     if not (choice.isdigit() and 1 <= int(choice) <= len(variants)):
         choice = "1"
     chosen = variants[int(choice) - 1]
@@ -1196,18 +1224,71 @@ def _choose_variant(state, variants):
     return chosen
 
 
+def _choose_custom_ipa(state):
+    """A user-supplied IPA: validate it and adopt its bundle id.
+
+    Each distinct bundle id needs its own App ID, and a free Apple ID has 10
+    App ID slots — the portal step will say so when they run out.
+    """
+    for _attempt in range(3):
+        path = _ask("  custom IPA path: ").strip()
+        if not path:
+            print("  no file; keeping the saved variant")
+            return None
+        full = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isfile(full):
+            print("  ! not found: %s" % full)
+            continue
+        bundle_id = _ipa_bundle_id(full)
+        if not bundle_id:
+            print("  ! not an IPA (no Payload/*.app/Info.plist): %s" % full)
+            continue
+        update_state(variant="custom", bundle_id=bundle_id, ipa=full)
+        print("  custom   %s" % os.path.basename(full))
+        print("  bundle   %s" % bundle_id)
+        return {"id": "custom", "name": os.path.basename(full),
+                "bundle_id": bundle_id, "custom_ipa": full}
+
+
+def _ipa_bundle_id(path):
+    """CFBundleIdentifier of the top-level app inside an IPA, or ''."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = [name for name in archive.namelist()
+                     if name.startswith("Payload/") and name.endswith(".app/Info.plist")
+                     and name.count("/") == 2]
+            if not names:
+                return ""
+            info = plistlib.loads(archive.read(names[0]))
+            return info.get("CFBundleIdentifier") or ""
+    except Exception:                                           # noqa: BLE001
+        return ""
+
+
 def _obtain_ipa(state, argv):
     """Return (path, info): --ipa, else the chosen variant's current release."""
     typed = argv_get(argv, "--ipa")
     if typed:
-        path = os.path.abspath(typed)
+        path = os.path.abspath(os.path.expanduser(typed))
         if not os.path.isfile(path):
             print("  ! not found: %s" % path)
             return "", {}
-        return path, {"version": os.path.basename(path)}
+        bundle_id = _ipa_bundle_id(path)
+        if not bundle_id:
+            print("  ! not an IPA (no Payload/*.app/Info.plist): %s" % path)
+            return "", {}
+        return path, {"version": os.path.basename(path), "bundle_id": bundle_id}
 
     variants = load_variants()
     variant = download.variant_by_id(variants, state.get("variant") or "")
+    if variant is None and (state.get("variant") or "") == "custom":
+        path = state.get("ipa") or ""
+        if path and os.path.isfile(path):
+            bundle_id = _ipa_bundle_id(path) or state.get("bundle_id") or ""
+            if bundle_id:
+                return path, {"version": os.path.basename(path), "bundle_id": bundle_id}
+        print("  ! the custom IPA is gone: %s" % (path or "(no file saved)"))
+        return "", {}
     if variant is None:
         if not variants:
             print("  ! variants.json is missing or empty")
@@ -1288,7 +1369,10 @@ def cmd_sign(argv):
         print("  ! no %s: run 'sh bin/barisign portal' first" % ", ".join(missing))
         return 2
 
-    ipa, _info = _obtain_ipa(load_state(), argv)
+    ipa, info = _obtain_ipa(load_state(), argv)
+    if ipa and info.get("bundle_id"):
+        if _adopt_custom_bundle_id(info["bundle_id"]) is None:
+            return 1
     if not ipa:
         return 1
     if _sign_now(ipa, saved, argv) is None:
@@ -1314,6 +1398,10 @@ def cmd_guided(argv):
     ipa, _info = _obtain_ipa(state, argv)
     if not ipa:
         return 1
+    if _info.get("bundle_id"):
+        if _adopt_custom_bundle_id(_info["bundle_id"]) is None:
+            return 1
+        state = load_state()
     print("  original  %s" % _display_path(ipa))
     print("  if the target has no Developer Mode, share this IPA to it and")
     print("  tap it once; the Developer Mode switch appears after the attempt.")

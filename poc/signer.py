@@ -426,18 +426,11 @@ def write_plist(path, value, prefer_binary):
     return data
 
 
-def read_mobileprovision(path):
-    """The profile is a CMS SignedData whose content is an XML plist.
+def parse_mobileprovision_blob(blob):
+    """Parse a CMS SignedData profile (or bare plist) into a dict.
 
-    Apple has shipped both XML and binary payloads; the plist is located inside
-    the container instead of being assumed to start at byte zero.
+    Raises SigningError when nothing parseable is found.
     """
-    try:
-        with open(path, "rb") as handle:
-            blob = handle.read()
-    except OSError as exc:
-        raise SigningError("cannot read the profile %s: %s" % (path, exc))
-
     for marker in (b"<?xml", b"<!DOCTYPE plist", b"<plist"):
         text = blob.find(marker)
         if text >= 0:
@@ -458,7 +451,81 @@ def read_mobileprovision(path):
     try:
         return plistlib.loads(blob)
     except Exception:                                           # noqa: BLE001
-        raise SigningError("this is not a provisioning profile: %s" % path)
+        raise SigningError("this is not a provisioning profile")
+
+
+def _profile_datetime(value):
+    """Plist dates to aware UTC datetimes (plistlib may return naive)."""
+    if not isinstance(value, datetime.datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value
+
+
+def install_preflight(profile, udid=""):
+    """Check a parsed profile the way installd would, before uploading.
+
+    Returns a list of fatal problems (empty = installable). Catches the
+    classic failure: signing days ago with a then-valid 7-day free profile
+    and installing after it expired — which installd reports only as a bare
+    ApplicationVerificationFailed.
+    """
+    problems = []
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expires = _profile_datetime(profile.get("ExpirationDate"))
+    if expires is None:
+        problems.append("the profile has no ExpirationDate; run portal, then sign again")
+    elif expires < now:
+        problems.append("the provisioning profile expired on %s; "
+                        "run portal, then sign again" % expires.date())
+    devices = profile.get("ProvisionedDevices") or []
+    if devices and udid:
+        normal = lambda value: "".join(ch for ch in (value or "").lower()
+                                       if ch in "0123456789abcdef")
+        if not any(normal(device) == normal(udid) for device in devices):
+            problems.append("this profile does not include this device (%s); "
+                            "run portal to register the UDID, then sign again" % udid)
+    certs = profile.get("DeveloperCertificates") or []
+    seen_valid = False
+    latest = None
+    for item in certs:
+        try:
+            cert = x509.load_der_x509_certificate(bytes(item))
+        except Exception:                                       # noqa: BLE001
+            continue
+        try:
+            not_after = cert.not_valid_after_utc
+        except AttributeError:              # cryptography < 42
+            not_after = cert.not_valid_after
+            if not_after.tzinfo is None:
+                not_after = not_after.replace(tzinfo=datetime.timezone.utc)
+        if latest is None or not_after > latest:
+            latest = not_after
+        if not_after >= now:
+            seen_valid = True
+    if certs and not seen_valid:
+        problems.append("the profile's certificate expired on %s; "
+                        "run portal, then sign again"
+                        % (latest.date() if latest else "?"))
+    return problems
+
+
+def read_mobileprovision(path):
+    """The profile is a CMS SignedData whose content is an XML plist.
+
+    Apple has shipped both XML and binary payloads; the plist is located inside
+    the container instead of being assumed to start at byte zero.
+    """
+    try:
+        with open(path, "rb") as handle:
+            blob = handle.read()
+    except OSError as exc:
+        raise SigningError("cannot read the profile %s: %s" % (path, exc))
+    try:
+        return parse_mobileprovision_blob(blob)
+    except SigningError as exc:
+        raise SigningError("%s: %s" % (path, exc))
 
 
 def load_certificate(path):

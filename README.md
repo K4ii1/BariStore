@@ -132,6 +132,7 @@ submits it. `sh bin/barisign udid --manual` keeps a paste-on-the-signer fallback
 | 3 | **LiveContainer + SideStore** (stable) | `LiveContainer/LiveContainer` |
 | 4 | **LiveContainer + SideStore** (nightly) | `LiveContainer/LiveContainer`, tag `nightly` |
 | 5 | **AltStore Classic** (stable) | `altstoreio/AltStore` |
+| 6 | **Custom IPA** (your own file, already on the signer) | your file; pick `custom IPA file` in the guided run, or `sign --ipa FILE` |
 
 Every version is resolved **at runtime** from the project's official release page — never pinned here —
 and you are shown which version you are about to get. `variants.json` is the machine-readable list.
