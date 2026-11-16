@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.13"
+VERSION = "0.9.14"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -532,15 +532,10 @@ def _sign_in(email, preferred=None, use_clipboard=False, staged=False):
     def ask_code(label):
         """The 2FA code is not a secret: read it visibly, with our own echo, so it
         works even when the terminal's echo was left off by the password prompt."""
-        prompt = "  %s: " % label
-        if sys.stdin.isatty():
-            entered = poc_login._masked_line(prompt, mask=False)
-        else:
-            try:
-                entered = input(prompt)
-            except EOFError:
-                entered = ""
-        return "".join(ch for ch in entered if ch.isdigit())
+        # Same byte reader as every other prompt: the spinner is already
+        # stopped here, and routing through _read_line keeps 2FA immune to
+        # that whole class of terminal-mode bugs.
+        return "".join(ch for ch in _read_line("  %s: " % label) if ch.isdigit())
 
     for index, url in enumerate(candidates, 1):
         _step(1, 3, "anisette")
@@ -1032,7 +1027,6 @@ def _serve_udid_page():
 
 def cmd_udid(argv):
     """Get the target device's UDID: serve a page, or paste it manually."""
-    _stage("UDID")
     typed = [item for item in argv if not item.startswith("-")]
     udid = extract_udid(typed[0]) if typed else ""
     manual = "--manual" in argv or "--no-open" in argv
@@ -1041,6 +1035,7 @@ def cmd_udid(argv):
     # --pair is kept only as a compatibility no-op. --page skips pairing and
     # serves the UDID page straight away (fresh targets with no Developer
     # Mode cannot reach Paired Macs yet, so pairing would only time out).
+    # No stage header here: the pair subprocess owns the screen from here.
     if not udid and not manual and not page_only:
         print("  Pairing the TARGET; the pairing gives its UDID.")
         print("  If Paired Macs shows nothing, the target needs")
@@ -1054,6 +1049,7 @@ def cmd_udid(argv):
             print("  pairing did not return a UDID; falling back to the page")
             udid = ""
     if not udid and manual:
+        _stage("UDID")
         print("  On this signer device, install the profile from:")
         print("    %s" % UDID_URL)
         print("  then paste the UDID below.")
@@ -1064,6 +1060,7 @@ def cmd_udid(argv):
                 break
             print("  not a UDID; try again")
     elif not udid:
+        _stage("UDID")
         print("  This is the SIGNER device.")
         print("  The TARGET device — the one that gets the app — opens a page here.")
         print("  Both devices must be on the same Wi-Fi.")
