@@ -26,23 +26,44 @@ def test_id_match():
 def test_pairing_target_paths():
     sidestore = pair_install.pairing_target("com.SideStore.SideStore.TEAMID")
     assert sidestore is not None
-    documents_only, names = sidestore
+    documents_only, names, prefs = sidestore
     assert documents_only is True
     assert "ALTPairingFile.mobiledevicepairing" in names
     assert "PairingFile_RemoteRP.plist" in names
+    assert prefs == "Library/Preferences/com.SideStore.SideStore.TEAMID.plist"
     live = pair_install.pairing_target("com.kdt.livecontainer.TEAMID")
     assert live is not None
-    documents_only, names = live
+    documents_only, names, prefs = live
     assert documents_only is False
     assert "SideStore/Documents/ALTPairingFile.mobiledevicepairing" in names
     assert "SideStore/Documents/PairingFile_RemoteRP.plist" in names
+    assert prefs == "Documents/SideStore/Library/Preferences/com.SideStore.SideStore.plist"
     altstore = pair_install.pairing_target("com.rileytestut.AltStore.TEAMID")
     assert altstore is not None
-    documents_only, names = altstore
+    documents_only, names, prefs = altstore
     assert documents_only is True
     assert names == ("ALTPairingFile.plist",)
+    assert prefs is None
     assert pair_install.pairing_target("com.rileytestut.AltStore.Beta.TEAMID") is None
     assert pair_install.pairing_target("com.example.Custom") is None
+
+
+def test_merge_sidestored_prefs():
+    import plistlib
+    merged = pair_install.merge_sidestored_prefs(b"")
+    parsed = plistlib.loads(merged)
+    assert parsed == {"isPairingReset": False, "activePairingProtocol": "rppairing"}
+    existing = plistlib.dumps({"isPairingReset": True, "activePairingProtocol": "lockdown",
+                               "theme": "dark"}, fmt=plistlib.FMT_XML)
+    merged = pair_install.merge_sidestored_prefs(existing)
+    parsed = plistlib.loads(merged)
+    assert parsed["isPairingReset"] is False
+    assert parsed["activePairingProtocol"] == "rppairing"
+    assert parsed["theme"] == "dark"
+    already = plistlib.dumps({"isPairingReset": False, "activePairingProtocol": "rppairing"},
+                             fmt=plistlib.FMT_XML)
+    assert pair_install.merge_sidestored_prefs(already) is None
+    assert pair_install.merge_sidestored_prefs(b"not a plist") is None
 
 
 def test_remote_only_record():
@@ -94,6 +115,38 @@ def test_registry():
         assert record2["peer_name"] == "Phone"
     finally:
         pair_install.save_state = real_save_state
+
+
+def test_export_and_registry_touch():
+    import plistlib
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="export-")
+    pair_install.REGISTRY_PATH = os.path.join(tmp, "paired_devices.json")
+    pair_install.PAIRINGS_DIR = os.path.join(tmp, "pairings")
+    real_save_state = pair_install.save_state
+    pair_install.save_state = lambda **kwargs: {}
+    real_record_path = pair_install.RECORD_PATH
+    try:
+        record = {"private_key": b"\x01" * 32, "public_key": b"\x02" * 32,
+                  "identifier": "HOST-1", "alt_irk": b"\x03" * 16,
+                  "peer_udid": "c" * 40, "peer_name": "Watch",
+                  "peer_model": "Watch1,1", "peer_identifier": "PEER-3"}
+        pair_install.RECORD_PATH = os.path.join(tmp, "active.plist")
+        with open(pair_install.RECORD_PATH, "wb") as handle:
+            plistlib.dump(record, handle)
+        out = os.path.join(tmp, "out", "Watch.plist")
+        assert pair_install.export_record(out) == 0
+        assert plistlib.load(open(out, "rb"))["peer_udid"] == "c" * 40
+        pair_install.registry_touch_peer("192.168.1.99", "c" * 40, "")
+        assert pair_install.load_registry() == []
+        pair_install.registry_upsert(
+            {"udid": "c" * 40, "name": "Watch", "model": "Watch1,1",
+             "identifier": "PEER-3"}, pair_install.RECORD_PATH, "192.168.1.20")
+        pair_install.registry_touch_peer("192.168.1.99", "c" * 40, "")
+        assert pair_install.load_registry()[0]["peer_ip"] == "192.168.1.99"
+    finally:
+        pair_install.save_state = real_save_state
+        pair_install.RECORD_PATH = real_record_path
     assert pair_install._id_match("00008110-001431ea22eb601e",
                                   "00008110-001431EA22EB601E")
     assert pair_install._id_match("6ED01484-3C84-4CBE-BD38-16AF897697E4",
@@ -130,9 +183,13 @@ if __name__ == "__main__":
     print("ok  test_id_match")
     test_pairing_target_paths()
     print("ok  test_pairing_target_paths")
+    test_merge_sidestored_prefs()
+    print("ok  test_merge_sidestored_prefs")
     test_remote_only_record()
     print("ok  test_remote_only_record")
     test_scan_and_probe()
     print("ok  test_scan_and_probe")
     test_registry()
     print("ok  test_registry")
+    test_export_and_registry_touch()
+    print("ok  test_export_and_registry_touch")

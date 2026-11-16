@@ -117,7 +117,9 @@ target UDID) before uploading anything.
 > broadcast instead — no setup needed. Bonjour stays as a fallback where it works.
 
 ```
-sh bin/barisign pair
+sh bin/barisign pair                       # pick a paired device, or pair a new one
+sh bin/barisign pair --export [FILE]       # copy a pairing file out (AirDrop it, or
+                                           # import it from the app's own settings)
 ```
 
 If several devices were paired before, pick one from the list (model + name + UDID);

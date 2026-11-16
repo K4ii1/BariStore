@@ -32,10 +32,12 @@ OP_REMOVE_PATH = 0x08
 OP_MAKE_DIR = 0x09
 OP_FILE_OPEN = 0x0D
 OP_FILE_OPEN_RES = 0x0E
+OP_READ = 0x0F
 OP_WRITE = 0x10
 OP_FILE_CLOSE = 0x14
 OP_REMOVE_PATH_AND_CONTENTS = 0x22
 
+FOPEN_RDONLY = 0x01
 FOPEN_WRONLY = 0x03
 
 INSTALL_SERVICE = "com.apple.mobile.installation_proxy.shim.remote"
@@ -165,6 +167,33 @@ class Afc:
 
     async def fclose(self, handle):
         await self._request(OP_FILE_CLOSE, struct.pack("<Q", handle))
+
+    async def fread(self, handle, size):
+        return await self._request(OP_READ, struct.pack("<QQ", handle, size))
+
+    async def download(self, path, chunk=256 * 1024, limit=1024 * 1024):
+        """Read a whole small file (preferences, markers); b"" when missing."""
+        try:
+            handle = await self.fopen(path, mode=FOPEN_RDONLY)
+        except DeviceServiceError:
+            return b""
+        out = bytearray()
+        try:
+            while len(out) < limit:
+                block = await self.fread(handle, min(chunk, limit - len(out)))
+                if not block:
+                    break
+                out += block
+                if len(block) < chunk:
+                    break
+        except DeviceServiceError:
+            return b""
+        finally:
+            try:
+                await self.fclose(handle)
+            except DeviceServiceError:
+                pass
+        return bytes(out)
 
     async def upload(self, path, data, chunk=128 * 1024, progress=None):
         handle = await self.fopen(path)

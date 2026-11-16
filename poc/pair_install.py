@@ -567,6 +567,21 @@ async def pair_fresh(identity, timeout, raw=False, target_ip=""):
     return rpp_tunnel.load_record(record_path), udid, peer_ip, info
 
 
+def registry_touch_peer(host, udid="", identifier=""):
+    """Remember where a device answered, so the next run skips the sweep."""
+    import time as _time
+    entries = load_registry()
+    changed = False
+    for entry in entries:
+        if (udid and _norm_id(entry.get("udid")) == _norm_id(udid)) or \
+           (identifier and _norm_id(entry.get("identifier")) == _norm_id(identifier)):
+            entry["peer_ip"] = host
+            entry["last_used"] = int(_time.time())
+            changed = True
+    if changed:
+        save_registry(entries)
+
+
 async def sweep_target(record, udid=""):
     """Look for our target on the signer's /24 without any address from the user.
 
@@ -755,34 +770,61 @@ def _remote_only(record_path):
 
 
 def pairing_target(bundle_id):
-    """(documents_only, [remote names]) for a bundle id, or None when unknown.
+    """(documents_only, [remote names], prefs path or None) for a bundle id.
 
     Verified 2026-11-16 against current upstreams: SideStore's AppConstants
     (ALTPairingFile.mobiledevicepairing; nightlies >= 0.7.0-20260920 read a
-    per-protocol PairingFile_RemoteRP.plist instead), SideInstaller's
-    PairingTargets table (LiveContainer's built-in SideStore lives under
-    SideStore/Documents/, legacy file still read), and AltStore 2.3.1+
-    (Documents/ALTPairingFile.plist, RPPairing only; beta explicitly out).
-    Custom IPAs are intentionally unmatched.
+    per-protocol PairingFile_RemoteRP.plist instead and only load it once an
+    import clears isPairingReset and records activePairingProtocol — so the
+    matching preferences are written too), SideInstaller's PairingTargets table
+    (LiveContainer's built-in SideStore lives under SideStore/Documents/,
+    legacy file still read; its prefs live in its own home folder), and
+    AltStore 2.3.1+ (Documents/ALTPairingFile.plist, RPPairing only, takes it
+    into its Keychain itself; beta explicitly out). Custom IPAs are
+    intentionally unmatched.
     """
     base = bundle_id or ""
     if ".Beta" in base:
         return None  # AltStore Beta is a different app (SideInstaller table)
     if base == "com.rileytestut.AltStore" or base.startswith("com.rileytestut.AltStore."):
-        return True, ("ALTPairingFile.plist",)
+        return True, ("ALTPairingFile.plist",), None
     if base == "com.SideStore.SideStore" or base.startswith("com.SideStore.SideStore."):
-        return True, ("ALTPairingFile.mobiledevicepairing", "PairingFile_RemoteRP.plist")
+        return True, ("ALTPairingFile.mobiledevicepairing", "PairingFile_RemoteRP.plist"), \
+            "Library/Preferences/%s.plist" % base
     if base == "com.kdt.livecontainer" or base.startswith("com.kdt.livecontainer."):
         return False, ("SideStore/Documents/ALTPairingFile.mobiledevicepairing",
-                       "SideStore/Documents/PairingFile_RemoteRP.plist")
+                       "SideStore/Documents/PairingFile_RemoteRP.plist"), \
+            "Documents/SideStore/Library/Preferences/com.SideStore.SideStore.plist"
     return None
+
+
+def merge_sidestored_prefs(existing):
+    """Preferences enabling the dropped RPPairing file, preserving the rest.
+
+    Mirrors SideStore's own import (isPairingReset off, active protocol set).
+    `existing` is the raw file or b"" when absent; None means leave it alone.
+    """
+    if existing:
+        try:
+            prefs = plistlib.loads(existing)
+        except Exception:                                       # noqa: BLE001
+            return None
+        if not isinstance(prefs, dict):
+            return None
+    else:
+        prefs = {}
+    if prefs.get("isPairingReset") is False and prefs.get("activePairingProtocol") == "rppairing":
+        return None
+    prefs["isPairingReset"] = False
+    prefs["activePairingProtocol"] = "rppairing"
+    return plistlib.dumps(prefs, fmt=plistlib.FMT_XML)
 
 
 async def _write_pairing_file(session, bundle_id, record_path):
     target = pairing_target(bundle_id)
     if target is None:
         return
-    documents_only, names = target
+    documents_only, names, prefs_name = target
     try:
         data = _remote_only(record_path)
     except Exception as exc:                                    # noqa: BLE001
@@ -801,6 +843,22 @@ async def _write_pairing_file(session, bundle_id, record_path):
             _say("  pairing file written into %s" % bundle_id)
         finally:
             await connection.close()
+        if prefs_name is not None:
+            # New SideStore nightlies ignore the file until an import clears
+            # isPairingReset and records the protocol; write the same two keys
+            # its own import would write. Library/ lives outside Documents, so
+            # this needs its own whole-container vend.
+            whole, whole_connection = await device_services.vend_container(
+                session.stack, session.address, port, bundle_id, documents_only=False)
+            try:
+                directory = os.path.dirname(prefs_name)
+                if directory:
+                    await whole.makedirs("/" + directory)
+                merged = merge_sidestored_prefs(await whole.download("/" + prefs_name))
+                if merged is not None:
+                    await whole.upload("/" + prefs_name, merged)
+            finally:
+                await whole_connection.close()
     except Exception as exc:                                    # noqa: BLE001
         _say("  ! pairing file not written into the app: %s" % exc)
 
@@ -809,31 +867,72 @@ async def _write_pairing_file(session, bundle_id, record_path):
 # CLI
 # --------------------------------------------------------------------------
 
+def _open_preview(path):
+    """Open a-Shell's preview so the share sheet can AirDrop the file."""
+    import shlex
+    marker = os.environ.get("TERM_PROGRAM", "").lower()
+    ashell = (sys.platform == "ios" or sys.platform.startswith("darwin")
+              or "a-shell" in marker or "ashell" in marker)
+    if ashell and sys.stdin.isatty():
+        os.system("view %s" % shlex.quote(path))
+    else:
+        _say("  file         %s" % path)
+
+
+def _pick_registry_entry(entries, purpose):
+    """Ask which paired device, newest pairing first. Returns an entry."""
+    _stage("Pairing", ["%s — whose record?" % purpose])
+    for index, entry in enumerate(entries, 1):
+        model = entry.get("model") or ""
+        _say("  %d  %s%s  %s" % (index, entry.get("name") or "target",
+                                 (" (%s)" % model) if model else "",
+                                 entry.get("udid") or ""))
+    _say("")
+    choice = _ask("  number: ", "1")
+    if choice.isdigit() and 1 <= int(choice) <= len(entries):
+        return entries[int(choice) - 1]
+    return entries[0]
+
+
 def export_record(dest):
-    """Copy the pairing file out, e.g. into Files for a manual in-app import."""
-    record = _load_record()
-    if record is None:
-        _say("  ! no pairing file yet; pair first")
-        return 2
-    if not dest or dest.startswith("-"):
-        udid = normalise_udid(record.get("peer_udid") or "")
-        dest = os.path.join(os.path.expanduser("~"), "Documents",
-                            "BariSign-Pairing-%s.mobiledevicepairing" % (udid[:8] or "device"))
-    dest = os.path.abspath(os.path.expanduser(dest))
-    try:
+    """Copy a pairing file out for AirDrop / manual in-app import.
+
+    With no path, asks which paired device's record to export, writes it
+    under ~/Documents and opens the preview so it can be shared at once.
+    """
+    if dest and not dest.startswith("-"):
+        record = _load_record()
+        if record is None:
+            _say("  ! no pairing file yet; pair first")
+            return 2
         with open(RECORD_PATH, "rb") as handle:
             data = handle.read()
-        directory = os.path.dirname(dest)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        with open(dest, "wb") as handle:
+        out = os.path.abspath(os.path.expanduser(dest))
+    else:
+        entries = [entry for entry in load_registry() if os.path.isfile(entry.get("file", ""))]
+        if not entries:
+            _say("  ! no paired device yet; pair first")
+            return 2
+        if len(entries) > 1 and sys.stdin.isatty():
+            picked = _pick_registry_entry(entries, "export pairing file")
+        else:
+            picked = entries[0]
+        with open(picked["file"], "rb") as handle:
+            data = handle.read()
+        udid = normalise_udid(picked.get("udid", ""))
+        out = os.path.join(os.path.expanduser("~"), "Documents",
+                           "BariSign-Pairing-%s.mobiledevicepairing" % (udid[:8] or "device"))
+    directory = os.path.dirname(out)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    try:
+        with open(out, "wb") as handle:
             handle.write(data)
     except OSError as exc:                                      # noqa: BLE001
-        _say("  ! cannot write %s: %s" % (dest, exc))
+        _say("  ! cannot write %s: %s" % (out, exc))
         return 1
-    _say("  exported     %s" % display_path(dest))
-    _say("  copy it with the Files app, then import it")
-    _say("  from the installed app's own settings page")
+    _say("  exported     %s" % display_path(out))
+    _open_preview(out)
     return 0
 
 
@@ -1015,6 +1114,9 @@ async def _run(args):
                     host, port = payload
                     _stage("Pairing", ["target:  %s:%d" % (host, port)])
                     save_state(peer_ip=host)
+                    peer_id = record.get("peer_identifier", "") if isinstance(record, dict) else ""
+                    peer_udid = record.get("peer_udid", "") if isinstance(record, dict) else udid
+                    registry_touch_peer(host, peer_udid, peer_id)
                     continue
                 # Nothing usable on this Wi-Fi: ask instead of dying.
                 _say("  the target did not answer.")
