@@ -52,9 +52,9 @@ sh bin/barisign udid
 
 The guided run asks whether Developer Mode is already on the target (Settings > Privacy &
 Security > Developer Mode, or Settings > Developer). If it is missing, the run signs first and
-then walks you through the trigger: open the signed IPA on the signer, share it to the target
-(AirDrop), tap it once on the target, then delete it. The Developer Mode switch appears after
-the attempt.
+then walks you through the trigger: it opens the signed IPA on the signer, you share it to
+the target (AirDrop), tap it once on the target, then delete it from the target. The
+Developer Mode switch appears after the attempt, and the install continues.
 
 If pairing cannot provide a UDID, fall back to the page:
 

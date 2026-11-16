@@ -569,11 +569,31 @@ async def install(session, ipa, record_path):
         sys.stdout.write("\r\033[2K  upload       %3d%%" % percent)
         sys.stdout.flush()
 
+    shown = {"status": None}
+
+    def log(text):
+        # One scrolling line per install phase, one rewritten line for its
+        # percent. Upload progress already has its own moving line, so those
+        # messages are skipped; the first status line closes it.
+        if text.startswith("upload"):
+            return
+        status = text.rsplit(" ", 1)[0] if " " in text else text
+        if shown["status"] is None:
+            sys.stdout.write("\n")
+        if status != shown["status"]:
+            if shown["status"] is not None:
+                sys.stdout.write("\n")
+            shown["status"] = status
+            print("  install      %s" % status)
+        sys.stdout.write("\r\033[2K  install      %s" % text)
+        sys.stdout.flush()
+
     await device_services.install_ipa(
         session.stack, session.address, install_port, afc_port, ipa,
         progress=progress,
-        log=lambda text: _say("  install      %s" % text))
-    _say("  install      ok")
+        log=log)
+    sys.stdout.write("\r\033[2K  install      ok\n")
+    sys.stdout.flush()
 
     if record_path and os.path.isfile(record_path) and bundle_id:
         await _write_pairing_file(session, bundle_id, record_path)

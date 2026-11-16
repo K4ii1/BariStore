@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
@@ -1415,14 +1415,16 @@ def _obtain_ipa(state, argv):
     return info["path"], info
 
 
-def _sign_now(ipa, saved, argv, hint=True):
+def _sign_now(ipa, saved, argv, hint=True, make_zip=None):
     """Run the signer, then print the two closing lines."""
+    if make_zip is None:
+        make_zip = "--no-zip" not in argv
     try:
         result = signer.sign_ipa(ipa, saved["profile"], saved["key"], saved["cert"],
                                  output_ipa=argv_get(argv, "--out") or None,
                                  udid=saved.get("udid") or None,
                                  progress=_sign_progress,
-                                 make_zip="--no-zip" not in argv,
+                                 make_zip=make_zip,
                                  drop_extensions="--no-extensions" in argv)
     except signer.SigningError as exc:
         _line_clear()
@@ -1485,9 +1487,7 @@ def cmd_guided(argv):
     account = _sign_in(email, staged=not state.get("email"))
     update_state(email=email)
 
-    if state.get("udid") and _yes("  keep UDID %s?" % state["udid"], True):
-        pass
-    elif cmd_udid([]) != 0:
+    if cmd_udid([]) != 0:
         return 1
     state = load_state()
 
@@ -1517,7 +1517,9 @@ def cmd_guided(argv):
     state = load_state()
     _stage("Sign")
     saved = signer.find_saved_paths(STATE_DIR)
-    result = _sign_now(ipa, saved, argv, hint=False)
+    # The .zip is only a convenience copy for manual sharing; the install
+    # uses the .ipa, so the guided run skips it.
+    result = _sign_now(ipa, saved, argv, hint=False, make_zip=False)
     if result is None:
         return 1
     if not have_devmode:
@@ -1590,7 +1592,7 @@ _OPTIONS = {
     "sign": (
         ("--ipa FILE", "sign this file instead of downloading"),
         ("--out FILE", "write the signed IPA here"),
-        ("--no-zip", "do not package the .zip"),
+        ("--no-zip", "do not package the .zip copy (install uses the .ipa)"),
         ("--no-extensions", "drop PlugIns (an app extension needs its own App ID)"),
     ),
     "udid": (
