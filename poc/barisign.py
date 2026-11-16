@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.5"
+VERSION = "0.9.6"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
@@ -527,6 +527,7 @@ def _sign_in(email, preferred=None, use_clipboard=False, staged=False):
         try:
             anisette, gs = connect_anisette(url, state_path)
         except Fail as exc:
+            _line_clear()
             print("    unusable: %s" % exc)
             last_error = exc
             continue
@@ -1017,8 +1018,8 @@ def cmd_udid(argv):
     # --pair is kept only as a compatibility no-op.
     if not udid and not manual:
         print("  Pairing the TARGET; the pairing gives its UDID.")
-        print("  If Paired Macs is not available, install the original IPA on")
-        print("  the target first (it makes Developer Mode appear), then retry.")
+        print("  If Paired Macs shows nothing, the target needs")
+        print("  Developer Mode first (guided run walks you through it).")
         print()
         pair = os.path.join(_HERE, "pair_install.py")
         code = subprocess.call([sys.executable, "-u", pair, "--pair-only",
@@ -1311,14 +1312,14 @@ def _obtain_ipa(state, argv):
         return "", {}
 
     size_mb = (info["size"] or 0) / 1048576.0
+    print(("  %s (%.1f MB)" % (variant["name"], size_mb))[:_columns() - 1])
     last = [-5]
 
     def moved(received, total):
         percent = int(received * 100 / total) if total else 0
         if percent >= last[0] + 5 or percent == 100:
             last[0] = percent
-            _step(1, 1, "downloading %s (%.1f MB) %d%%"
-                  % (variant["name"], size_mb, percent))
+            _step(1, 1, "downloading %d%%" % percent)
 
     try:
         info = download.ensure(variant, folder, moved)
@@ -1333,7 +1334,7 @@ def _obtain_ipa(state, argv):
     return info["path"], info
 
 
-def _sign_now(ipa, saved, argv):
+def _sign_now(ipa, saved, argv, hint=True):
     """Run the signer, then print the two closing lines."""
     try:
         result = signer.sign_ipa(ipa, saved["profile"], saved["key"], saved["cert"],
@@ -1351,7 +1352,8 @@ def _sign_now(ipa, saved, argv):
     _result("SIGN", "ok  %s" % os.path.basename(result["ipa"]))
     if result["zip"]:
         print("  zip   %s" % _display_path(result["zip"]))
-    print("  next  sh bin/barisign pair  (install on the target over Wi-Fi)")
+    if hint:
+        print("  next  sh bin/barisign pair  (install on the target over Wi-Fi)")
     return result
 
 
@@ -1391,8 +1393,12 @@ def cmd_guided(argv):
         _choose_variant(state, variants)
         state = load_state()
 
-    have_devmode = _yes("  target has Developer Mode?",
+    print("  on the target, open:")
+    print("    Settings > Privacy & Security > Developer Mode")
+    print("    (or Settings > Developer)")
+    have_devmode = _yes("  is Developer Mode there?",
                         default=bool(state.get("paired")))
+
     _stage("Download")
     ipa, _info = _obtain_ipa(state, argv)
     if not ipa:
@@ -1401,11 +1407,6 @@ def cmd_guided(argv):
         if _adopt_custom_bundle_id(_info["bundle_id"]) is None:
             return 1
         state = load_state()
-    if not have_devmode:
-        print("  install this IPA on the target once, then tap it;")
-        print("  the Developer Mode switch appears after the attempt.")
-        if _yes("  share the original IPA to the target now?", True):
-            _share_file(ipa)
 
     if state.get("udid") and _yes("  keep UDID %s?" % state["udid"], True):
         pass
@@ -1435,9 +1436,20 @@ def cmd_guided(argv):
     state = load_state()
     _stage("Sign")
     saved = signer.find_saved_paths(STATE_DIR)
-    result = _sign_now(ipa, saved, argv)
+    result = _sign_now(ipa, saved, argv, hint=False)
     if result is None:
         return 1
+    if not have_devmode:
+        _stage("Developer Mode")
+        print("  the target needs Developer Mode before installing.")
+        print("  on the signer, open the signed IPA and share it")
+        print("  to the target (AirDrop). on the target, tap it once,")
+        print("  then delete it. the switch appears after the attempt.")
+        if _yes("  open the signed IPA for sharing now?", True):
+            _share_file(result["ipa"])
+        print("  after tapping: turn on Developer Mode on the target,")
+        print("  then delete the shared file from the target.")
+        _ask("  press Enter when done: ")
     if "--no-install" not in argv and _yes("  install on the target now?", True):
         pair = os.path.join(_HERE, "pair_install.py")
         command = [sys.executable, "-u", pair, "--ipa", result["ipa"]]

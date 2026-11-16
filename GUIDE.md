@@ -50,9 +50,11 @@ sh bin/barisign udid
    **Settings → Developer → Paired Macs**) → **BariSign** → code.
 3. The signer reads the UDID from the pairing/tunnel and saves it.
 
-If the target has never had Developer Mode, download the original IPA on the signer and share it to
-the target first: install it once; the Developer Mode switch appears after the failed launch attempt.
-That IPA is only the trigger; the app BariSign signs is a different, signed build.
+The guided run asks whether Developer Mode is already on the target (Settings > Privacy &
+Security > Developer Mode, or Settings > Developer). If it is missing, the run signs first and
+then walks you through the trigger: open the signed IPA on the signer, share it to the target
+(AirDrop), tap it once on the target, then delete it. The Developer Mode switch appears after
+the attempt.
 
 If pairing cannot provide a UDID, fall back to the page:
 
