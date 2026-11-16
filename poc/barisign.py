@@ -70,7 +70,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
@@ -1298,7 +1298,6 @@ def _obtain_ipa(state, argv):
 
     folder = os.path.dirname(STATE_DIR)
     try:
-        _step(1, 2, "resolve")
         info = download.resolve(variant)
     except download.DownloadError as exc:
         saved = os.path.join(folder, (variant.get("id") or "barisign") + ".ipa")
@@ -1311,19 +1310,15 @@ def _obtain_ipa(state, argv):
         print("! %s" % exc)
         return "", {}
 
-    _line_clear()
-    print("  ipa   %s  (%.1f MB)" % (info["version"], (info["size"] or 0) / 1048576.0))
-    if info["warning"]:
-        print("  ! nightly builds may be unstable")
-    update_state(variant=variant["id"], asset_version=info["version"])
-
+    size_mb = (info["size"] or 0) / 1048576.0
     last = [-5]
 
     def moved(received, total):
         percent = int(received * 100 / total) if total else 0
         if percent >= last[0] + 5 or percent == 100:
             last[0] = percent
-            _step(2, 2, "download %d%%" % percent)
+            _step(1, 1, "downloading %s (%.1f MB) %d%%"
+                  % (variant["name"], size_mb, percent))
 
     try:
         info = download.ensure(variant, folder, moved)
@@ -1332,6 +1327,8 @@ def _obtain_ipa(state, argv):
         print()
         print("! %s" % exc)
         return "", {}
+    _line_clear()
+    update_state(variant=variant["id"], asset_version=info["version"])
     update_state(ipa=info["path"])
     return info["path"], info
 
@@ -1394,6 +1391,8 @@ def cmd_guided(argv):
         _choose_variant(state, variants)
         state = load_state()
 
+    have_devmode = _yes("  target has Developer Mode?",
+                        default=bool(state.get("paired")))
     _stage("Download")
     ipa, _info = _obtain_ipa(state, argv)
     if not ipa:
@@ -1402,11 +1401,11 @@ def cmd_guided(argv):
         if _adopt_custom_bundle_id(_info["bundle_id"]) is None:
             return 1
         state = load_state()
-    print("  original  %s" % _display_path(ipa))
-    print("  if the target has no Developer Mode, share this IPA to it and")
-    print("  tap it once; the Developer Mode switch appears after the attempt.")
-    if _yes("  share the original IPA to the target now?", False):
-        _share_file(ipa)
+    if not have_devmode:
+        print("  install this IPA on the target once, then tap it;")
+        print("  the Developer Mode switch appears after the attempt.")
+        if _yes("  share the original IPA to the target now?", True):
+            _share_file(ipa)
 
     if state.get("udid") and _yes("  keep UDID %s?" % state["udid"], True):
         pass

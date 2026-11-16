@@ -45,8 +45,8 @@ interop test proves against OpenSSL.
 
 ## What to run now
 
-1. `sh bin/update` — must print `installing BariSign <version>`, then `files ok`, `check ok`,
-   `ready`. (The `files` line cycles dots on one line and always ends with ok.)
+1. `sh bin/update` — clean screen, `installing BariSign <version>`, `(1/2) files` cycling,
+   clean screen, `(2/2) check`, clean screen, `BariSign <version> installed` + next step.
 2. `sh bin/barisign pair --check` — must import the engine.
 3. `sh bin/barisign pair` — pairs (raw broadcast is automatic on a-Shell) or reuses the
    record, finds the target by port scan + subnet sweep, then tunnels and installs with

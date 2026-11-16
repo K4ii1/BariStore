@@ -16,8 +16,6 @@ set -u
 BASE="https://github.com/barismd/barisign/blob/main"
 DIR="${BARISIGN_DIR:-$HOME/Documents/barisign}"
 
-printf 'installing BariSign'
-
 mkdir -p "$DIR/poc" "$DIR/bin" "$DIR/third_party/sideinstaller" \
          "$DIR/third_party/apple-roots" "$DIR/third_party/ca-bundle" || {
     printf '  ! cannot create %s (a-Shell only writes inside ~/Documents)\n' "$DIR"
@@ -43,17 +41,15 @@ else
     RAW="https://raw.githubusercontent.com/barismd/barisign/main"
 fi
 # The version on the title is the version being installed, not the old copy:
-# fetch just this one small file first (the full download follows).
+# fetch just this one small file first (the full download follows). VER stays
+# empty when even that fails; the title then has no number.
 VER=$(curl -fsSL --connect-timeout 15 --max-time 60 -H 'Cache-Control: no-cache' \
     "$RAW/poc/barisign.py" 2>/dev/null | python3 -c "
 import re, sys
 m = re.search(r'VERSION *= *[\"\x27]([^\"\x27]+)[\"\x27]', sys.stdin.read())
 print(m.group(1) if m else '')
 " 2>/dev/null)
-if [ -n "${VER:-}" ]; then
-    printf ' %s' "$VER"
-fi
-printf '\n\n'
+: "${VER:=}"
 
 fetch() {   # fetch <file-in-repo> <destination>
     # -f is essential: without it a 404 HTML page is non-empty and would be
@@ -111,7 +107,7 @@ download_all() {
             2) _d='..';;
             *) _d='...';;
         esac
-        printf '\r\033[2K  files     %s' "$_d"
+        printf '\r\033[2K  (1/2) files %s' "$_d"
     done
     chmod +x bin/* 2>/dev/null
     return $fail
@@ -146,26 +142,35 @@ works() {
 }
 
 # No background jobs: a-Shell's shell can leave a background spinner
-# looping in the terminal.  Progress is one dot per downloaded file,
-# printed in the foreground as each fetch finishes.
+# looping in the terminal.  Progress is one line per phase, rewritten in
+# place (. → .. → ... → .).  Each finished phase clears the screen, so a
+# finished installer always ends on one clean screen.
+clear_screen() {
+    printf '\033[2J\033[3J\033[1;1H'
+}
+
+clear_screen
+printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
+
 attempt=1
 while [ "$attempt" -le 2 ]; do
     FAILED=""
     download_all
     if [ "$fail" -eq 0 ]; then
-        printf '\r\033[2K  files     ok\n'
+        clear_screen
+        printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
     else
-        printf '\r\033[2K  files     failed\n'
+        printf '\r\033[2K  (1/2) files failed\n'
         printf '  ! could not fetch:%s\n' "$FAILED"
     fi
 
-    printf '  check     ...'
+    printf '  (2/2) check ...'
     COMPILE_BAD=""
     if [ "$fail" -eq 0 ] && COMPILE_BAD=$(check_compiles) && works; then
-        printf '\r\033[2K  check     ok\n'
+        clear_screen
         break
     fi
-    printf '\r\033[2K  check     failed\n'
+    printf '\r\033[2K  (2/2) check failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
         printf '  ! does not compile:%s\n' "$COMPILE_BAD"
     fi
@@ -176,10 +181,10 @@ while [ "$attempt" -le 2 ]; do
     attempt=$((attempt + 1))
 done
 
-printf '\n'
 if [ "$fail" -ne 0 ] || ! works; then
     printf '  ! install failed; nothing was changed outside the program files.\n'
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
     exit 1
 fi
-printf '  ready     sh bin/barisign\n'
+printf 'BariSign %s installed\n\n' "${VER:-?}"
+printf '  next  sh bin/barisign\n'
