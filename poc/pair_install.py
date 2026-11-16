@@ -50,6 +50,22 @@ def _say(text=""):
     print(text, flush=True)
 
 
+def _clear_screen():
+    sys.stdout.write("\033[2J\033[3J\033[1;1H")
+    sys.stdout.flush()
+
+
+def _stage(title, lines=()):
+    """One clean screen per stage, like the guided flow."""
+    _clear_screen()
+    print("BariSign")
+    print()
+    print("== %s ==" % title.upper())
+    for line in lines:
+        print("  %s" % line)
+    print()
+
+
 def _udid_ok(value):
     cleaned = re.sub(r"[\s\-]", "", (value or "")).lower()
     return bool(re.fullmatch(r"[0-9a-f]{40}", cleaned) or re.fullmatch(r"[0-9a-f]{24}", cleaned))
@@ -186,10 +202,10 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
         host = pairing.PairableHost(reader, writer, identity, log=log)
 
         def pin(code):
-            _say("")
-            _say("  pairing code:  %s" % code)
-            _say("  enter it on the TARGET now")
-            _say("")
+            _stage("Pair", instructions + [
+                "pairing code:  %s" % code,
+                "enter it on the TARGET now",
+            ])
             log("PIN shown: %s" % code)
 
         try:
@@ -218,12 +234,12 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
     await probe.wait_closed()
     server = await asyncio.start_server(handle, host=None, port=port)
     txt = pairing.mdns_txt(identity)
-    _say("")
-    _say("  signer: advertising as BariSign")
-    _say("  target: Settings > Privacy & Security > Developer Mode > Paired Macs")
-    _say("          (or Settings > Developer > Paired Macs)")
-    _say("          pick BariSign, then enter the code printed here")
-    _say("")
+    instructions = [
+        "signer: advertising as BariSign",
+        "target: Settings > Privacy & Security > Developer Mode > Paired Macs",
+        "        (or Settings > Developer > Paired Macs)",
+        "pick BariSign, then enter the code printed here",
+    ]
 
     registration = None
     advertiser = None
@@ -231,20 +247,19 @@ async def pair_target(timeout, identity, raw=False, target_ip=""):
     try:
         if use_raw:
             advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-            _say("  advertising  raw %s from %s"
-                 % (advertiser.transports, advertiser.ipv4))
+            transports = advertiser.transports
         else:
             try:
                 registration = mdns.register(mdns.PAIRABLE_HOST, "BariSign", port, txt)
                 await registration.__aenter__()
+                transports = "DNS-SD"
             except RuntimeError as exc:
                 if "-65555" not in str(exc) and "NoAuth" not in str(exc):
                     raise
-                _say("  ! DNS-SD is blocked in a-Shell; trying raw multicast+broadcast")
                 registration = None
                 advertiser = raw_mdns.Advertiser(identity, port, target_ip).start()
-                _say("  advertising  raw %s from %s"
-                     % (advertiser.transports, advertiser.ipv4))
+                transports = advertiser.transports
+        _stage("Pair", instructions + ["advertising via %s" % transports])
         try:
             return await asyncio.wait_for(result, timeout)
         except asyncio.TimeoutError:
@@ -328,7 +343,7 @@ async def find_service(udid, peer_ip, host, port, timeout=6):
     return _choose_host(services, udid, peer_ip, host, port)
 
 
-async def _tcp_open(host, port, timeout=1.5):
+async def _tcp_open(host, port, timeout=1.0):
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
     except Exception:                                           # noqa: BLE001
@@ -344,7 +359,7 @@ async def _tcp_open(host, port, timeout=1.5):
     return port
 
 
-async def scan_ports(host, start=49152, count=48, timeout=1.5, batch=16):
+async def scan_ports(host, start=49152, count=48, timeout=1.0, batch=24):
     """Find open TCP ports near the usual RPPairing port (it moves at boot).
 
     Closed ports on a LAN RST immediately, so a /48 sweep in batches is fast.
@@ -393,8 +408,10 @@ async def pair_fresh(identity, timeout, raw=False, target_ip=""):
     udid = normalise_udid(info.get("udid", ""))
     save_state(paired=True, udid=udid, peer_ip=peer_ip,
                peer_name=info.get("name", ""), record=record_path)
-    _say("  paired       %s" % (info.get("name") or "target"))
-    _say("  UDID         %s" % (udid or "(will read it from the tunnel)"))
+    _stage("Pair", [
+        "paired:  %s" % (info.get("name") or "target"),
+        "UDID:    %s" % (udid or "(reading it from the tunnel)"),
+    ])
     return rpp_tunnel.load_record(record_path), udid, peer_ip
 
 
@@ -470,7 +487,7 @@ async def open_session(record, host, port, identity_udid=""):
         stack = tcp6.TcpStack(tunnel["link"], tunnel["client_address"])
         await stack.start()
         try:
-            connection = await stack.connect(tunnel["server_address"], tunnel["rsd_port"], timeout=20)
+            connection = await stack.connect(tunnel["server_address"], tunnel["rsd_port"], timeout=15)
             services, properties, xpc = await remote_xpc.connect_rsd(connection, connection)
         except Exception:
             await stack.close()
@@ -630,7 +647,6 @@ async def _run(args):
             _say("  done         pairing file imported")
             return 0
     if record is None:
-        _say("  no pairing file yet; pairing the target first")
         try:
             record, udid, peer_ip = await pair_fresh(
                 identity, timeout,
@@ -641,8 +657,6 @@ async def _run(args):
                 _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
                 return 2
             raise
-    else:
-        _say("  pairing file %s" % display_path(RECORD_PATH))
 
     # a-Shell can neither advertise nor browse Bonjour (-65555 on both), so
     # skip discovery there entirely: the paired address plus scans replace it.
@@ -665,12 +679,12 @@ async def _run(args):
     if not host:
         host, port = peer_ip, 0
     if not host:
-        _say("  ! the target was not found")
-        _say("    pass its Wi-Fi address directly:")
-        _say("    target: Settings > Wi-Fi > (i) > IP Address, then")
-        _say("    sh bin/barisign pair --host <target-ip>")
+        _stage("Tunnel", ["the target was not found"])
+        _say("  pass its Wi-Fi address directly:")
+        _say("  target: Settings > Wi-Fi > (i) > IP Address, then")
+        _say("  sh bin/barisign pair --host <target-ip>")
         return 2
-    _say("  target       %s" % host)
+    _stage("Tunnel", ["target:  %s" % host])
 
     session = None
     try:
@@ -694,7 +708,7 @@ async def _run(args):
                     status, payload = "none", None
             if status == "match":
                 host, port = payload
-                _say("  target       %s:%d" % (host, port))
+                _stage("Tunnel", ["target:  %s:%d" % (host, port)])
                 save_state(peer_ip=host)
                 try:
                     session = await asyncio.wait_for(
@@ -705,7 +719,6 @@ async def _run(args):
                 # Something on this Wi-Fi answers, but nothing matches our
                 # record and the saved path is silent: pair fresh instead of
                 # dying. A new identity makes the target show the prompt.
-                _say("  pairing again")
                 try:
                     identity = pairing.HostIdentity.generate()
                     identity.save(IDENTITY_PATH)
@@ -715,7 +728,7 @@ async def _run(args):
                 host, port = peer_ip, 0
                 if not host:
                     raise _friendly_error(host, first_error)
-                _say("  target       %s" % host)
+                _stage("Tunnel", ["target:  %s" % host])
                 try:
                     session = await asyncio.wait_for(
                         open_session(record, host, port, udid), 120)
@@ -731,20 +744,33 @@ async def _run(args):
         if not udid:
             _say("  ! could not read the target's UDID from the tunnel")
             return 2
-        _say("  UDID         %s" % udid)
+        device = session.properties.get("ProductType", "") or "device"
         if args.get("pair_only"):
-            _say("  done         pairing file and UDID saved")
+            _stage("Tunnel", [
+                "target:  %s" % host,
+                "device:  %s" % device,
+                "UDID:    %s" % udid,
+                "pairing file saved",
+            ])
             return 0
+        _stage("Tunnel", [
+            "target:  %s" % host,
+            "device:  %s" % device,
+            "UDID:    %s" % udid,
+        ])
 
         ipa = find_ipa(args.get("ipa"))
         if not ipa:
             _say("  ! no signed IPA found")
             _say("    sign on the signer first (sh bin/barisign sign), or pass --ipa FILE")
             return 2
+        _stage("Install", ["installing:  %s" % os.path.basename(ipa)])
         await asyncio.wait_for(install(session, ipa, RECORD_PATH), 900)
-        _say("")
-        _say("  next         on the target: Settings > General > VPN & Device Management")
-        _say("               trust the developer, then open the app")
+        _stage("Done", [
+            "installed:  %s" % os.path.basename(ipa),
+            "on the target: Settings > General > VPN & Device Management",
+            "trust the developer, then open the app",
+        ])
         return 0
     finally:
         if session is not None:

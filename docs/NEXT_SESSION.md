@@ -94,7 +94,10 @@ on the target) instead of dying on the stale address. Errors are one plain line
 `--host <ip>` skips all of this.
 
 **Still untested on a device:** tunnel + RSD + AFC + `installation_proxy` install, and the
-pairing-file write into the app. Run `sh bin/barisign pair` (plain; raw advertisement is now
+pairing-file write into the app. The install reached AFC upload on-device; `FILE_OPEN` answers
+with opcode `0x0E` (`FILE_OPEN_RES`), which the client now accepts. Pair UI is staged
+(Pair → Tunnel → Install → Done) with screen clears like the guided flow; a duplicate second
+connection is refused while one pair-setup runs. Run `sh bin/barisign pair` (plain; raw advertisement is now
 automatic on a-Shell, `--raw-mdns` only forces it elsewhere).
 
 - **Bonjour browse/registration in a-Shell.** Registration is the existing DNS-SD shim; browsing was

@@ -31,6 +31,7 @@ OP_DATA = 0x02
 OP_REMOVE_PATH = 0x08
 OP_MAKE_DIR = 0x09
 OP_FILE_OPEN = 0x0D
+OP_FILE_OPEN_RES = 0x0E
 OP_WRITE = 0x10
 OP_FILE_CLOSE = 0x14
 OP_REMOVE_PATH_AND_CONTENTS = 0x22
@@ -130,9 +131,9 @@ class Afc:
                 if status:
                     raise DeviceServiceError("AFC status %d for operation 0x%X" % (status, op))
             return b""
-        if rop != OP_DATA:
-            raise DeviceServiceError("unexpected AFC reply opcode 0x%X" % rop)
-        return body
+        if rop in (OP_DATA, OP_FILE_OPEN_RES):
+            return body
+        raise DeviceServiceError("unexpected AFC reply opcode 0x%X" % rop)
 
     async def makedirs(self, path):
         current = ""
