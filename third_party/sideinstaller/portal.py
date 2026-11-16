@@ -345,6 +345,79 @@ def download_profile(session, team, app_id):
     return bytes(profile["encodedProfile"])
 
 
+# --- App Groups (added by BariSign; protocol from MIT isideload) --------------
+
+# The APG3427HIY feature flag enables the App Groups capability on an App ID.
+APG_GROUP_FEATURE = "APG3427HIY"
+
+
+def _is_known_family(identifier):
+    base = (identifier or "").split(".Beta")[0]
+    for prefix in ("com.SideStore.SideStore", "com.kdt.livecontainer",
+                   "com.rileytestut.AltStore"):
+        if base == prefix or base.startswith(prefix + "."):
+            return True
+    return False
+
+
+def group_identifier_for(team, full_bundle_id, bundle_id=""):
+    """The app-group id this app's build looks up, or "" when unknown.
+
+    Mirrors isideload (MIT): group.<full bundle id>, except LiveContainer
+    whose built-in SideStore looks up group.com.SideStore.SideStore.<team>.
+    Custom apps are left alone — their group layout is unverified.
+    """
+    if not _is_known_family(full_bundle_id or bundle_id or ""):
+        return ""
+    if (bundle_id or "").startswith("com.kdt.livecontainer"):
+        return "group.com.SideStore.SideStore." + team["teamId"]
+    return "group." + (full_bundle_id or bundle_id)
+
+
+def ensure_app_group(session, team, app_id, group_id, name):
+    """Register the group, enable the capability, attach it to the App ID.
+
+    Returns the granted group identifier. Raises Fail when the team cannot
+    have app groups — the caller keeps going without them and the apps fall
+    back to their own containers.
+    """
+    try:
+        groups = session.call("listApplicationGroups", {"teamId": team["teamId"]},
+                              key="applicationGroupList") or []
+    except Fail as exc:
+        raise Fail("cannot list app groups: %s" % exc)
+    application_group = ""
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        if group.get("identifier") == group_id or group.get("applicationGroup") == group_id:
+            application_group = group.get("applicationGroup") or group_id
+            break
+    else:
+        try:
+            created = session.call("addApplicationGroup", {
+                "teamId": team["teamId"], "name": name, "identifier": group_id,
+            }, key="applicationGroup")
+        except Fail as exc:
+            raise Fail("cannot create app group %s: %s" % (group_id, exc))
+        application_group = (created or {}).get("applicationGroup") or group_id
+    try:
+        session.call("updateAppId", {
+            "teamId": team["teamId"], "appIdId": app_id["appIdId"],
+            "APG3427HIY": True,
+        }, key="appId")
+    except Fail as exc:
+        raise Fail("cannot enable App Groups on the App ID: %s" % exc)
+    try:
+        session.call("assignApplicationGroupToAppId", {
+            "teamId": team["teamId"], "applicationGroups": application_group,
+            "appIdId": app_id["appIdId"],
+        })
+    except Fail as exc:
+        raise Fail("cannot attach the app group to the App ID: %s" % exc)
+    return application_group or group_id
+
+
 def profile_entitlements(profile):
     plist = profile_plist(profile)
     entitlements = plist.get("Entitlements")

@@ -117,6 +117,13 @@ automatic on a-Shell, `--raw-mdns` only forces it elsewhere).
 - **Pairing file path.** Written after install via house_arrest; if the app is not installed yet or
   the bundle id is unknown, the step is skipped and the copies in `state/` remain for manual import.
 
+Portal now also registers an App Group (`group.<bundle>.<team>`, LiveContainer special-cased
+to `group.com.SideStore.SideStore.<team>`), enables APG3427HIY on the App ID and assigns the
+group — protocol shape from MIT isideload. Without it the installed SideStore/LiveContainer
+cannot open its app-group container. The signer stamps the granted group into ALTAppGroups
+(isideload behavior); unknown/custom apps keep the old strip-ungranted rule. If Apple refuses
+groups for the team, portal warns and continues without them.
+
 ## Linux tests (all should pass here)
 
 ```

@@ -1312,7 +1312,19 @@ def prepare_bundle_ids(app_dir, new_app_id, config):
     return new_app_id
 
 
-def strip_ungranted_app_groups(app_dir, config):
+KNOWN_GROUP_FAMILIES = ("com.SideStore.SideStore", "com.kdt.livecontainer",
+                        "com.rileytestut.AltStore")
+
+
+def _family_of(bundle_id):
+    base = (bundle_id or "").split(".Beta")[0]
+    for prefix in KNOWN_GROUP_FAMILIES:
+        if base == prefix or base.startswith(prefix + "."):
+            return True
+    return False
+
+
+def strip_ungranted_app_groups(app_dir, config, bundle_id=""):
     """Drop ALTAppGroups entries the profile does not grant.
 
     AltStore Classic reads ALTAppGroups from Info.plist and, when the key is
@@ -1327,14 +1339,29 @@ def strip_ungranted_app_groups(app_dir, config):
     With the unentitled group removed the same code takes its no-app-group
     branch and stores its data in the app's own container. Groups the profile
     does grant are kept.
+
+    When the portal granted an app group for a known family (SideStore,
+    LiveContainer+SideStore, AltStore — see isideload's group rule), stamp it
+    in instead, like isideload does: these apps look the group up by id and a
+    missing/stale entry leaves them without a shared container.
     """
-    granted = set(config["entitlements"].get("com.apple.security.application-groups") or [])
+    granted = sorted(set(config["entitlements"].get("com.apple.security.application-groups") or []))
     for bundle_dir in [app_dir] + _all_bundles(app_dir):
         info = _bundle_info(bundle_dir)
         if not info:
             continue
         loaded, raw_bytes, _executable_path, _executable = info
         groups = loaded.get("ALTAppGroups")
+        if granted and _family_of(bundle_id or loaded.get("CFBundleIdentifier", "")):
+            # The portal granted a group for a known family: stamp it like
+            # isideload does, whether or not the key already exists. Without
+            # this these apps look up an ungranted group and report that no
+            # app-group container exists.
+            if groups != granted:
+                loaded["ALTAppGroups"] = list(granted)
+                write_plist(os.path.join(bundle_dir, "Info.plist"), loaded,
+                            raw_bytes[:8] == b"bplist00")
+            continue
         if not isinstance(groups, list):
             continue
         kept = [group for group in groups if isinstance(group, str) and group in granted]
@@ -2137,7 +2164,7 @@ def sign_ipa(ipa_path, profile_path, key_path, cert_path, output_ipa=None,
         progress("prepare")
         if config["app_id"]:
             prepare_bundle_ids(app_dir, target_id, config)
-        strip_ungranted_app_groups(app_dir, config)
+        strip_ungranted_app_groups(app_dir, config, bundle_id=target_id)
         # The profile's entitlement must name the bundle that is now on disk.
         config["entitlements"]["application-identifier"] = \
             config["team"] + "." + target_id

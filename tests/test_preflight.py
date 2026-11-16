@@ -63,6 +63,52 @@ def test_missing_udid():
     assert any("does not include this device" in problem for problem in problems), problems
 
 
+_MISSING = object()
+
+
+def _write_app(root, name, bundle_id, groups=_MISSING):
+    import plistlib
+    path = os.path.join(root, name)
+    os.makedirs(path)
+    info = {"CFBundleIdentifier": bundle_id, "CFBundleExecutable": "x"}
+    if groups is not _MISSING:
+        info["ALTAppGroups"] = groups
+    with open(os.path.join(path, "Info.plist"), "wb") as handle:
+        plistlib.dump(info, handle)
+    with open(os.path.join(path, "x"), "wb"):
+        pass
+    return path
+
+
+def test_group_stamping():
+    import plistlib
+    import tempfile
+    root = tempfile.mkdtemp(prefix="groups-")
+    granted = {"entitlements": {"com.apple.security.application-groups":
+                               ["group.com.SideStore.SideStore.T1"]}}
+    missing = _write_app(root, "A.app", "com.SideStore.SideStore")
+    signer.strip_ungranted_app_groups(missing, granted, bundle_id="com.SideStore.SideStore.T1")
+    with open(os.path.join(missing, "Info.plist"), "rb") as handle:
+        assert plistlib.load(handle)["ALTAppGroups"] == ["group.com.SideStore.SideStore.T1"]
+    stale = _write_app(root, "B.app", "com.rileytestut.AltStore", ["group.com.rileytestut.AltStore"])
+    signer.strip_ungranted_app_groups(stale, granted, bundle_id="com.rileytestut.AltStore.T1")
+    with open(os.path.join(stale, "Info.plist"), "rb") as handle:
+        assert plistlib.load(handle)["ALTAppGroups"] == ["group.com.SideStore.SideStore.T1"]
+    other = _write_app(root, "C.app", "com.example.Foo", ["group.com.example.Foo"])
+    kept = {"entitlements": {"com.apple.security.application-groups": ["group.com.example.Foo"]}}
+    signer.strip_ungranted_app_groups(other, kept, bundle_id="com.example.Foo.T1")
+    with open(os.path.join(other, "Info.plist"), "rb") as handle:
+        assert plistlib.load(handle)["ALTAppGroups"] == ["group.com.example.Foo"]
+    dropped = _write_app(root, "D.app", "com.example.Bar", ["group.com.example.Bar"])
+    signer.strip_ungranted_app_groups(dropped, granted, bundle_id="com.example.Bar.T1")
+    with open(os.path.join(dropped, "Info.plist"), "rb") as handle:
+        assert "ALTAppGroups" not in plistlib.load(handle)
+    nogroup = _write_app(root, "E.app", "com.rileytestut.AltStore", ["group.com.rileytestut.AltStore"])
+    signer.strip_ungranted_app_groups(nogroup, {"entitlements": {}}, bundle_id="com.rileytestut.AltStore.T1")
+    with open(os.path.join(nogroup, "Info.plist"), "rb") as handle:
+        assert "ALTAppGroups" not in plistlib.load(handle)
+
+
 def test_expired_cert():
     problems = signer.install_preflight(
         profile(NOW + datetime.timedelta(days=6), ["a" * 40], OLD_CERT),

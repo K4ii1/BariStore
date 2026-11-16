@@ -54,7 +54,8 @@ except ImportError as exc:                                    # noqa: BLE001
 from signin import AppleAccount, Fail, connect_anisette        # noqa: E402
 from portal import (DeveloperSession, ensure_app_id, ensure_device,               # noqa: E402
                     ensure_private_key, obtain_certificate, pick_team,
-                    download_profile, profile_plist, list_devices)
+                    download_profile, profile_plist, list_devices,
+                    group_identifier_for, ensure_app_group)
 
 # portal.py imported MACHINE_NAME by name, so both modules need it. It is what
 # Apple shows next to a development certificate, and what lets a later run reuse
@@ -70,7 +71,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.15"
+VERSION = "0.9.16"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -651,6 +652,14 @@ def _portal(account, email, udid, bundle_id, device_name, app_name):
     full_bundle_id = (bundle_id[:-len(suffix)] if bundle_id.endswith(suffix) else bundle_id) + suffix
     _step(3, 5, "app id")
     app_id = ensure_app_id(session, team, full_bundle_id, app_name)
+    group_id = group_identifier_for(team, full_bundle_id, bundle_id)
+    if group_id:
+        try:
+            ensure_app_group(session, team, app_id, group_id, app_name)
+        except Fail as exc:                                       # noqa: BLE001
+            # Free teams may not get app groups; the install still works and
+            # the apps fall back to their own containers.
+            _portal_line("no app groups for this team (%s); continuing without" % exc, "  ! ")
 
     key_path = ensure_private_key(email)
     _step(4, 5, "certificate")

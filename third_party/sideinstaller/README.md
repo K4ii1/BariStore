@@ -42,6 +42,12 @@ provisioning-profile download/parsing.
    characters of the response body, because a 503 carries the only clue there is.
 6. **`portal.py`: every `openssl` call replaced with `cryptography`** — CSR building, PEM/DER
    conversion and the key-modulus comparison (a-Shell has no `openssl` binary).
+7. **`portal.py`: App Groups support added** (`list/add/assignApplicationGroup`,
+   `APG3427HIY` capability; group id `group.<bundle>.<team>`, LiveContainer special-cased to
+   `group.com.SideStore.SideStore.<team>`). Protocol shape follows MIT `isideload`
+   (`dev/app_groups.rs`, `dev/app_ids.rs`); without it the installed SideStore/LiveContainer
+   cannot open its app-group container. Falls back to no-group signing when the team
+   refuses it.
 7. The files were **cut** to the parts listed above; our command-line front ends live in
    `../../poc/poc_login.py`, `../../poc/poc_portal.py` and `../../poc/barisign.py`, all MIT.
 8. `STORAGE` is overridden by the caller to `state/` inside the installed folder, because a-Shell can
