@@ -73,6 +73,10 @@ except ImportError as exc:                                    # noqa: BLE001
 VERSION = "0.9.10"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
+# Signed + downloaded IPAs live in one folder inside BariSign (tidy);
+# custom inputs live in ~/Documents/Custom IPAs (outside, user-managed).
+IPA_DIR = os.path.join(os.path.dirname(STATE_DIR), "ipa")
+CUSTOM_IPA_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Custom IPAs")
 VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
 
 # Done here, not in main(): the key, certificate and profile paths are derived
@@ -744,11 +748,13 @@ def cmd_reset(_argv):
     for variant in load_variants():
         identifier = variant.get("id")
         if identifier:
-            path = os.path.join(folder, identifier + ".ipa")
-            if os.path.isfile(path):
-                files.append(path)
+            for directory in (folder, IPA_DIR):
+                path = os.path.join(directory, identifier + ".ipa")
+                if os.path.isfile(path):
+                    files.append(path)
     for pattern in ("*-signed.ipa", "*-signed.zip", "*.ipa.part", "*.zip.part"):
         files.extend(sorted(glob.glob(os.path.join(folder, pattern))))
+        files.extend(sorted(glob.glob(os.path.join(IPA_DIR, pattern))))
     files = sorted(set(files))
 
     if not folders and not files:
@@ -1233,37 +1239,32 @@ def _choose_variant(state, variants):
 
 
 def _find_signer_ipas(limit=40):
-    """IPAs already on this signer, newest first.
+    """IPAs the user dropped into ~/Documents/Custom IPAs, newest first.
 
-    Looks where a user can realistically put a file: the Files app's
-    a-Shell folder (~/Documents, a couple of levels deep), the BariSign
-    folder and the state folder. Skips anything tiny (not an IPA).
+    That folder (Files > On My iPhone/iPad > a-Shell > Custom IPAs) is the
+    only place custom IPAs are picked up from; BariSign's own signed and
+    downloaded IPAs live in the ipa/ folder inside BariSign instead.
     """
-    roots = []
-    repo_root = os.path.dirname(_HERE)
-    for root in (os.path.join(os.path.expanduser("~"), "Documents"),
-                 repo_root, STATE_DIR):
-        if os.path.isdir(root) and root not in roots:
-            roots.append(root)
+    try:
+        os.makedirs(CUSTOM_IPA_DIR, exist_ok=True)
+    except OSError:
+        pass
     found = []
-    for root in roots:
-        for dirpath, dirnames, filenames in os.walk(root):
-            if os.path.relpath(dirpath, root).count(os.sep) > 2:
-                dirnames[:] = []
+    for dirpath, dirnames, filenames in os.walk(CUSTOM_IPA_DIR):
+        if os.path.relpath(dirpath, CUSTOM_IPA_DIR).count(os.sep) > 1:
+            dirnames[:] = []
+            continue
+        for name in sorted(filenames):
+            if not name.lower().endswith(".ipa"):
                 continue
-            for name in sorted(filenames):
-                if not name.lower().endswith(".ipa"):
+            full = os.path.join(dirpath, name)
+            try:
+                if os.path.getsize(full) < 1024 * 1024 or not os.path.isfile(full):
                     continue
-                full = os.path.join(dirpath, name)
-                try:
-                    if os.path.getsize(full) < 1024 * 1024 or not os.path.isfile(full):
-                        continue
-                except OSError:
-                    continue
-                if full not in found:
-                    found.append(full)
-            if len(found) >= limit:
-                break
+            except OSError:
+                continue
+            if full not in found:
+                found.append(full)
         if len(found) >= limit:
             break
     try:
@@ -1282,6 +1283,8 @@ def _resolve_ipa_path(typed):
     if not typed:
         return ""
     candidates = [os.path.abspath(os.path.expanduser(typed)),
+                  os.path.join(CUSTOM_IPA_DIR, typed),
+                  os.path.join(CUSTOM_IPA_DIR, os.path.basename(typed)),
                   os.path.join(os.path.expanduser("~"), "Documents", typed)]
     for candidate in candidates:
         if os.path.isfile(candidate) and candidate.lower().endswith(".ipa"):
@@ -1300,20 +1303,17 @@ def _choose_custom_ipa(state):
     Apple ID has 10 App ID slots.
     """
     found = _find_signer_ipas()
+    print("  first put the .ipa in Files > On My iPhone/iPad >")
+    print("  a-Shell > Custom IPAs, then pick it below.")
     if found:
-        print("  IPAs on this signer (newest first):")
+        print("  IPAs in Custom IPAs (newest first):")
         for index, path in enumerate(found, 1):
             try:
                 size = os.path.getsize(path) / 1048576.0
             except OSError:
                 size = 0
-            print("  %d  %s  (%.1f MB)" % (index, _display_path(path), size))
+            print("  %d  %s  (%.1f MB)" % (index, os.path.basename(path), size))
         print("  or paste a path below.")
-    else:
-        print("  no IPA found on this signer yet.")
-        print("  save it with the Files app first:")
-        print("    Files > On My iPhone/iPad > a-Shell > paste it here,")
-        print("  then pick it below.")
     for _attempt in range(3):
         typed = _ask("  number or path (empty = back): ").strip()
         if not typed:
@@ -1382,7 +1382,7 @@ def _obtain_ipa(state, argv):
         variant = _choose_variant(state, variants)
         state = load_state()
 
-    folder = os.path.dirname(STATE_DIR)
+    folder = IPA_DIR
     try:
         info = download.resolve(variant)
     except download.DownloadError as exc:
@@ -1423,9 +1423,16 @@ def _sign_now(ipa, saved, argv, hint=True, make_zip=None):
     """Run the signer, then print the two closing lines."""
     if make_zip is None:
         make_zip = "--no-zip" not in argv
+    out = argv_get(argv, "--out")
+    if not out:
+        # Signed outputs live in ipa/ inside BariSign, not next to the input.
+        os.makedirs(IPA_DIR, exist_ok=True)
+        base = os.path.basename(ipa)
+        stem = base[:-4] if base.lower().endswith(".ipa") else base
+        out = os.path.join(IPA_DIR, stem + "-signed.ipa")
     try:
         result = signer.sign_ipa(ipa, saved["profile"], saved["key"], saved["cert"],
-                                 output_ipa=argv_get(argv, "--out") or None,
+                                 output_ipa=out,
                                  udid=saved.get("udid") or None,
                                  progress=_sign_progress,
                                  make_zip=make_zip,

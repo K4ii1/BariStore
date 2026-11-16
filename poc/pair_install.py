@@ -296,7 +296,8 @@ def find_ipa(explicit=None):
     if explicit:
         return explicit if os.path.isfile(explicit) else ""
     candidates = []
-    for pattern in (os.path.join(STATE_DIR, "*-signed.ipa"),
+    for pattern in (os.path.join(ROOT, "ipa", "*-signed.ipa"),
+                    os.path.join(STATE_DIR, "*-signed.ipa"),
                     os.path.join(ROOT, "*-signed.ipa")):
         candidates.extend(glob.glob(pattern))
     candidates = [path for path in candidates if os.path.isfile(path)]
