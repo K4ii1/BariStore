@@ -188,10 +188,38 @@ def ssl_context_for(host):
     return SSL_CTX
 
 
+def _getaddrinfo_bounded(host, port, timeout=8):
+    """getaddrinfo with a hard deadline (system DNS can stall under VPN)."""
+    box = {}
+
+    def _run():
+        try:
+            box["v4"] = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        except Exception:
+            box["v4"] = None
+        try:
+            box["v6"] = socket.getaddrinfo(host, port, socket.AF_INET6, socket.SOCK_STREAM)
+        except Exception:
+            box["v6"] = None
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(max(1.0, float(timeout)))
+    v4 = box.get("v4")
+    v6 = box.get("v6")
+    if v4 and v6:
+        return v4 + v6
+    if v4:
+        return v4
+    if v6:
+        return v6
+    raise socket.gaierror("DNS lookup timed out for %s" % host)
+
+
 def _connect_preferred_ipv4(host, port, timeout):
     """Connect TCP socket preferring IPv4 first (avoids IPv6 blackholes on iOS/LocalDevVPN)."""
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        infos = _getaddrinfo_bounded(host, port)
     except Exception as exc:
         raise AppleAuthError("DNS lookup failed for %s: %s" % (host, exc))
     if not infos:
@@ -801,6 +829,25 @@ def _fast_ordered_anisette(preferred=""):
         return candidates
 
 
+_PROVISIONING_ERROR_MARKERS = (
+    "anisette",
+    "provisioning",
+    "adi_pb",
+    "-45061",
+    "-45062",
+    "mint headers",
+    "refused to mint",
+    "not a valid anisette",
+    "provisioning socket",
+)
+
+
+def _is_provisioning_error(message):
+    """Only these errors mean the provisioned machine identity is actually bad."""
+    low = str(message or "").lower()
+    return any(marker in low for marker in _PROVISIONING_ERROR_MARKERS)
+
+
 def connect_anisette(preferred_url="", state_path=None):
     """Connect and provision an Anisette server, with automatic failover."""
     state_path = state_path or storage.ANISETTE_STATE_FILE
@@ -817,8 +864,11 @@ def connect_anisette(preferred_url="", state_path=None):
                 anisette.provision(gs)
             try:
                 anisette.headers()
-            except AppleAuthError:
-                if anisette.version != 3 or not anisette.adi_pb:
+            except AppleAuthError as exc:
+                # Only rotate the machine when the identity itself is rejected.
+                # A network blip must NOT burn the machine the saved session was
+                # issued for — that is what made tokens look "expired" forever.
+                if not _is_provisioning_error(exc):
                     raise
                 anisette.forget_provisioning()
                 set_login_step("Re-provisioning Anisette (%s)…" % host)
@@ -1083,31 +1133,53 @@ class DeveloperSession:
         return response
 
 
+_LAST_SESSION_ERROR = ""
+
+
+def get_last_session_error():
+    return _LAST_SESSION_ERROR
+
+
 def get_saved_session():
-    """Return a validated DeveloperSession from saved state, or None if expired/missing."""
+    """Return a validated DeveloperSession from saved state, or None if expired/missing.
+
+    A single transient portal/network failure is retried with a freshly minted
+    set of Anisette headers *on the same machine identity*. Only a real auth
+    rejection is treated as an expired session.
+    """
+    global _LAST_SESSION_ERROR
+    _LAST_SESSION_ERROR = ""
     state = storage.load_state()
     email = (state.get("email") or "").strip()
     saved = state.get("gs_token") or {}
     if not email or not isinstance(saved, dict):
+        _LAST_SESSION_ERROR = "No Apple ID is saved on this device."
         return None
     if (saved.get("email") or "").lower() != email.lower():
+        _LAST_SESSION_ERROR = "The saved Apple ID does not match the current account."
         return None
     token = saved.get("token") or ""
     adsid = saved.get("adsid") or ""
     if not token or not adsid:
+        _LAST_SESSION_ERROR = "No developer token is saved — sign in again."
         return None
-    try:
-        anisette, gs = connect_anisette()
-        session = DeveloperSession(AppleAccount(email, gs, anisette), token, adsid)
-        teams = session.call("listTeams", key="teams", device_type="")
-        if teams and not state.get("team_id"):
-            storage.update_state(
-                team_id=teams[0].get("teamId", ""),
-                team_name=teams[0].get("name", ""),
-            )
-        return session
-    except Exception:
-        return None
+    for attempt in range(2):
+        try:
+            anisette, gs = connect_anisette()
+            session = DeveloperSession(AppleAccount(email, gs, anisette), token, adsid)
+            teams = session.call("listTeams", key="teams", device_type="")
+            if teams and not state.get("team_id"):
+                storage.update_state(
+                    team_id=teams[0].get("teamId", ""),
+                    team_name=teams[0].get("name", ""),
+                )
+            return session
+        except Exception as exc:
+            _LAST_SESSION_ERROR = str(exc)
+            if attempt == 0:
+                time.sleep(1)
+                continue
+    return None
 
 
 _PENDING_LOGINS = {}
@@ -1171,7 +1243,9 @@ def start_apple_login(email, password, preferred_anisette=""):
                 try:
                     set_login_step("(%d/%d) Minting Anisette headers from %s…" % (idx, len(candidates), host))
                     anisette.headers()
-                except AppleAuthError:
+                except AppleAuthError as exc:
+                    if not _is_provisioning_error(exc):
+                        raise
                     anisette.forget_provisioning()
                     set_login_step("(%d/%d) Re-provisioning Anisette on %s…" % (idx, len(candidates), host))
                     anisette.provision(gs)
@@ -1209,10 +1283,11 @@ def start_apple_login(email, password, preferred_anisette=""):
                 if _is_fatal_credential_error(msg):
                     raise AppleAuthError(msg)
                 tried.append("%s: %s" % (host, msg))
-                try:
-                    anisette.forget_provisioning()
-                except Exception:
-                    pass
+                if _is_provisioning_error(msg):
+                    try:
+                        anisette.forget_provisioning()
+                    except Exception:
+                        pass
                 continue
 
         raise AppleAuthError(
@@ -1582,16 +1657,21 @@ def provision_for_signing(
     team_id="",
     revoke_serial=None,
     reuse_full_bundle_id="",
+    progress=None,
 ):
     """Register device, obtain key+cert, register App ID (+ group), and download profile."""
+    report = progress or (lambda _msg: None)
     if not team_id:
+        report("Reading Apple Developer teams…")
         teams = session.call("listTeams", key="teams", device_type="") or []
         if not teams:
             raise AppleAuthError("No developer team found on this Apple ID.")
         team_id = teams[0]["teamId"]
 
+    report("Registering device with Apple…")
     ensure_device(session, team_id, udid, "BariStore Device")
     key_path = ensure_private_key(email)
+    report("Preparing development certificate…")
     cert_path, cert_reused = obtain_certificate(
         session, team_id, key_path, storage.STATE_DIR, revoke_serial=revoke_serial
     )
@@ -1606,11 +1686,14 @@ def provision_for_signing(
             else (base_bundle_id + suffix)
         )
 
+    report("Registering App ID %s…" % full_bundle_id)
     app_id = ensure_app_id(session, team_id, full_bundle_id, app_name)
     group_id = group_identifier_for(team_id, full_bundle_id, base_bundle_id)
     if group_id:
+        report("Configuring App Group…")
         ensure_app_group(session, team_id, app_id, group_id, app_name)
 
+    report("Downloading provisioning profile…")
     profile_bytes = download_profile(session, team_id, app_id)
     profile_path = os.path.join(
         storage.STATE_DIR, "profile-%s.mobileprovision" % full_bundle_id

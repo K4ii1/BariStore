@@ -18,6 +18,7 @@
 import asyncio
 import socket
 import struct
+import sys
 
 from . import pairing
 
@@ -82,7 +83,7 @@ def build_announcement(identity, port, ipv4, name="BariStore", ttl=120):
 
 
 def wifi_ipv4():
-    """Determine the primary local IPv4 address, falling back to 10.7.0.1."""
+    """Route-based best guess (may be the VPN tunnel address — use lan_ipv4 for the A record)."""
     for target in (("8.8.8.8", 80), ("1.1.1.1", 80), ("10.7.0.1", 49152)):
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -95,6 +96,68 @@ def wifi_ipv4():
         finally:
             probe.close()
     return LOOPBACK_VPN
+
+
+_VPN_PREFIXES = (
+    "utun", "ipsec", "stf", "gif", "lo", "awdl", "llw", "pktap",
+    "anpi", "bridge", "tap", "docker", "veth", "virbr", "feth",
+)
+_VIRTUAL_IPS = ("127.", "0.", "169.254.", "10.7.0.")
+
+
+def interface_ips():
+    """Return {interface_name: ipv4} for all local interfaces."""
+    found = {}
+    try:
+        import fcntl
+        is_apple = sys.platform == "darwin"
+        SIOCGIFADDR = 0xC0206911 if is_apple else 0x8915
+        ifreq_size = 32 if is_apple else 40
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            names = [name for _idx, name in socket.if_nameindex()]
+        except Exception:
+            names = []
+        for name in names:
+            try:
+                raw = fcntl.ioctl(
+                    probe.fileno(),
+                    SIOCGIFADDR,
+                    struct.pack("16s", name.encode()[:15]) + b"\0" * (ifreq_size - 16),
+                )
+                ip = socket.inet_ntoa(raw[20:24])
+                if ip and not ip.startswith(_VIRTUAL_IPS):
+                    found[name] = ip
+            except Exception:
+                pass
+        probe.close()
+    except Exception:
+        pass
+    return found
+
+
+def lan_ipv4():
+    """Pick a real LAN address (Wi-Fi/cellular), NEVER a VPN utun address.
+
+    The mDNS A record must point at an address the iOS device can reach on the
+    local network. If it points into the LocalDevVPN tunnel, Settings connects
+    into the tunnel and the PIN prompt hangs forever.
+    """
+    ips = interface_ips()
+    if ips:
+        for name in sorted(ips):
+            if name.startswith("en") or name.startswith("eth"):
+                return ips[name]
+        for name in sorted(ips):
+            if not name.startswith(_VPN_PREFIXES):
+                return ips[name]
+        for name in sorted(ips):
+            return ips[name]
+    guess = wifi_ipv4()
+    # Reject tunnel/loopback guesses; fall back to a documented placeholder.
+    if guess.startswith(_VIRTUAL_IPS) or guess.startswith("10."):
+        return LOOPBACK_VPN
+    return guess
 
 
 def subnet_broadcast(ipv4):
@@ -119,7 +182,8 @@ class Advertiser:
         self.identity = identity
         self.port = int(port)
         self.name = name
-        self.ipv4 = wifi_ipv4()
+        self.ipv4 = lan_ipv4()
+        self.extra_ips = [ip for ip in interface_ips().values() if ip != self.ipv4]
         self.sock = None
         self.bound = False
         self.packets = []
@@ -171,7 +235,7 @@ class Advertiser:
         sub_bcast = subnet_broadcast(primary_ip)
         if sub_bcast:
             candidates.append(((sub_bcast, 5353), "broadcast"))
-        for u_ip in {primary_ip, LOOPBACK_VPN, LOOPBACK_LOCAL}:
+        for u_ip in {primary_ip, LOOPBACK_VPN, LOOPBACK_LOCAL} | set(self.extra_ips):
             if u_ip:
                 candidates.append(((u_ip, 5353), "unicast"))
 
