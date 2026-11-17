@@ -34,7 +34,7 @@
       "repo": "LiveContainer/LiveContainer",
       "asset_pattern": "LiveContainer+SideStore.ipa",
       "bundle_id": "com.kdt.livecontainer",
-      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/Resources/DefaultIcon.png",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
       "tint_color": "#0A84FF",
       "description": "Combined LiveContainer + built-in SideStore in a single app slot. Run multiple iOS apps inside LiveContainer without using extra free-account app slots."
     },
@@ -46,7 +46,7 @@
       "repo": "LiveContainer/LiveContainer",
       "asset_pattern": "LiveContainer+SideStore.ipa",
       "bundle_id": "com.kdt.livecontainer",
-      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/Resources/DefaultIcon.png",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
       "tint_color": "#0066CC",
       "warning": "Nightly pre-release build; recommended for latest iOS compatibility.",
       "description": "Latest nightly build of LiveContainer with built-in SideStore and automatic pairing file placement."
@@ -59,7 +59,7 @@
       "repo": "LiveContainer/LiveContainer",
       "asset_pattern": "LiveContainer.ipa",
       "bundle_id": "com.kdt.livecontainer",
-      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/Resources/DefaultIcon.png",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
       "tint_color": "#30B0C7",
       "description": "Standalone LiveContainer app launcher that runs iOS apps inside a single container without installing them individually."
     },
@@ -71,7 +71,7 @@
       "repo": "LiveContainer/LiveContainer",
       "asset_pattern": "LiveContainer.ipa",
       "bundle_id": "com.kdt.livecontainer",
-      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/Resources/DefaultIcon.png",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
       "tint_color": "#1E88E5",
       "warning": "Nightly pre-release build.",
       "description": "Rolling nightly standalone LiveContainer build from the official GitHub Actions pipeline."

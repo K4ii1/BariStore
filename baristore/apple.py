@@ -49,9 +49,6 @@ GSA_URL_BAG = "https://gsa.apple.com/grandslam/GsService2/lookup"
 DEV_HOST = "developerservices2.apple.com"
 DEV_CLIENT_ID = "XABBG36SBA"
 DEV_PROTOCOL = "QH65B2"
-# Matches what actively-maintained clients (isideload/AltSign, late-2026) send.
-# An old value here can make Apple answer 2FA validation with a bare (-1).
-XCODE_VERSION = "27.0 (27A5218g)"
 
 GSA_CLIENT_INFO = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 GSA_MAC_CLIENT_INFO = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
@@ -191,49 +188,10 @@ def ssl_context_for(host):
     return SSL_CTX
 
 
-def _getaddrinfo_bounded(host, port, timeout=8):
-    """getaddrinfo with a hard timeout (system DNS can stall under LocalDevVPN).
-
-    Queries IPv4 and IPv6 in parallel and prefers IPv4 results; falls back to
-    IPv6 when only AAAA records resolve. Raises the lookup error on failure.
-    """
-    outcomes = {}
-
-    def _query(family):
-        try:
-            outcomes[family] = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
-        except Exception as exc:
-            outcomes[family] = exc
-
-    workers = []
-    for family in (socket.AF_INET, socket.AF_INET6):
-        worker = threading.Thread(target=_query, args=(family,), daemon=True)
-        worker.start()
-        workers.append(worker)
-    deadline = time.time() + max(1.0, float(timeout))
-    for worker in workers:
-        remaining = deadline - time.time()
-        if remaining <= 0:
-            break
-        worker.join(remaining)
-
-    for family in (socket.AF_INET, socket.AF_INET6):
-        result = outcomes.get(family)
-        if isinstance(result, list) and result:
-            others = outcomes.get(
-                socket.AF_INET6 if family == socket.AF_INET else socket.AF_INET
-            )
-            if isinstance(others, list) and others:
-                return result + others
-            return result
-    errors = [v for v in outcomes.values() if isinstance(v, Exception)]
-    raise errors[0] if errors else socket.gaierror("DNS lookup timed out for %s" % host)
-
-
 def _connect_preferred_ipv4(host, port, timeout):
     """Connect TCP socket preferring IPv4 first (avoids IPv6 blackholes on iOS/LocalDevVPN)."""
     try:
-        infos = _getaddrinfo_bounded(host, port)
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except Exception as exc:
         raise AppleAuthError("DNS lookup failed for %s: %s" % (host, exc))
     if not infos:
@@ -739,7 +697,7 @@ class GrandSlam:
             headers["Accept"] = "text/x-xml-plist"
         headers["X-Mme-Client-Info"] = self.anisette.client_info
         headers["User-Agent"] = self.anisette.user_agent
-        headers["X-Xcode-Version"] = XCODE_VERSION
+        headers["X-Xcode-Version"] = "14.2 (14C18)"
         headers["X-Apple-App-Info"] = "com.apple.gs.xcode.auth"
         return headers
 
@@ -823,14 +781,7 @@ def _fast_ordered_anisette(preferred=""):
         try:
             st, _, body = http_request("GET", url + "/v3/client_info", timeout=4)
             if st == 200 and b"client_info" in (body or b""):
-                if idx == 0 and preferred:
-                    return (0, time.time() - t0, url)
-                # Apple no longer honors the Xcode 11.2 client identity
-                # (com.apple.dt.Xcode/3594.4.19) for 2FA (2FA loop / -1).
-                # Keep such servers as last resort, prefer akd-based ones.
-                if b"3594.4.19" in (body or b"") or b"dt.Xcode" in (body or b""):
-                    return (2, time.time() - t0, url)
-                return (1, time.time() - t0, url)
+                return (0 if idx == 0 and preferred else 1, time.time() - t0, url)
         except Exception:
             pass
         try:
@@ -839,7 +790,7 @@ def _fast_ordered_anisette(preferred=""):
                 return (0 if idx == 0 and preferred else 1, time.time() - t0, url)
         except Exception:
             pass
-        return (3, 999.0 + idx, url)
+        return (2, 999.0 + idx, url)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates)) as pool:
@@ -1148,12 +1099,7 @@ def get_saved_session():
     try:
         anisette, gs = connect_anisette()
         session = DeveloperSession(AppleAccount(email, gs, anisette), token, adsid)
-        try:
-            teams = session.call("listTeams", key="teams", device_type="")
-        except Exception:
-            # Transient network blip? One immediate retry before declaring expiry.
-            time.sleep(1)
-            teams = session.call("listTeams", key="teams", device_type="")
+        teams = session.call("listTeams", key="teams", device_type="")
         if teams and not state.get("team_id"):
             storage.update_state(
                 team_id=teams[0].get("teamId", ""),
@@ -1165,25 +1111,6 @@ def get_saved_session():
 
 
 _PENDING_LOGINS = {}
-
-
-_PROVISIONING_ERROR_MARKERS = (
-    "anisette",
-    "provisioning",
-    "adi_pb",
-    "-45061",
-    "-45062",
-    "mint headers",
-    "refused to mint",
-    "not a valid anisette",
-    "provisioning socket",
-    "routing",
-)
-
-
-def _is_provisioning_error(msg):
-    low = str(msg or "").lower()
-    return any(marker in low for marker in _PROVISIONING_ERROR_MARKERS)
 
 
 _FATAL_AUTH_ERROR_CODES = (
@@ -1264,7 +1191,6 @@ def start_apple_login(email, password, preferred_anisette=""):
                     "account": account,
                     "password": password,
                     "mode": step,
-                    "host": host,
                     "created_at": time.time(),
                 }
                 return {
@@ -1283,14 +1209,10 @@ def start_apple_login(email, password, preferred_anisette=""):
                 if _is_fatal_credential_error(msg):
                     raise AppleAuthError(msg)
                 tried.append("%s: %s" % (host, msg))
-                # Only discard the provisioned machine identity when the error
-                # actually points at provisioning. Wiping it on transient errors
-                # burns the machine the saved session token was issued for.
-                if _is_provisioning_error(msg):
-                    try:
-                        anisette.forget_provisioning()
-                    except Exception:
-                        pass
+                try:
+                    anisette.forget_provisioning()
+                except Exception:
+                    pass
                 continue
 
         raise AppleAuthError(
@@ -1301,47 +1223,6 @@ def start_apple_login(email, password, preferred_anisette=""):
         set_login_step("")
 
 
-def _is_wrong_code_error(exc):
-    """True when Apple says the code itself is wrong (user must enter a new code)."""
-    low = str(exc).lower()
-    return (
-        "-21669" in low
-        or "incorrect verification" in low
-        or "invalid verification" in low
-    )
-
-
-_RETRYABLE_2FA_MARKERS = (
-    "(-1)",
-    "-434",
-    "-80045",
-    "-80046",
-    "503",
-    "service unavailable",
-    "out of sync",
-    "connection",
-    "timeout",
-    "timed out",
-)
-
-
-def _is_retryable_2fa_error(exc):
-    if _is_wrong_code_error(exc):
-        return False
-    low = str(exc).lower()
-    return any(marker in low for marker in _RETRYABLE_2FA_MARKERS)
-
-
-def _refresh_anisette_once(account):
-    """Mint fresh one-time Anisette headers on the same machine identity (single resync)."""
-    try:
-        account.anisette.headers()
-    except AppleAuthError:
-        account.anisette.forget_provisioning()
-        account.anisette.provision(account.gs)
-        account.anisette.headers()
-
-
 def verify_apple_2fa(login_id, code):
     """Complete 2FA verification for a pending Apple login."""
     pending = _PENDING_LOGINS.get(login_id)
@@ -1350,33 +1231,9 @@ def verify_apple_2fa(login_id, code):
     account = pending["account"]
     password = pending["password"]
     mode = pending["mode"]
-    host = pending.get("host") or "anisette server"
 
-    try:
-        account.submit_2fa_code(mode, code)
-    except AppleAuthError as exc:
-        if not _is_retryable_2fa_error(exc):
-            raise
-        # Server-side/anisette-sync failure (e.g. -1): resync once on the SAME
-        # machine identity and retry the same code once. Wrong codes are NOT retried.
-        try:
-            _refresh_anisette_once(account)
-            account.submit_2fa_code(mode, code)
-        except AppleAuthError as exc2:
-            if _is_wrong_code_error(exc2):
-                raise exc2
-            raise AppleAuthError(
-                "%s (via %s). If this persists, request a new code and try once more."
-                % (exc2, host)
-            )
-
-    try:
-        step = account.login_step(password)
-    except AppleAuthError as exc:
-        if not _is_retryable_2fa_error(exc):
-            raise
-        _refresh_anisette_once(account)
-        step = account.login_step(password)
+    account.submit_2fa_code(mode, code)
+    step = account.login_step(password)
     if step != "ok" and not account._pet():
         raise AppleAuthError("Sign-in did not complete after 2FA (%s)." % step)
     _PENDING_LOGINS.pop(login_id, None)
@@ -1725,21 +1582,16 @@ def provision_for_signing(
     team_id="",
     revoke_serial=None,
     reuse_full_bundle_id="",
-    progress=None,
 ):
     """Register device, obtain key+cert, register App ID (+ group), and download profile."""
-    _report = progress or (lambda _msg: None)
     if not team_id:
-        _report("Reading Apple Developer teams…")
         teams = session.call("listTeams", key="teams", device_type="") or []
         if not teams:
             raise AppleAuthError("No developer team found on this Apple ID.")
         team_id = teams[0]["teamId"]
 
-    _report("Registering device with Apple Developer Portal…")
     ensure_device(session, team_id, udid, "BariStore Device")
     key_path = ensure_private_key(email)
-    _report("Preparing development certificate…")
     cert_path, cert_reused = obtain_certificate(
         session, team_id, key_path, storage.STATE_DIR, revoke_serial=revoke_serial
     )
@@ -1754,14 +1606,11 @@ def provision_for_signing(
             else (base_bundle_id + suffix)
         )
 
-    _report("Registering App ID %s…" % full_bundle_id)
     app_id = ensure_app_id(session, team_id, full_bundle_id, app_name)
     group_id = group_identifier_for(team_id, full_bundle_id, base_bundle_id)
     if group_id:
-        _report("Configuring App Group…")
         ensure_app_group(session, team_id, app_id, group_id, app_name)
 
-    _report("Downloading provisioning profile…")
     profile_bytes = download_profile(session, team_id, app_id)
     profile_path = os.path.join(
         storage.STATE_DIR, "profile-%s.mobileprovision" % full_bundle_id

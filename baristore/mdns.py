@@ -97,62 +97,6 @@ def wifi_ipv4():
     return LOOPBACK_VPN
 
 
-def lan_ipv4():
-    """Best local IPv4 for the mDNS A record: real LAN (Wi-Fi/cellular), never VPN.
-
-    Same-device pairing requires the advertised address to route back to this
-    device. A utun (VPN tunnel) address would send iOS Settings into the tunnel
-    where nothing listens, hanging the PIN prompt. Enumerate interfaces via
-    SIOCGIFCONF and prefer en* (Wi-Fi), then other physical interfaces, using
-    the route-based guess only as a last resort.
-    """
-    found = {}
-    try:
-        import array as _array
-        import fcntl as _fcntl
-
-        is64 = struct.calcsize("P") == 8
-        SIOCGIFCONF = 0xC00C6924 if is64 else 0xC0086924
-        buf = _array.array("B", b"\0" * 8192)
-        addr, blen = buf.buffer_info()
-        # struct ifconf { int len; caddr_t buf; } — 4-byte pad on 64-bit.
-        req = struct.pack("i", blen)
-        if is64:
-            req += b"\0\0\0\0"
-        req += struct.pack("P", addr)
-        raw = _fcntl.ioctl(
-            socket.socket(socket.AF_INET, socket.SOCK_DGRAM).fileno(),
-            SIOCGIFCONF,
-            req,
-        )
-        out_len = struct.unpack("i", raw[:4])[0]
-        data = buf.tobytes()[:out_len]
-        stride = 32
-        for offset in range(0, len(data) - stride + 1, stride):
-            chunk = data[offset:offset + stride]
-            name = chunk[:16].split(b"\0", 1)[0].decode("utf-8", "replace")
-            family = chunk[17] if len(chunk) > 17 else 0
-            if family != socket.AF_INET:
-                continue
-            ip = socket.inet_ntoa(chunk[20:24])
-            if not ip or ip.startswith(("127.", "0.", "169.254.")):
-                continue
-            found.setdefault(name, ip)
-    except Exception:
-        pass
-    if found:
-        for name in sorted(found):
-            if name.startswith("en"):
-                return found[name]
-        for name in sorted(found):
-            if not name.startswith(("utun", "ipsec", "stf", "gif", "lo", "awdl", "llw", "pktap", "anpi", "xhc", "bridge")):
-                return found[name]
-        for name in sorted(found):
-            if not name.startswith("lo"):
-                return found[name]
-    return wifi_ipv4()
-
-
 def subnet_broadcast(ipv4):
     parts = (ipv4 or "").split(".")
     if len(parts) != 4:
@@ -175,7 +119,7 @@ class Advertiser:
         self.identity = identity
         self.port = int(port)
         self.name = name
-        self.ipv4 = lan_ipv4()
+        self.ipv4 = wifi_ipv4()
         self.sock = None
         self.bound = False
         self.packets = []

@@ -1379,7 +1379,7 @@ def strip_ungranted_app_groups(app_dir, config, bundle_id=""):
         )
 
 
-def sign_bundle(bundle_dir, config, is_top=False, progress=None):
+def sign_bundle(bundle_dir, config, is_top=False):
     name = os.path.basename(bundle_dir)
     if name.endswith(".app"):
         kind = "app"
@@ -1401,7 +1401,7 @@ def sign_bundle(bundle_dir, config, is_top=False, progress=None):
 
     nested = _nested_bundles(bundle_dir)
     for child in nested:
-        sign_bundle(child, config, False, progress=progress)
+        sign_bundle(child, config, False)
 
     _sign_loose_binaries(bundle_dir, nested, executable_name, config)
 
@@ -1411,8 +1411,6 @@ def sign_bundle(bundle_dir, config, is_top=False, progress=None):
             handle.write(config["profile_bytes"])
         os.chmod(profile_path, 0o644)
 
-    if progress is not None:
-        progress(name)
     resources = build_code_resources(bundle_dir, executable_name)
     signature_dir = os.path.join(bundle_dir, "_CodeSignature")
     os.makedirs(signature_dir, exist_ok=True)
@@ -1458,13 +1456,12 @@ def _safe_path(root, name):
     return target
 
 
-def extract_ipa(ipa_path, work_dir, progress=None):
+def extract_ipa(ipa_path, work_dir):
     try:
         archive = zipfile.ZipFile(ipa_path)
     except (OSError, zipfile.BadZipFile) as exc:
         raise SigningError("cannot open the IPA: %s" % (exc,))
     with archive:
-        count = 0
         for item in archive.infolist():
             name = item.filename
             if not name or name.endswith("/"):
@@ -1502,9 +1499,6 @@ def extract_ipa(ipa_path, work_dir, progress=None):
                     os.chmod(target, mode & 0o7777)
                 except OSError:
                     pass
-            count += 1
-            if progress is not None and count % 400 == 0:
-                progress("Extracting IPA package (%d files)…" % count)
 
 
 def find_payload_app(work_dir):
@@ -1523,13 +1517,12 @@ def find_payload_app(work_dir):
     return os.path.join(payload, apps[0])
 
 
-def write_ipa(work_dir, output_path, progress=None):
+def write_ipa(work_dir, output_path):
     temporary = output_path + ".part"
     try:
         with zipfile.ZipFile(
             temporary, "w", zipfile.ZIP_DEFLATED, allowZip64=True
         ) as archive:
-            packed = 0
             for dirpath, dirnames, filenames in os.walk(work_dir):
                 dirnames.sort()
                 relative_dir = os.path.relpath(dirpath, work_dir).replace(os.sep, "/")
@@ -1559,11 +1552,8 @@ def write_ipa(work_dir, output_path, progress=None):
                     info.compress_type = zipfile.ZIP_DEFLATED
                     with open(absolute, "rb") as handle:
                         archive.writestr(info, handle.read())
-                    packed += 1
-                    if progress is not None and packed % 100 == 0:
-                        progress("Packing signed IPA (%d files)…" % packed)
         os.replace(temporary, output_path)
-    except BaseException:
+    except Exception:
         try:
             os.remove(temporary)
         except OSError:
@@ -1661,11 +1651,7 @@ def sign_ipa(
     config["work_dir"] = work_dir
     try:
         progress("Extracting IPA package…")
-        extract_ipa(
-            ipa_path,
-            work_dir,
-            progress=lambda msg: progress(msg),
-        )
+        extract_ipa(ipa_path, work_dir)
         app_dir = find_payload_app(work_dir)
 
         plugins_dir = os.path.join(app_dir, "PlugIns")
@@ -1697,19 +1683,10 @@ def sign_ipa(
         config["bundle_id"] = target_id
 
         progress("Signing Mach-O binaries & frameworks…")
-        sign_bundle(
-            app_dir,
-            config,
-            True,
-            progress=lambda name: progress("Signing %s…" % name),
-        )
+        sign_bundle(app_dir, config, True)
 
         progress("Packing signed IPA…")
-        write_ipa(
-            work_dir,
-            output_ipa,
-            progress=lambda msg: progress(msg),
-        )
+        write_ipa(work_dir, output_ipa)
 
         progress("Signing complete.")
         return {

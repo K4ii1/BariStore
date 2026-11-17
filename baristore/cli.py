@@ -22,18 +22,12 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in ("update", "--update"):
         print("BariStore %s — checking for updates…" % VERSION)
-
-        def _progress(pct, msg):
-            pct = max(0, min(100, int(pct)))
-            sys.stdout.write("\r  %-28s %3d%%" % (msg, pct))
-            sys.stdout.flush()
-
         try:
-            msg = webui.run_self_update(progress=_progress)
-            sys.stdout.write("\n  %s\n" % msg)
+            msg = webui.run_self_update()
+            print("  " + msg)
             return 0
         except Exception as exc:
-            sys.stdout.write("\n  ! Update failed: %s\n" % exc)
+            print("  ! Update failed: %s" % exc)
             return 1
     if argv and argv[0] in ("--version", "-v", "version"):
         print("BariStore %s" % VERSION)

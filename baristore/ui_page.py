@@ -326,7 +326,7 @@ input:focus, select:focus { border-color: var(--accent); }
       </div>
       <div id="optDeviceDetails" style="margin:0.6rem 0"></div>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-        <button class="secondary" onclick="exportPairingFile()">Export Pairing File</button>
+        <a class="btn secondary" href="/__TOKEN__/api/pair/export" download="ALTPairingFile.mobiledevicepairing">Export Pairing File</a>
         <button class="secondary" onclick="triggerPairingImport()">Import Pairing File</button>
         <button class="secondary" onclick="startPairing(true)">Re-Pair Device</button>
       </div>
@@ -361,7 +361,6 @@ input:focus, select:focus { border-color: var(--accent); }
         <button class="secondary" onclick="checkUpdates()">Check for Updates</button>
         <button class="secondary" onclick="clearCache()">Clear IPA Cache</button>
         <button class="secondary" onclick="openSetupWizard()">Run Setup Wizard</button>
-        <button class="secondary" onclick="restartBariStore()">Restart BariStore</button>
         <button class="secondary" onclick="quitServer()">Quit BariStore</button>
       </div>
       <button class="danger full" style="margin-top:0.5rem" onclick="resetBariStore()">Reset BariStore</button>
@@ -524,35 +523,20 @@ async function startPiPPin() {
   drawPiPFrame(pin);
   const canvas = document.getElementById("pipCanvas");
   const video = document.getElementById("pipVideo");
-  const canStdPiP = !!document.pictureInPictureEnabled && !!video.requestPictureInPicture;
-  let canWebkitPiP = false;
-  try {
-    canWebkitPiP = typeof video.webkitSetPresentationMode === "function"
-      && video.webkitSupportsPresentationMode
-      && video.webkitSupportsPresentationMode("picture-in-picture");
-  } catch (e) {}
-  if (!canStdPiP && !canWebkitPiP) {
-    await showAlert("PiP is not available here. Keep this PIN ready: " + pin + OPEN_SETTINGS_MSG);
-    return;
-  }
   try {
     if (!video.srcObject && canvas.captureStream) {
       video.srcObject = canvas.captureStream(5);
     }
-    // NOTE: do NOT play() before PiP — on iOS play() alone can force fullscreen.
-    if (canStdPiP) {
+    await video.play();
+    if (video.requestPictureInPicture) {
       await video.requestPictureInPicture();
-    } else {
+    } else if (video.webkitSetPresentationMode) {
       video.webkitSetPresentationMode("picture-in-picture");
     }
-    try { await video.play(); } catch (e) {}
   } catch (e) {
-    try { await video.pause(); } catch (_) {}
-    await showAlert("Keep this PIN ready: " + pin + OPEN_SETTINGS_MSG);
+    alert("Keep this PIN ready: " + pin + "\\nOpen Settings > Developer > Paired Macs > BariStore.");
   }
 }
-
-const OPEN_SETTINGS_MSG = "\\nOpen Settings > Developer > Paired Macs > BariStore.";
 
 /* --- Modal Helpers --- */
 function openModal(html) {
@@ -561,43 +545,6 @@ function openModal(html) {
 }
 function closeModal() {
   document.getElementById("modalBackdrop").classList.remove("open");
-  // A backdrop-tap during a promise dialog counts as dismissal (false).
-  if (window.__dialogResolve) {
-    const r = window.__dialogResolve;
-    window.__dialogResolve = null;
-    r(false);
-  }
-}
-/* In-app dialogs (a-Shell's internal browser only offers Cancel on native
-   alert/confirm, so BariStore never uses them). */
-function resolveDialog(val) {
-  const r = window.__dialogResolve || null;
-  window.__dialogResolve = null;
-  document.getElementById("modalBackdrop").classList.remove("open");
-  if (r) r(val);
-}
-function showAlert(msg) {
-  return new Promise(res => {
-    window.__dialogResolve = res;
-    openModal(`
-      <h3>BariStore</h3>
-      <p class="sub" style="margin:0.5rem 0 0.9rem;font-size:0.92rem;color:var(--text)">${esc(msg)}</p>
-      <button class="full" onclick="resolveDialog(true)">OK</button>
-    `);
-  });
-}
-function showConfirm(msg) {
-  return new Promise(res => {
-    window.__dialogResolve = res;
-    openModal(`
-      <h3>Confirm</h3>
-      <p class="sub" style="margin:0.5rem 0 0.9rem;font-size:0.92rem;color:var(--text)">${esc(msg)}</p>
-      <div style="display:flex;gap:0.5rem">
-        <button class="full" onclick="resolveDialog(true)">Continue</button>
-        <button class="secondary" onclick="resolveDialog(false)">Cancel</button>
-      </div>
-    `);
-  });
 }
 
 /* --- Theme --- */
@@ -706,12 +653,8 @@ async function enterOnboarding() {
 
 async function openSetupWizard() {
   APP.onboarding_complete = false;
-  try {
-    await apiPost("/api/onboarding/reset", {});
-    await enterOnboarding();
-  } catch (e) {
-    await showAlert("Setup wizard failed to load: " + (e.message || e));
-  }
+  await apiPost("/api/onboarding/reset", {});
+  enterOnboarding();
 }
 
 function renderOnboardingStep() {
@@ -732,26 +675,12 @@ function renderOnboardingStep() {
   } else if (APP.obStep === 2) {
     box.innerHTML = `
       <h3 style="margin:0 0 0.35rem">Step 2: Pair This iPhone</h3>
-      <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b>. BariStore instantly generates a 6-digit PIN and keeps advertising while you switch apps. Then open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>). If BariStore is not listed, come back here once and go to Settings again so the list refreshes. Tap <b>BariStore</b> and type the PIN into the <b>Settings pop-up</b> (not here). Then return here — setup continues automatically.</p>
-      <div id="obPinWrap" class="hidden">
-        <div class="pin-box" id="obPin">------</div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.65rem">
-          <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
-        </div>
-        <div id="obPairStatus" class="sub" style="margin-bottom:0.65rem;color:var(--accent);font-weight:600"></div>
-      </div>
+      <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b> below. BariStore will immediately display a 6-digit PIN and keep a-Shell active in the background while you open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>) and tap <b>BariStore</b>.</p>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
         <button class="full" onclick="startPairing(false)">Start Pairing</button>
         <button class="secondary full" onclick="triggerPairingImport()">Import Existing Pairing File</button>
       </div>
     `;
-    if (APP.job && APP.job.pin) {
-      box.querySelector("#obPinWrap")?.classList.remove("hidden");
-      const obPin = box.querySelector("#obPin");
-      if (obPin) obPin.textContent = APP.job.pin;
-      const obSt = box.querySelector("#obPairStatus");
-      if (obSt && APP.job.step) obSt.textContent = APP.job.step;
-    }
   } else if (APP.obStep === 3) {
     box.innerHTML = `
       <h3 style="margin:0 0 0.35rem">Step 3: Enable Developer Mode</h3>
@@ -782,7 +711,7 @@ async function checkObVpn() {
   const res = await apiGet("/api/check-env?tunnel=1");
   APP.env = res.env || {};
   if (!APP.env.vpn_connected) {
-    await showAlert("LocalDevVPN is not responding on 10.7.0.1 yet. Make sure LocalDevVPN is connected.");
+    alert("LocalDevVPN is not responding on 10.7.0.1 yet. Make sure LocalDevVPN is connected.");
     return;
   }
   if (!APP.env.paired) APP.obStep = 2;
@@ -965,10 +894,9 @@ async function submit2FA(loginId, isOnboarding) {
 /* --- Pairing & Job Polling --- */
 async function startPairing(fresh) {
   startKeepAlive();
-  APP._pinBuzzed = false;
   const res = await apiPost("/api/pair/start", { fresh: Boolean(fresh) });
   if (!res.ok) {
-    await showAlert(res.error || "Could not start pairing.");
+    alert(res.error || "Could not start pairing.");
     return;
   }
   pollStatus();
@@ -987,7 +915,7 @@ function onPairFileSelected(input) {
     const base64 = String(reader.result).split(",")[1] || "";
     const res = await apiPost("/api/pair/import", { data_base64: base64 });
     if (!res.ok) {
-      await showAlert(res.error || "Could not import pairing file.");
+      alert(res.error || "Could not import pairing file.");
       return;
     }
     APP.state.paired = true;
@@ -999,7 +927,7 @@ function onPairFileSelected(input) {
       else renderOnboardingStep();
     } else {
       renderOptions();
-      await showAlert("Pairing file imported! UDID: " + (APP.state.udid || "verified"));
+      alert("Pairing file imported! UDID: " + (APP.state.udid || "verified"));
     }
   };
   reader.readAsDataURL(file);
@@ -1037,32 +965,8 @@ async function pollStatus() {
         pinWrap.classList.remove("hidden");
         document.getElementById("jobPin").textContent = job.pin;
         drawPiPFrame(job.pin);
-        try { if (navigator.vibrate && !APP._pinBuzzed) { APP._pinBuzzed = true; navigator.vibrate(60); } } catch (e) {}
-        const obPinWrap = document.getElementById("obPinWrap");
-        if (obPinWrap) {
-          obPinWrap.classList.remove("hidden");
-          document.getElementById("obPin").textContent = job.pin;
-        }
       } else {
         pinWrap.classList.add("hidden");
-      }
-      if (job.kind === "pair" || (APP.job && APP.job.kind === "pair")) {
-        const obSt = document.getElementById("obPairStatus");
-        if (obSt && job.step) obSt.textContent = job.step;
-        if (job.pin && !document.getElementById("optPinWrap")
-            && document.getElementById("optDeviceDetails")
-            && !document.getElementById("viewOptions").classList.contains("hidden")) {
-          const ae = document.activeElement;
-          if (!ae || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) renderOptions();
-        }
-        const optPinWrap = document.getElementById("optPinWrap");
-        if (optPinWrap && job.pin) {
-          document.getElementById("optPin").textContent = job.pin;
-          const optSt = document.getElementById("optPairStatus");
-          if (optSt && job.step) optSt.textContent = job.step;
-        }
-      } else if (!job.active) {
-        APP._pinBuzzed = false;
       }
       const bar = document.getElementById("jobBar");
       if (typeof job.progress === "number") {
@@ -1078,7 +982,7 @@ async function pollStatus() {
         if (job.prompt) {
           handleJobPrompt(job.prompt);
         } else if (job.error) {
-          showAlert(job.error);
+          alert(job.error);
         } else if (job.result) {
           await onJobFinished(job);
         }
@@ -1100,9 +1004,6 @@ async function onJobFinished(job) {
       else renderOnboardingStep();
     } else {
       renderOptions();
-      await showAlert(
-        "Device paired successfully! UDID: " + (job.result?.udid || APP.state.udid || "verified")
-      );
     }
   } else if (job.kind === "install" || job.kind === "refresh-all") {
     renderMyApps();
@@ -1119,7 +1020,7 @@ async function cancelJob() {
 function iconHtml(url, name) {
   const letter = esc((name || "?").trim()[0] || "?").toUpperCase();
   if (!url) return `<div class="app-icon">${letter}</div>`;
-  return `<div class="app-icon" style="position:relative;overflow:hidden">${letter}<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border:0" onerror="this.remove()"></div>`;
+  return `<img class="app-icon" src="${esc(url)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=\\'app-icon\\'>${letter}</div>'">`;
 }
 
 function renderCatalog() {
@@ -1151,7 +1052,7 @@ function renderCatalog() {
         <div class="app-meta" onclick="openVariantDetail('${esc(v.id)}')">
           <div class="app-name">${esc(v.name)}</div>
           <div class="app-sub">${esc(v.subtitle)}</div>
-          ${v.warning ? '<span class="badge warn" style="margin-top:0.2rem;margin-right:0.25rem">Nightly</span>' : ''}<span class="badge ok" style="margin-top:0.2rem">Auto-Pairing</span>
+          ${v.warning ? '<span class="badge warn" style="margin-top:0.2rem">Nightly</span>' : '<span class="badge ok" style="margin-top:0.2rem">Auto-Pairing</span>'}
         </div>
         <button class="pill" onclick="installVariant('${esc(v.id)}')">GET</button>
       </div>
@@ -1452,7 +1353,8 @@ function onCustomIpaSelected(input) {
     const base64 = String(reader.result).split(",")[1] || "";
     const res = await apiPost("/api/ipa/upload", { filename: file.name, data_base64: base64 });
     if (!res.ok) {
-      await showAlert(res.error || "Failed to read IPA.");
+      closeModal();
+      alert(res.error || "Failed to read IPA.");
       return;
     }
     const ipa = res.ipa;
@@ -1608,7 +1510,7 @@ async function refreshAllApps() {
   startKeepAlive();
   const res = await apiPost("/api/apps/refresh-all", {});
   if (!res.ok) {
-    await showAlert(res.error || "Could not start Refresh All.");
+    alert(res.error || "Could not start Refresh All.");
     return;
   }
   pollStatus();
@@ -1638,10 +1540,10 @@ async function enableAppJit(bundleId, name) {
 async function injectAppPairing(bundleId) {
   const res = await apiPost("/api/apps/inject-pairing", { bundle_id: bundleId });
   if (!res.ok) {
-    await showAlert(res.error || "Failed to inject pairing file.");
+    alert(res.error || "Failed to inject pairing file.");
     return;
   }
-  await showAlert(res.message || "Pairing file injected!");
+  alert(res.message || "Pairing file injected!");
 }
 
 function showInstalledAppInfo(idx) {
@@ -1662,10 +1564,10 @@ function showInstalledAppInfo(idx) {
 }
 
 async function deleteInstalledApp(bundleId, name) {
-  if (!(await showConfirm(`Uninstall "${name}" from this iPhone?`))) return;
+  if (!confirm(`Uninstall "${name}" from this iPhone?`)) return;
   const res = await apiPost("/api/apps/delete", { bundle_id: bundleId });
   if (!res.ok) {
-    await showAlert(res.error || "Failed to uninstall app.");
+    alert(res.error || "Failed to uninstall app.");
     return;
   }
   APP.installed_apps = res.installed_apps || [];
@@ -1694,17 +1596,6 @@ function renderOptions() {
     <div class="kv-row"><span>UDID</span><code>${esc(st.udid || '—')}</code></div>
     <div class="kv-row"><span>Developer Mode</span><span>${st.devmode_on === true ? 'Enabled' : (st.devmode_on === false ? 'Disabled' : 'Verified on install')}</span></div>
   `;
-  if (APP.job && APP.job.active && APP.job.kind === "pair" && APP.job.pin) {
-    document.getElementById("optDeviceDetails").innerHTML += `
-      <div id="optPinWrap" style="margin-top:0.65rem">
-        <div class="pin-box" id="optPin">${esc(APP.job.pin)}</div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
-          <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
-        </div>
-        <div id="optPairStatus" class="sub" style="color:var(--accent);font-weight:600">${esc(APP.job.step || '')}</div>
-      </div>
-    `;
-  }
 
   const aniInp = document.getElementById("anisetteInput");
   if (aniInp && !aniInp.value) aniInp.value = st.anisette_url || "";
@@ -1751,7 +1642,7 @@ async function saveAnisetteUrl() {
   const res = await apiPost("/api/settings", { anisette_url: url });
   if (res.ok) {
     APP.state.anisette_url = url;
-    await showAlert("Preferred Anisette server saved.");
+    alert("Preferred Anisette server saved.");
   }
 }
 
@@ -1774,25 +1665,13 @@ async function runNetcheck() {
 async function checkUpdates() {
   const out = document.getElementById("maintOut");
   out.textContent = "Checking GitHub for BariStore updates…";
-  let res;
-  try {
-    res = await apiPost("/api/update", {});
-  } catch (e) {
-    out.textContent = "Update failed: " + (e.message || e);
-    return;
-  }
+  const res = await apiPost("/api/update", {});
   out.textContent = res.ok ? res.message : (res.error || "Update failed.");
 }
 
 async function clearCache() {
   const out = document.getElementById("maintOut");
-  let res;
-  try {
-    res = await apiPost("/api/cache/clear", {});
-  } catch (e) {
-    out.textContent = "Could not clear cache: " + (e.message || e);
-    return;
-  }
+  const res = await apiPost("/api/cache/clear", {});
   out.textContent = res.ok ? res.message : (res.error || "Could not clear cache.");
 }
 
@@ -1801,70 +1680,15 @@ async function openExternalUrl(url) {
   window.open(url, "_blank");
 }
 
-async function exportPairingFile() {
-  let res;
-  try {
-    res = await apiPost("/api/pair/export", {});
-  } catch (e) {
-    await showAlert("Export failed: " + (e.message || e));
-    return;
-  }
-  await showAlert(res.ok ? (res.message || "Saved.") : (res.error || "Export failed."));
-}
-
-async function restartBariStore() {
-  let res;
-  try {
-    res = await apiPost("/api/restart", {});
-  } catch (e) {
-    await showAlert("Restart failed: " + (e.message || e));
-    return;
-  }
-  if (!res.ok) {
-    await showAlert(res.error || "Restart failed.");
-    return;
-  }
-  document.body.innerHTML = '<div class="container"><div class="card" style="margin-top:2rem;text-align:center"><h3>Restarting BariStore…</h3><p class="sub">A new BariStore window will open. You can close this one.</p></div></div>';
-}
-
 async function quitServer() {
-  try {
-    await apiPost("/api/shutdown", {});
-  } catch (e) {
-    await showAlert("Quit failed: " + (e.message || e));
-    return;
-  }
+  await apiPost("/api/shutdown", {});
   document.body.innerHTML = '<div class="container"><div class="card" style="margin-top:2rem;text-align:center"><h3>BariStore Closed</h3><p class="sub">You can now close this browser sheet.</p></div></div>';
 }
 
 async function resetBariStore() {
-  if (!(await showConfirm("Reset BariStore and erase all saved Apple ID sessions, pairing files, and cached IPAs?"))) return;
-  let res;
-  try {
-    res = await apiPost("/api/reset", {});
-  } catch (e) {
-    await showAlert("Reset failed: " + (e.message || e));
-    return;
-  }
-  if (!res.ok) {
-    await showAlert(res.error || "Reset failed.");
-    return;
-  }
-  APP.job = { active: false };
-  APP.state = {};
-  APP.catalog = { sources: [], apps: [], store_variants: [] };
-  APP.installed_apps = [];
-  APP.currentTab = "featured";
-  APP.obStep = 1;
-  APP._pinBuzzed = false;
-  lastHandledJobId = 0;
-  try {
-    await enterOnboarding();
-  } catch (e) {
-    await showAlert("Reset done, but setup wizard failed to load: " + (e.message || e));
-    return;
-  }
-  await showAlert("BariStore has been reset. Start again from Step 1.");
+  if (!confirm("Reset BariStore and erase all saved Apple ID sessions, pairing files, and cached IPAs?")) return;
+  const res = await apiPost("/api/reset", {});
+  if (res.ok) location.reload();
 }
 
 window.addEventListener("DOMContentLoaded", initApp);
