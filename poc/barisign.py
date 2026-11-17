@@ -68,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.26"
+VERSION = "0.9.27"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1636,20 +1636,26 @@ _OPTIONS = {
 
 
 def _usage():
+    # Two short lines per command: an iPhone upright is ~40 columns, and a
+    # wrapped command line reads like the screen is shifting.
     print("BariSign %s" % VERSION)
     print()
-    print("  sh barisign           web UI: the whole install on this iPhone")
-    print("  sh barisign udid      pair this iPhone, save its UDID")
-    print("  sh barisign login     Apple sign-in")
-    print("  sh barisign portal    UDID + certificate + profile")
-    print("  sh barisign sign      download, sign and zip the chosen variant")
-    print("  sh barisign pair      pair over loopback and install the newest IPA")
-    print("  sh barisign status    what is saved")
-    print("  sh barisign check     diagnostics only")
-    print("  sh barisign version   which copy is running")
-    print("  sh barisign update    update everything in place")
-    print("  sh barisign forget    clear the saved state")
-    print("  sh barisign reset      remove saved state, IPAs and zips")
+    for command, text in (
+            ("sh barisign", "page: the whole install"),
+            ("sh barisign shell", "terminal, no page"),
+            ("sh barisign udid", "pair, save the UDID"),
+            ("sh barisign login", "Apple sign-in"),
+            ("sh barisign portal", "device, cert, profile"),
+            ("sh barisign sign", "download, sign, zip"),
+            ("sh barisign pair", "loopback install"),
+            ("sh barisign status", "what is saved"),
+            ("sh barisign check", "diagnostics only"),
+            ("sh barisign version", "which copy is running"),
+            ("sh barisign update", "update in place"),
+            ("sh barisign forget", "clear saved state"),
+            ("sh barisign reset", "remove files + state")):
+        print("  %s" % command)
+        print("    %s" % text)
     print()
     print("  options: sh barisign <command> help")
 

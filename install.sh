@@ -203,7 +203,8 @@ while [ "$attempt" -le 2 ]; do
 printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
     else
         printf '\r\033[2K  (1/2) files failed\n'
-        printf '  ! could not fetch:%s\n' "$FAILED"
+        printf '  ! could not fetch:\n'
+        for _one in $FAILED; do printf '    %s\n' "$_one"; done
     fi
 
     printf '  (2/2) check ...'
@@ -214,7 +215,8 @@ printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
     fi
     printf '\r\033[2K  (2/2) check failed\n'
     if [ -n "${COMPILE_BAD:-}" ]; then
-        printf '  ! does not compile:%s\n' "$COMPILE_BAD"
+        printf '  ! does not compile:\n'
+        for _one in $COMPILE_BAD; do printf '    %s\n' "$_one"; done
     fi
     if [ "$attempt" -lt 2 ]; then
         printf '  ! retrying in 5 s\n'

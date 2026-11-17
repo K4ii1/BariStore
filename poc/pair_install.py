@@ -1395,24 +1395,28 @@ async def _run(args):
 
 def main(argv):
     if "--help" in argv or "-h" in argv:
-        _say("sh barisign pair                 pair the target and install the newest -signed.ipa")
-        _say("sh barisign pair --ipa FILE      use a specific signed IPA")
-        _say("sh barisign pair --pair-only       pair only; save the UDID and pairing file")
-        _say("sh barisign pair --udid UDID     use an already paired target")
-        _say("sh barisign pair --import FILE   use a pairing file from another host")
-        _say("sh barisign pair --host IP          use this target address (port is scanned)")
-        _say("sh barisign pair --loopback        EXPERIMENTAL same-device install via LocalDevVPN")
-        _say("sh barisign pair --loopback-port P loopback port (default: probe 49152 + range)")
-        _say("sh barisign pair --loopback-host IP loopback address (default 10.7.0.1)")
-        _say("sh barisign pair --keep-awake      EXPERIMENTAL speech loop to hold the process")
-        _say("sh barisign pair --devmode CMD    Developer Mode: status, show or on")
-        _say("sh barisign pair --no-devmode    skip the Developer Mode check")
-        _say("sh barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
-        _say("sh barisign pair --target-ip IP  also send unicast mDNS to the target")
-        _say("sh barisign pair --export [FILE] copy the pairing file out (for manual import)")
-        _say("sh barisign pair --timeout N     give up if the target never pairs")
-        _say("sh barisign pair --check         verify the pure engine imports")
-        _say("sh barisign pair --setup         verify the engine (no download needed)")
+        # Two short lines per flag: an iPhone upright is ~40 columns.
+        for flag, text in (
+                ("pair", "install newest signed IPA"),
+                ("pair --ipa FILE", "install this file"),
+                ("pair --pair-only", "pair only, save UDID"),
+                ("pair --udid UDID", "use paired target"),
+                ("pair --import FILE", "pairing file, other host"),
+                ("pair --host IP", "Wi-Fi target address"),
+                ("pair --loopback", "same-device install"),
+                ("pair --loopback-port P", "loopback port, or probe"),
+                ("pair --loopback-host IP", "default 10.7.0.1"),
+                ("pair --keep-awake", "speech holds the app"),
+                ("pair --devmode CMD", "status, show or on"),
+                ("pair --no-devmode", "skip devmode check"),
+                ("pair --raw-mdns", "force raw advertisement"),
+                ("pair --target-ip IP", "unicast mDNS extra"),
+                ("pair --export [FILE]", "copy pairing file out"),
+                ("pair --timeout N", "give up after N s"),
+                ("pair --check", "verify engine imports"),
+                ("pair --setup", "verify engine, no download")):
+            _say("sh barisign %s" % flag)
+            _say("    %s" % text)
         return 0
 
     def value(flag, default=""):
