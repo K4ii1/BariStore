@@ -30,18 +30,17 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
   `NSBonjourServices`), and raw multicast send fails (`ENETUNREACH`, no multicast entitlement).
   `poc/raw_mdns.py` sends both plus subnet broadcast; broadcast is device-proven (the target lists
   BariSign, full M1–M6, UDID saved). `pair` uses it automatically on a-Shell.
-- **Single-device/background settled (2026-11-17, from the a-Shell sources):** one device cannot
-  pair with or install on itself; no ActivityKit, no notification keep-alive, Shortcuts intents
-  (`ExecuteCommand`/`GetFile`/`PutFile`) force the app open and are time-boxed. Full analysis:
-  `docs/SINGLE_DEVICE.md`.
+ obsolete 2026-11-19 by the single-device rewrite (loopback pairing + devmode over the
+  tunnel + web sheet).
 - **Version freshness at every signing (0.9.17):** `resolve()` lists GitHub releases live, prints
   the version before downloading, and a cached IPA is reused only on size + SHA-256 match.
 
 ## Written but **never tested on a device**
 
-- The **signer → target pairing install** and the **pairing-file writer**
-  (state/ + AFC into AltStore/SideStore). The pure engine and its Linux tests are in `poc/` and
-  `tests/`; the device run is the remaining gate. Mark it **untested** until the user confirms.
+- The **loopback pairing install**, the **web sheet UI** (open + audio keep-alive + PIN hop),
+  the **Developer Mode toggle** and the **pairing-file writer**. The engine and its Linux tests
+  are in `poc/` and `tests/`; the device run is the remaining gate. Mark it **untested** until
+  the user confirms.
 
 ## Not built
 
@@ -60,7 +59,7 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
 | only `~/Documents` is writable | state, CA and profiles all live inside the install folder |
 | Python's TLS trust store is **empty** | Apple's root and a CA bundle ship in `third_party/` and are loaded explicitly |
 | `raw.githubusercontent.com` serves stale files after a push | the installer fetches through the GitHub API, with the web URL only as a fallback |
-| the `+x` bit does not survive git on device | always run `sh bin/...` |
+| the `+x` bit does not survive git on device | always run `sh ...` (root wrappers) |
 
 ## Dead ends — do not retry without new information
 
@@ -70,7 +69,7 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
 | `itms-services://` over the LAN with a trusted cert | needs an Ad Hoc/Enterprise certificate; free accounts cannot |
 | One profile that both installs the CA and reads the UDID | nested `Profile Service` → iOS reports "unknown data" |
 | An MDM profile to read the UDID in one step | iOS keeps answering "the password is not correct" even with a hand-built legacy PKCS#12 identical to `openssl pkcs12 -export -legacy` |
-| A pure on-device install with no second device | blocked by Apple's Developer Mode gate ("Developer Mode only appears if you initiate pairing or previously connected the device to Xcode") |
+| A pure on-device install with no second device | SOLVED 2026-11-19: loopback pairing + devmode over the tunnel (siboot proved the mechanism) |
 | Cloudflare Worker / SSH tunnel / DuckDNS + ACME | unnecessary; deleted |
 | Our own UDID server (persistent CA + local HTTPS, served from a-Shell) | it worked, and it is still verified — but it cost a second install, a trust switch and a CA file to carry. Removed; a pasted UDID from any profile service replaces it (`docs/UDID_OPTIONS.md`) |
 

@@ -1,90 +1,67 @@
-# BariSign — plan v2 (two roles, no computer, no Shortcuts)
+# BariSign — plan v3 (one iPhone, no computer, web UI)
 
-Written 2026-10-29, rewritten 2026-10-31 after the AirDrop install was refused by iOS 27,
-updated 2026-11-17 (0.9.17: broadcast pairing verified, App Groups registered, version shown
-at every download). The current
-shape is **two roles**, not two specific devices:
-
-- **Signer** — runs a-Shell + BariSign: pairing/UDID, Apple ID, portal, signing, install.
-- **Target** — the device that gets the app: Safari and Settings only.
-- Either role may be an **iPhone or an iPad** (iOS/iPadOS 27+); they must share the same Wi-Fi.
-
-## The shape of it
+Written 2026-10-29 as two roles, rewritten 2026-10-31 after AirDrop was refused, rewritten
+again 2026-11-17: **siboot proved the missing pieces** (MIT, FrizzleM) — Developer Mode over
+the tunnel and a loopback page UI — so the second device is gone. The current shape is **one
+iPhone that signs for itself**:
 
 ```
-SIGNER (a-Shell)                              TARGET (Safari / Settings)
-  0. Apple ID anisette + SRP-6a + 2FA          (verified)
-  1. Developer Mode present? else trigger      (verified path)
-  2. pair     broadcast as BariSign + code -->  Settings -> Developer -> Paired Macs -> BariSign
-              read the UDID from the pairing/tunnel (device-verified M1–M6)
-  3. variant, then download: resolve live, show version, size + SHA-256 (0.9.17)
-  4. portal   UDID -> App ID -> App Group + cert -> profile (verified, incl. APG3427HIY)
-  5. sign the chosen IPA (verified) + preflight before upload
-  6. install over the same pairing             installation_proxy over Wi-Fi
-                                              (target Trust Developer, opens the app;
-                                               on-device install is the remaining gate)
-  no UDID page (removed 0.9.18): if pairing cannot provide a UDID there is no fallback;
-  the page comes back only if Developer Mode cannot be opened with a plain unsigned IPA
+THIS IPHONE (a-Shell + BariSign + LocalDevVPN)
+  0. requirements  LocalDevVPN answers on 10.7.0.1 (wait loop)
+  1. Apple ID      anisette + SRP-6a + 2FA (saved session reused while Apple accepts it)
+  2. variant       SideStore / LC+SideStore / AltStore / custom IPA
+  3. download      live-resolved IPA, size + SHA-256
+  4. pair          RPPairing host over broadcast; Settings > Developer > Paired Macs
+                   on the SAME iPhone; UDID from M5; pairing file saved
+  5. devmode       lockdownd GetValue; show switch (action 0) or turn on (action 1)
+  6. portal        device + App ID (+ App Group) + certificate + profile
+  7. sign          sign + verify the IPA
+  8. install       installation_proxy over the loopback tunnel
+                   (Trust Developer, open the app)
 ```
 
-Single device cannot cover steps 2+6 on itself, and there is no background
-keep-alive (no ActivityKit/notifications/Shortcuts path) — `docs/SINGLE_DEVICE.md`.
-Keep a-Shell foreground for `pair` (iPad Split View is fine).
-
-a-Shell is installed **only on the signer**. The target installs nothing from BariSign. The program stays
-one integrated flow on the signer.
+`sh barisign` runs it as a web page (a-Shell internal browser sheet over the terminal);
+`sh barisign one` runs the same pipeline in the terminal. Backend and page talk JSON over
+127.0.0.1 with a per-run token (siboot's page security model).
 
 ## Why not AirDrop or OTA
 
-iOS 27 refuses a **free provisioning profile** from the AirDrop/MobileInstallation source:
-
-```
-MIInstallerErrorDomain 111
-"authorized by a free provisioning profile, but apps validated by those are not allowed
-to be installed from this source."
-```
-
-The same IPA installs through a developer `installation_proxy` source, which is what the signer→target
-pairing tunnel does over Wi-Fi. OTA is enterprise/ad-hoc territory and is not available with a free
-certificate. Both are out.
+iOS 27 refuses a **free provisioning profile** from the AirDrop/MobileInstallation source
+(`MIInstallerErrorDomain` 111). The same IPA installs through a developer
+`installation_proxy` source, which is what the loopback tunnel is. OTA is enterprise/ad-hoc
+territory and is not available with a free certificate. Both are out.
 
 ## Why the UDID comes from pairing
 
-The target is the device that needs the UDID, and it does not run a-Shell. The only route is the pairing: the signer pairs the target, reads the target's UDID from the
-pairing/tunnel, and uses it for the profile. The signer-hosted page was removed in 0.9.18; it comes back
-only if Developer Mode cannot be opened with a plain unsigned IPA. `sh barisign udid <paste>` still
-accepts a UDID obtained elsewhere (see `docs/UDID_OPTIONS.md`).
+The UDID is needed for the profile, and pairing reports it (M5). No page, no profile-service
+round-trip: removed in 0.9.18.
 
-## Pairing file — decided: fork the three apps
+## Developer Mode without a second device or a trigger install
 
-**Decision (2026-10-29): fork.** The pairing module goes into the start screen of SideStore, of the
-SideStore inside LiveContainer+SideStore, and of AltStore Classic. `docs/FORK_PLAN.md` holds the design,
-the licence rules (clean-room reimplementation — the non-commercial SideInstaller code may not be mixed
-into AGPL forks) and the risks.
+Over the open tunnel, lockdownd answers `GetValue` for `DeveloperModeStatus` in domain
+`com.apple.security.mac.amfi` (as pymobiledevice3 reads it), and AMFI's RSD shim
+(`com.apple.amfi.lockdown.shim.remote`) takes `{"action": 0}` to reveal the switch and
+`{"action": 1}` to turn it on (as MIT idevice implements it; siboot documents the flow).
+Show needs no restart; turn-on restarts (refused with a passcode set — then show + manual
+flip). iOS closes AMFI after one request, so each action gets a fresh connection.
+`poc/devmode.py` is clean-room code from those MIT sources; `pair --devmode status|show|on`
+runs each step alone.
 
-Facts that make it possible, checked 2026-10-29/31:
+## The page instead of the terminal
 
-- iOS **27** added **Settings → Privacy & Security → Developer Mode → "Paired Macs"** with a six-digit
-  code. SideInstaller uses this to pair with no computer.
-- SideStore, AltStore and LiveContainer also accept an **imported** pairing file, which is how the module's
-  output gets consumed.
-- The pure engine implements the device-initiated pairing host, pair-verify, the TLS 1.2 PSK tunnel,
-  a userspace TCP stack, RSD and `installation_proxy`; `barisign pair` is the first implementation
-  of that route, written from the MIT `idevice` protocol sources.
-- Licences: SideStore **AGPL-3.0**, AltStore **AGPL-3.0**, LiveContainer **AGPL-3.0**; SideInstaller is
-  "Other"/non-commercial and stays isolated in `third_party/sideinstaller/`. The engine is MIT and
-  uses no GPL runtime; `pymobiledevice3` is a protocol reference only.
+a-Shell's `openurl` with `BROWSER=internalbrowser` shows a WKWebView sheet over the terminal:
+the app stays foreground, so iOS never pauses the run. The page is served from this iPhone's
+loopback only, every path starts with 128 random bits that die with the run, and the Host
+header must name the loopback. Pairing still hops to Settings for the PIN; the page plays
+silence through WebAudio meanwhile (a-Shell has background audio), with the speech loop as
+fallback. Terminal line-strain is gone by construction: the flow's stdout goes to the page
+log, and only prompts arrive as questions.
 
-Cost accepted with the decision: our patch to three AGPL projects, rebuilt on every upstream release, plus
-the `barisign pair` engine on the signer.
+## Pairing file
 
-## Status
-
-- Verified on the signer (iOS 27): Apple sign-in, portal, signing, app launch.
-- The tunnel/install engine is now pure Python (`poc/tls_psk.py`, `tcp6.py`, `remote_xpc.py`,
-  `device_services.py`, `pairing.py`, `rpp_tunnel.py`, `mdns.py`); no pip, no qh3, no native wheel.
-  All layers pass their Linux tests.
-- **Device blocker:** a-Shell cannot advertise `_remotepairing-pairable-host._tcp`
-  (`DNSServiceRegister -65555`, NoAuth; its signed Info.plist lacks `NSBonjourServices`). The target
-  cannot discover BariSign from a-Shell. The install engine is ready once a pairing record exists.
-  Options: `docs/NEXT_SESSION.md`.
+Still written after install via house_arrest so the installed app can refresh itself:
+AltStore `Documents/ALTPairingFile.plist`; SideStore `Documents/ALTPairingFile.mobiledevicepairing`
+plus `PairingFile_RemoteRP.plist` (newer nightlies read the per-protocol file);
+LiveContainer's built-in SideStore the same two names under `SideStore/Documents/`.
+The fork plan (`docs/FORK_PLAN.md`) — a pairing step inside our own app builds — stays future
+work; the web UI + devmode toggle reduced its urgency, but refresh UX still wants it.

@@ -81,6 +81,8 @@ download_all() {
                  "poc/tcp6.py poc/tcp6.py" \
                  "poc/remote_xpc.py poc/remote_xpc.py" \
                  "poc/device_services.py poc/device_services.py" \
+                 "poc/devmode.py poc/devmode.py" \
+                 "poc/webui.py poc/webui.py" \
                  "poc/pairing.py poc/pairing.py" \
                  "poc/rpp_tunnel.py poc/rpp_tunnel.py" \
                  "poc/mdns.py poc/mdns.py" \
@@ -91,8 +93,7 @@ download_all() {
                  "third_party/ca-bundle/cacert.pem third_party/ca-bundle/cacert.pem" \
                  "variants.json variants.json" \
                  "barisign barisign" \
-                 "update update" \
-                 "barisignone barisignone"; do
+                 "update update"; do
         # shellcheck disable=SC2086
         set -- $_pair
         if fetch "$1" "$2"; then
@@ -110,7 +111,7 @@ download_all() {
         esac
         printf '\r\033[2K  (1/2) files %s' "$_d"
     done
-    chmod +x barisign update barisignone 2>/dev/null
+    chmod +x barisign update 2>/dev/null
     return $fail
 }
 
@@ -119,7 +120,7 @@ check_compiles() {
     bad=""
     for f in poc/poc_login.py poc/poc_portal.py poc/barisign.py poc/signer.py \
              poc/download.py poc/pair_install.py poc/tls_psk.py poc/tcp6.py \
-             poc/remote_xpc.py \
+             poc/remote_xpc.py poc/devmode.py poc/webui.py \
              poc/device_services.py poc/pairing.py poc/rpp_tunnel.py poc/mdns.py \
              poc/raw_mdns.py \
              third_party/sideinstaller/signin.py \
@@ -139,7 +140,8 @@ works() {
     python3 poc/barisign.py --help >/dev/null 2>&1 \
         && python3 poc/poc_portal.py --help >/dev/null 2>&1 \
         && python3 poc/pair_install.py --check >/dev/null 2>&1 \
-        && sh -n barisign && sh -n update && sh -n barisignone
+        && python3 -c "import sys; sys.path.insert(0, 'poc'); import webui, devmode" \
+        && sh -n barisign && sh -n update
 }
 
 # No background jobs: a-Shell's shell can leave a background spinner
@@ -206,6 +208,6 @@ if [ -d bin ]; then
     printf '  retired    bin/ (now: sh barisign, sh update, sh barisignone)\n'
 fi
 printf 'BariSign %s installed\n\n' "${VER:-?}"
-printf '  sh barisign ready\n'
+printf '  sh barisign ready (opens the page)\n'
 printf '  sh barisignone for the one-device experiment\n'
 printf '  help: sh barisign help\n'

@@ -44,6 +44,7 @@ for _path in (HERE, ROOT):
 
 import device_services
 from device_services import DeviceServiceError
+import devmode
 import mdns
 import pairing
 import raw_mdns
@@ -1054,6 +1055,94 @@ def _load_record():
         return None
 
 
+async def run_devmode_command(session, action):
+    """Standalone `pair --devmode status|show|on` on an open session."""
+    action = (action or "status").lower()
+    if action not in ("status", "show", "on"):
+        _say("  ! --devmode takes status, show or on")
+        return 2
+    try:
+        on = await devmode.status(session.stack, session.address, session.services)
+    except Exception as exc:                                    # noqa: BLE001
+        _say("  ! status unreadable: %s" % exc)
+        return 1
+    if on:
+        _say("  devmode      on (nothing sent)")
+        return 0
+    if action == "status":
+        _say("  devmode      %s" % ("off" if on is False else "unknown"))
+        return 0
+    if action == "on":
+        choice = _ask("  restart the device now to turn it on? y/N: ", "n")
+        if choice.strip().lower() not in ("y", "yes"):
+            _say("  nothing sent")
+            return 0
+        try:
+            await devmode.turn_on(session.stack, session.address, session.services)
+        except devmode.DevmodeError as exc:
+            if str(exc) == "passcode-set":
+                _say("  passcode is set: iOS refuses; showing the switch instead")
+            else:
+                _say("  ! %s" % exc)
+                return 1
+        else:
+            _say("  restarting: re-run to verify")
+            return 0
+    try:
+        await devmode.show_switch(session.stack, session.address, session.services)
+    except devmode.DevmodeError as exc:                         # noqa: BLE001
+        _say("  ! %s" % exc)
+        return 1
+    _say("  switch shown: Settings > Privacy & Security > Developer Mode")
+    return 0
+
+
+async def ensure_devmode(session, host, port, record, udid):
+    """Developer Mode must be ON for the installed app to launch.
+
+    Shows the switch when it is off or hidden (no restart), waits for the
+    user to turn it on and come back, then re-checks on a fresh session: the
+    restart kills the tunnel. Returns the (possibly new) session.
+    """
+    try:
+        on = await devmode.status(session.stack, session.address, session.services)
+    except Exception as exc:                                    # noqa: BLE001
+        _say("  devmode      status unreadable (%s); continuing" % exc)
+        return session
+    if on:
+        _say("  devmode      on")
+        return session
+    _stage("Developer Mode", ["off or hidden: asking iOS to show the switch"])
+    try:
+        await devmode.show_switch(session.stack, session.address, session.services)
+    except devmode.DevmodeError as exc:                         # noqa: BLE001
+        raise _friendly_error(host, exc)
+    _say("  turn ON Developer Mode in Settings and let the device restart,")
+    choice = _ask("  turn it on now instead (restarts immediately)? y/N: ", "n")
+    if choice.strip().lower() in ("y", "yes"):
+        try:
+            await devmode.turn_on(session.stack, session.address, session.services)
+        except devmode.DevmodeError as exc:                     # noqa: BLE001
+            if str(exc) == "passcode-set":
+                _say("  passcode is set: turn it on by hand in Settings")
+            else:
+                raise _friendly_error(host, exc)
+        else:
+            _say("  restarting...")
+    _ask("  press Enter when back with Developer Mode ON: ")
+    await session.close()
+    session = await asyncio.wait_for(open_session(record, host, port, udid), 120)
+    try:
+        on = await devmode.status(session.stack, session.address, session.services)
+    except Exception:                                           # noqa: BLE001
+        on = None
+    if not on:
+        raise RuntimeError("Developer Mode is still off, and the app would not "
+                           "launch. Turn it on and run again.")
+    _say("  devmode      on")
+    return session
+
+
 async def _run(args):
     state = load_state()
     identity = _record_identity()
@@ -1257,6 +1346,8 @@ async def _run(args):
         if not udid:
             _say("  ! could not read the target's UDID from the tunnel")
             return 2
+        if args.get("devmode"):
+            return await run_devmode_command(session, args.get("devmode"))
         device = session.properties.get("ProductType", "") or "device"
         if args.get("pair_only"):
             _stage("Pairing", [
@@ -1281,6 +1372,8 @@ async def _run(args):
             _say("  ! no signed IPA found")
             _say("    sign on the signer first (sh barisign sign), or pass --ipa FILE")
             return 2
+        if not args.get("no_devmode"):
+            session = await ensure_devmode(session, host, port, record, udid)
         _stage("Install", ["installing:  %s" % os.path.basename(ipa)])
         await asyncio.wait_for(install(session, ipa, RECORD_PATH), 900)
         done_lines = [
@@ -1312,6 +1405,8 @@ def main(argv):
         _say("sh barisign pair --loopback-port P loopback port (default: probe 49152 + range)")
         _say("sh barisign pair --loopback-host IP loopback address (default 10.7.0.1)")
         _say("sh barisign pair --keep-awake      EXPERIMENTAL speech loop to hold the process")
+        _say("sh barisign pair --devmode CMD    Developer Mode: status, show or on")
+        _say("sh barisign pair --no-devmode    skip the Developer Mode check")
         _say("sh barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
         _say("sh barisign pair --target-ip IP  also send unicast mDNS to the target")
         _say("sh barisign pair --export [FILE] copy the pairing file out (for manual import)")
@@ -1337,6 +1432,8 @@ def main(argv):
         "loopback": "--loopback" in argv,
         "loopback_host": value("--loopback-host") or LOOPBACK_HOST,
         "loopback_port": int(value("--loopback-port", "0") or 0),
+        "devmode": value("--devmode"),
+        "no_devmode": "--no-devmode" in argv,
         "raw": "--raw-mdns" in argv,
         "timeout": int(value("--timeout", "0") or 0) or None,
         "pair_only": "--pair-only" in argv,

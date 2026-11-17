@@ -1,61 +1,54 @@
 # AGENTS.md — BariSign
 
-Project goal: a public GitHub repo that installs **SideStore** (and LiveContainer+SideStore)
-on an iPhone/iPad **with no computer**, using two devices with roles:
-the **signer** (runs a-Shell + BariSign) and the **target** (the device that gets the app).
-Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
+Project goal: a public GitHub repo that installs **SideStore** (and LiveContainer+SideStore,
+AltStore Classic) on an iPhone/iPad **with no computer, on the one device**: a-Shell +
+BariSign + LocalDevVPN + Settings. iOS/iPadOS 27+.
 
 ## Confirmed decisions (user)
 
-- **Audience = everyone, no computer.** Users are expected to sign in with their **main Apple ID**
+- **Audience = everyone, no computer, one device.** Users sign in with their **main Apple ID**
   (2FA supported); the README must say plainly why that is safe.
-- **Two-role flow (2026-10-31 pivot):** a-Shell runs **only on the signer**. The signer does
-  login, portal, signing, packaging and the install. The **target** only uses Safari and Settings.
-  Both devices may be iOS or iPadOS; they must be on the same Wi-Fi. No computer, no AirDrop, no OTA.
-- **UDID = pairing only (0.9.18: page removed).** The signer pairs the target; the pairing/tunnel
-  reports the target's UDID, which the signer saves and registers (`sh barisign udid` pairs, or takes
-  a pasted UDID). No page, no median flow, no `--manual`/`--page` in the tool. If Developer Mode cannot
-  be opened with a plain unsigned IPA, the page comes back. `docs/UDID_OPTIONS.md` lists independent
-  UDID sources; no permanent server of ours.
-- **Shortcuts are suspended** (user decision). The interface is a plain text flow in a-Shell.
-- **Pairing file = a module inside the apps (user decision, 2026-10-29):** fork SideStore, AltStore
-  Classic and LiveContainer+SideStore, add a pairing-file step to each start screen, rebuild on every
-  upstream release. All three are **AGPL-3.0**, so our patch is published under AGPL-3.0 in
-  `forks/<app>/`; the non-commercial `third_party/sideinstaller/` code may **not** be mixed into them —
-  the pairing call is reimplemented clean-room. Design, risks and order: `docs/FORK_PLAN.md`.
+- **Single-device flow (2026-11-17 rewrite):** `sh barisign` opens a web page in a-Shell's
+  internal browser and runs requirements → Apple ID → variant → download → pairing →
+  Developer Mode → portal → sign → install, all on this iPhone. `sh barisign one` is the
+  terminal fallback (same order). The two-device plan is deleted.
+- **Web UI, not terminal strain:** backend and page talk JSON over 127.0.0.1 with a per-run
+  token (siboot's page model). The sheet keeps a-Shell foreground; silence plays while the
+  user is in Settings. Terminal output is mirrored to the page log.
+- **Developer Mode over the tunnel** (siboot proved it): lockdownd GetValue + AMFI action 0/1
+  in clean-room `poc/devmode.py`. No trigger install, no second device.
+- **Minimal third-party code:** our engine (pairing/tunnel/install/devmode/web) is MIT from
+  MIT `jkcoxson/idevice` protocol sources. `third_party/sideinstaller/` (Apple sign-in + dev
+  portal, non-commercial licence, isolated, never copied into MIT files) is the one exception
+  left; its clean-room rewrite is future work, not this revision — it would risk breaking login.
+- **UDID = pairing only.** This iPhone pairs with itself; the UDID comes back through the
+  tunnel. No page, no median flow. `docs/UDID_OPTIONS.md` lists independent UDID sources;
+  no permanent server of ours.
+- **Shortcuts are suspended** (user decision). No generated `.shortcut` files.
+- **Pairing file = a module inside the apps (user decision, 2026-10-29):** still future work
+  (see `docs/FORK_PLAN.md`); the installer already writes the pairing file into each app.
 
-- **Target = iOS 27+ only.** iOS 17.4–26.x is out of scope (pairing file needs a PC). Stated in `README.md`.
-- **Install = pairing + `installation_proxy` from the signer.** AirDrop and OTA are dead for
-  free-profile apps on iOS 27: `MIInstallerErrorDomain` 111, *"free provisioning profile ... not
-  allowed to be installed from this source"*. The intended signer command is `sh barisign pair`;
-  the target picks **BariSign** under Settings → Developer → Paired Macs and enters the code.
-- **Pure pairing engine (2026-11-15, replaces the qh3 blocker).** `pymobiledevice3` needs `qh3`
-  (native, no iOS wheel) and APIs newer than a-Shell's `cryptography` 3.4.8, so it is no longer used.
-  `sh barisign pair` now runs a self-contained MIT Python stack: RPPairing host (SRP-6a, TLV8,
-  OPACK), pair-verify, **TLS 1.2 PSK** (0x00AF/0x008C — the suites iOS actually negotiates, *not*
-  TLS 1.3), a minimal IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and
-  `installation_proxy`. No pip, no native wheel, no GPL runtime. The Linux tests are in `tests/`.
-- DNS-SD registration stays blocked inside a-Shell (`-65555` NoAuth: no `NSBonjourServices`
-  entry), so `pair` advertises over raw broadcast instead (device-verified: the target lists
-  BariSign and M1–M6 completes). Raw multicast needs no entitlement; subnet broadcast covers
-  the rest. If broadcast ever fails, `pair --import FILE --host IP` uses a pairing record from
-  a host that can advertise. The tunnel/install engine still works on any valid record.
-  Options and evidence: `docs/NEXT_SESSION.md`; install success on device is still untested.
+- **Device = iOS 27+ only.** iOS 17.4–26.x is out of scope. Stated in `README.md`.
+- **Install = pairing + Developer Mode + `installation_proxy`, all on this iPhone, over the
+  LocalDevVPN loopback.** AirDrop and OTA are dead for free-profile apps on iOS 27
+  (`MIInstallerErrorDomain` 111). Run `sh barisign`; pair from Settings → Developer →
+  Paired Macs on the same iPhone; enter the code.
+- **Pure engine (no qh3, no GPL runtime).** `pymobiledevice3` needs `qh3` (native, no iOS
+  wheel), so it is not used. The stack is self-contained MIT Python: RPPairing host (SRP-6a,
+  TLV8, OPACK), pair-verify, **TLS 1.2 PSK** (0x00AF/0x008C — the suites iOS actually
+  negotiates, *not* TLS 1.3), a minimal IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC,
+  house_arrest, `installation_proxy`, plus lockdownd GetValue + AMFI actions for Developer
+  Mode. No pip, no native wheel. The Linux tests are in `tests/`.
+- DNS-SD stays blocked inside a-Shell (`-65555` NoAuth: no `NSBonjourServices` entry), so
+  pairing advertises over raw broadcast instead (device-verified M1–M6). The tunnel/install
+  engine works on any valid record.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.
-- Test devices are roles, not hardware: either device can be the signer or the target. Both run
-  iOS/iPadOS 27+; a-Shell is installed only on the signer.
-- On device and verified: UDID, Apple sign-in, the **developer portal** (incl. App Groups
-  `list/add/assignApplicationGroup` + `APG3427HIY`, isideload protocol), signing, and the signed app
-  launching after install. The pair-first UDID (broadcast M1–M6, device-verified 2026-11-15/16),
-  the signer→target pairing install and the pairing-file write are written; the install step is
-  the remaining device gate. Details: `docs/RESULTS.md`, `docs/NEXT_SESSION.md`.
-- Single-device/background settled 2026-11-17 (a-Shell sources): one device cannot pair with or
-  install on itself; no Live Activity/notification/Shortcuts background path; keep a-Shell
-  foreground (iPad Split View ok). Full analysis: `docs/SINGLE_DEVICE.md`. One-device runs
-  through `sh barisignone` (loopback experiment, 0.9.19+), not a `one` subcommand.
-- Download freshness: `resolve()` runs live on every sign (stable tag / nightly asset date shown
-  before downloading); cached IPAs reused only on size + SHA-256 match. See
-  `docs/SINGLE_DEVICE.md` §4.
+- On device and verified: Apple sign-in, the **developer portal** (incl. App Groups), signing,
+  and the signed app launching after install. Loopback pairing (M1–M6), the web UI, the
+  Developer Mode toggle and the loopback install are written + Linux-tested; the on-device
+  run is the remaining gate. Details: `docs/RESULTS.md`, `docs/NEXT_SESSION.md`.
+- Download freshness: `resolve()` runs live on every sign (stable tag / nightly asset date
+  shown before downloading); cached IPAs reused only on size + SHA-256 match.
 - Sign-in requires **Mac-emulating anisette** and the server's own client_info (Apple's Oct 2026
   -80045/-80046/503 rules). `mac-ani.jkcoxson.com` and `ani.jkcoxson.com` come first. Details:
   `docs/ANISETTE.md`, `docs/RESULTS.md`.
@@ -87,23 +80,20 @@ Five fixed variants, chosen in the a-Shell menu:
 
 One flow, five IPAs. **No generic IPA signer.**
 
-The a-Shell interface (no Shortcuts):
-- asks readiness questions (LocalDevVPN installed & connected? Developer Mode on? Apple ID ready?),
-- asks which variant,
-- points to a complete beginner GUIDE,
-- runs the heavy steps on the **signer**, always in this order: Apple login (saved session
-  reused when Apple still accepts it), variant + download, portal (pairs for the UDID when
-  missing), pair (skipped when this run already paired), sign the chosen IPA (optional
-  Developer Mode trigger only in the two-device flow). Anisette failover on -80045/-80046/503.
-- Ends with `sh barisign pair`: the signer advertises as a pairable host, the **target** opens
-  Settings → Developer → Paired Macs, enters the code, and the signer installs over Wi-Fi.
+The web interface (no Shortcuts, no terminal strain):
+- opens a page in a-Shell's internal browser: steps, questions, the pairing PIN, a log;
+- runs, always in this order: requirements (LocalDevVPN probe + wait), Apple login (saved
+  session reused while Apple accepts it), variant, download, pairing (same iPhone, PIN on
+  the page), Developer Mode (tunnel: show or turn on), portal, sign, install;
+- anisette failover on -80045/-80046/503; wrong 2FA codes retry without restarting login.
 
 ## Hard constraints
 
-- Everything on the **signer** must run in a-Shell, no computer. The **target** needs only Safari and Settings.
+- Everything must run on the one iPhone in a-Shell, no computer, no second device.
   - Compute layer: **a-Shell (full)** — stdlib-only Python plus the `cryptography` that ships with it;
     no native binaries, no `openssl`, no `unzip`.
-  - Evaluate alternatives (other free on-device runtimes) and justify.
+  - The page is stdlib `http.server` on 127.0.0.1 with a per-run token; the sheet is a-Shell's
+    internal browser. No dependency, no build step.
 - **Never send the Apple ID or password to any remote server we do not control.**
 - A **free Apple ID must be enough** (no paid developer account).
 - Development runs in a GitHub Codespace (Linux). We **cannot test on an iPhone** — the user
@@ -113,9 +103,10 @@ The a-Shell interface (no Shortcuts):
 - **Localization**: all user-facing text (script messages, README) lives in
   per-language files so adding a language = adding a file. English first; translations only in
   the final phase, using the cheap model, after asking which languages.
-- Interface: a plain text flow in a-Shell (`sh barisign`), **no Shortcuts** and no generated
-  `.shortcut` files. Every prompt is one line and every answer is a number, `y`/`n` or a pasted value,
-  so a first-time user can follow it without help. All user-facing strings live in the i18n files.
+- Interface: the web page (`sh barisign`), **no Shortcuts** and no generated
+  `.shortcut` files. Questions are fields and buttons; the log mirrors the terminal.
+  `sh barisign one` stays as the terminal fallback. Audio keep-alive must be holdable
+  from the page; never add a background mode we cannot hold from Python.
 
 ## Variant rules
 
@@ -142,15 +133,12 @@ The a-Shell interface (no Shortcuts):
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
 - Bump `VERSION` in `poc/barisign.py` on every functional commit (0.9.x line; never 1.0.0): the installer title prints
   the version being installed, so the user can see the update arrived.
-- Stages 1–2 are verified on device; pairing (M1–M6 over raw broadcast) is verified on
-  device; the tunnel/install engine is written and Linux-tested. iOS 27 accepts only
-  device-initiated network pairing, which is what BariSign does. The plan is `docs/PLAN_V2.md`,
-  verified facts are in `docs/RESULTS.md`, the session handoff in `docs/NEXT_SESSION.md`.
-- Version line: `0.9.x` until the user declares stable — never jump to 1.0.0; `sh update` +
-  `sh install.sh` stay the only update paths.
-- Next: the on-device install (`pair` to Trust + open). Do not spend more effort on a-Shell-only
-  pairing paths (DNS-SD, raw mDNS, host-initiated dialing: settled with device evidence) or on
-  single-device/background paths (0.9.19: `--loopback` + `--keep-awake` experiment in `docs/SINGLE_DEVICE.md` sect. 5; report device results, do not expand blind).
+- Verified on device: sign-in, portal, signing, launch; pairing M1–M6 over raw broadcast.
+  Written + Linux-tested, on-device run pending: loopback pairing, web sheet, devmode toggle,
+  loopback install. Plan: `docs/PLAN_V2.md`; facts: `docs/RESULTS.md`; handoff:
+  `docs/NEXT_SESSION.md`. Pre-rewrite two-device notes live in git history.
+- Next: the on-device gates in `docs/NEXT_SESSION.md` (sheet, loopback pairing + keep-alive,
+  devmode toggle, install to Trust + open). Report device results; do not expand blind.
 
 ## Verified / unverified convention
 

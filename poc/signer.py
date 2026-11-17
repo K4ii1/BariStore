@@ -34,8 +34,8 @@
 #
 #  STATUS: VERIFIED ON DEVICE: the signed IPA installed on a device, Trust
 #          Developer was offered, and the app launched after the app-group fix.
-#          The signer -> target Wi-Fi install (`sh barisign pair`) is the
-#          remaining untested path.
+#          The loopback install (`sh barisign pair`) is the remaining
+#          untested path.
 #
 #  RUN IT
 #  ------

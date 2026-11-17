@@ -67,7 +67,8 @@ as-is; no code is copied from them here.
 | idevice (`jkcoxson/idevice`) | MIT | protocol reference; **preferred source** for reimplementation |
 | zsign (`zhlynn/zsign`) | MIT | reference for the Apple CMS layout |
 | pymobiledevice3 (`doronz88/pymobiledevice3`) | GPL-3.0 | protocol reference only for the pure engine; **not installed at run time**, not vendored and not redistributed. No code is copied into this repository. |
-| a-Shell (`holzschu/a-Shell`) | BSD-3-Clause | the on-device runtime (user installs it); `docs/SINGLE_DEVICE.md` cites its `Info.plist`/intents sources for the background analysis |
+| a-Shell (`holzschu/a-Shell`) | BSD-3-Clause | the on-device runtime (user installs it) |
+| siboot (`FrizzleM/siboot`) | MIT | protocol reference for the devmode toggle + page model; no code copied |
 | LocalDevVPN / StosVPN | see upstream | runtime dependency (user installs it) |
 | anisette servers | see upstream | network service at runtime |
 
@@ -77,6 +78,25 @@ as-is; no code is copied from them here.
 `mdns.py` are original MIT implementations written from the **MIT** `jkcoxson/idevice` protocol
 sources (`remote_pairing/`, `xpc/`, `services/`) and Apple's publicly documented wire formats. They
 contain no code from `pymobiledevice3` (GPL-3.0) or `third_party/sideinstaller/` (non-commercial).
+
+## The Developer Mode + web UI code (new, MIT)
+
+`poc/devmode.py` (lockdownd GetValue + AMFI `{"action": N}` over the tunnel) and `poc/webui.py`
+(loopback page, per-run token, Host check) are original MIT implementations written from the
+**MIT** `jkcoxson/idevice` sources (`services/lockdown.rs`, `services/amfi.rs`) and the **MIT**
+`FrizzleM/siboot` flow documentation (`minis/src/devmode.rs`, `minis/src/web.rs`, `rootshell/`
+keepalive notes). Protocol facts only (service names, action numbers, the token-path page model);
+no copied code.
+
+## Why the sign-in + portal still uses the vendored copy
+
+`third_party/sideinstaller/signin.py` (Apple GSA/SRP/anisette/GrandSlam) and `portal.py`
+(developerservices2: teams, devices, certificates, App IDs, groups, profiles) are still the
+ported SideInstaller files. A clean-room rewrite from MIT sources (isideload/idevice) is the
+same multi-thousand-line job with live-Apple regression risk on every step, and the account
+flow is exactly what must not break while the device gates are being tested. So the rewrite
+stays future work: the copy stays isolated under its own licence, is never imported into MIT
+files, and shrinks only by deliberate, tested replacement — not by bulk.
 
 ## Licence policy for future work
 

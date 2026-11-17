@@ -2,7 +2,8 @@
 # =============================================================================
 #  BariSign — on-device installer (MIT)
 #
-#  Runs on the SIGNER device (a-Shell). The target needs Safari + Settings only.
+#  Runs on this iPhone (a-Shell). Single device: pairing, tunnel and install
+#  all go through the LocalDevVPN loopback.
 #
 #      python3 -u poc/barisign.py            guided run
 #      python3 -u poc/barisign.py udid       pair the target, save its UDID
@@ -67,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.22"
+VERSION = "0.9.23"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1474,113 +1475,6 @@ def cmd_sign(argv):
     return 0
 
 
-def cmd_guided(argv):
-    """check -> Apple ID -> variant -> download -> portal -> pairing/UDID ->
-    sign -> [trigger] -> install."""
-    state = load_state()
-    print("BariSign %s" % VERSION)
-    if poc_login._selftest(quiet=True) != 0:
-        print("check  fail: run 'sh barisign check' for the details")
-        return 1
-    print("check  ok")
-
-    email = state.get("email") or ""
-    if not email:
-        # Same rule as `login`: the stage comes first, the address is asked on it.
-        _stage("Apple sign-in")
-        email = _ask("  Apple ID: ").strip()
-        if not email:
-            print("no Apple ID")
-            return 2
-    session = _login_session(email, staged=not state.get("email"))
-    update_state(email=email)
-    state = load_state()
-
-    variants = load_variants()
-    if variants:
-        _choose_variant(state, variants)
-        state = load_state()
-
-    _stage("Download")
-    ipa, _info = _obtain_ipa(state, argv)
-    if not ipa:
-        return 1
-    if _info.get("bundle_id"):
-        if _adopt_custom_bundle_id(_info["bundle_id"]) is None:
-            return 1
-        state = load_state()
-
-    # Pairing needs the Paired Macs screen, which needs Developer Mode — so
-    # the question comes before portal's internal pairing. A saved pairing
-    # means Developer Mode is already there.
-    has_record = os.path.isfile(os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist"))
-    if has_record:
-        have_devmode = True
-    else:
-        _stage("Developer Mode")
-        print("  on the target, open:")
-        print("    Settings > Privacy & Security > Developer Mode")
-        print("    (or Settings > Developer)")
-        have_devmode = _yes("  is Developer Mode there?",
-                            default=bool(state.get("paired")))
-        if not have_devmode:
-            # No UDID page anymore: pairing is the only source. The attempt
-            # itself can reveal the Developer Mode setting (Apple docs), and
-            # the trigger step after signing covers the rest.
-            print("  no UDID page: pairing now; it can reveal Developer Mode")
-
-    udid = _ensure_udid(loopback=False)
-    if not udid:
-        return 1
-    state = load_state()
-
-    result = _portal(session, email, udid, state.get("bundle_id", ""),
-                     "BariSign device",
-                     app_display_name(variant_id=state.get("variant", ""),
-                                      bundle_id=state.get("bundle_id", "")))
-    update_state(bundle_id=result["bundle_id"], team_id=result["team_id"],
-                 profile=result["profile"], key=result["key"], cert=result["cert"])
-    _result("PORTAL", "ok")
-
-    # The install needs a live pairing. Skipped when portal just paired,
-    # so one run asks for one PIN.
-    state = load_state()
-    if _ensure_pairing(loopback=False) != 0:
-        return 1
-    state = load_state()
-
-    _stage("Sign")
-    saved = signer.find_saved_paths(STATE_DIR)
-    # The .zip is only a convenience copy for manual sharing; the install
-    # uses the .ipa, so the guided run skips it.
-    result = _sign_now(ipa, saved, argv, hint=False, make_zip=False)
-    if result is None:
-        return 1
-    if not have_devmode:
-        _stage("Developer Mode")
-        print("  the target needs Developer Mode before installing.")
-        print("  on the signer, open the signed IPA and share it")
-        print("  to the target (AirDrop). on the target, tap it once,")
-        print("  then delete it. the switch appears after the attempt.")
-        if _yes("  open the signed IPA for sharing now?", True):
-            _share_file(result["ipa"])
-        print("  after tapping: turn on Developer Mode on the target,")
-        print("  then delete the shared file from the target.")
-        _ask("  press Enter when done: ")
-        # Developer Mode is on now, so the Paired Macs screen is reachable.
-        if cmd_udid([]) != 0:
-            return 1
-        state = load_state()
-    if "--no-install" not in argv and _yes("  install on the target now?", True):
-        pair = os.path.join(_HERE, "pair_install.py")
-        command = [sys.executable, "-u", pair, "--ipa", result["ipa"]]
-        paired = load_state()
-        if paired.get("paired") and paired.get("udid"):
-            command += ["--udid", paired["udid"]]
-        return subprocess.call(command)
-    return 0
-
-
 def cmd_one(argv):
     """Single-device full install: check -> Apple ID -> variant -> download ->
     portal -> pair -> sign -> install. No flags: loopback and keep-awake are
@@ -1589,7 +1483,7 @@ def cmd_one(argv):
     if "--help" in argv or "-h" in argv or "help" in argv:
         print("BariSign %s" % VERSION)
         print()
-        print("  sh barisignone   single-device full install, no flags needed")
+        print("  sh barisign one   terminal single-device run (no web page)")
         print("  needs LocalDevVPN connected on this device; volume audible")
         return 0
     pair = os.path.join(_HERE, "pair_install.py")
@@ -1697,15 +1591,11 @@ COMMANDS = {
     "login": cmd_login,
     "portal": cmd_portal,
     "sign": cmd_sign,
-    "all": cmd_guided,
     "one": cmd_one,
 }
 
 
 _OPTIONS = {
-    "all": (
-        ("--no-install", "do not start the target install after signing"),
-    ),
     "pair": (
         ("--pair-only", "pair, print the UDID and write the pairing file"),
         ("--ipa FILE", "install this signed IPA"),
@@ -1718,6 +1608,8 @@ _OPTIONS = {
         ("--loopback", "EXPERIMENTAL same-device install via LocalDevVPN"),
         ("--loopback-port P", "loopback port (default: probe 49152 + range)"),
         ("--keep-awake", "EXPERIMENTAL speech loop to hold the process"),
+        ("--devmode CMD", "Developer Mode: status, show or on"),
+        ("--no-devmode", "skip the Developer Mode check"),
         ("--raw-mdns", "force raw advertisement (automatic on a-Shell)"),
         ("--target-ip IP", "also send unicast mDNS to the target"),
         ("--repair", "new host identity; the target asks to pair again"),
@@ -1745,12 +1637,12 @@ _OPTIONS = {
 def _usage():
     print("BariSign %s" % VERSION)
     print()
-    print("  sh barisign           guided run")
-    print("  sh barisign udid      pair the target, save its UDID")
+    print("  sh barisign           web UI: the whole install on this iPhone")
+    print("  sh barisign udid      pair this iPhone, save its UDID")
     print("  sh barisign login     Apple sign-in")
     print("  sh barisign portal    UDID + certificate + profile")
     print("  sh barisign sign      download, sign and zip the chosen variant")
-    print("  sh barisign pair      pair the target and install over Wi-Fi")
+    print("  sh barisign pair      pair over loopback and install the newest IPA")
     print("  sh barisign status    what is saved")
     print("  sh barisign check     diagnostics only")
     print("  sh barisign version   which copy is running")
@@ -1772,7 +1664,8 @@ def _options(command):
 
 def main(argv):
     if not argv:
-        return cmd_guided([])
+        import webui
+        return webui.run()
     if argv[0] in ("-h", "--help", "help"):
         _usage()
         return 0
