@@ -49,7 +49,7 @@ A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
 
 `Stop` (or Ctrl-C in the terminal) ends the run any time. Nothing is half-installed.
 
-Prefer the terminal? `sh barisign one` runs the same pipeline without the page (same order,
+Prefer the terminal? `sh barisign shell` runs the same pipeline without the page (same order,
 same loopback, speech instead of page audio for keep-alive).
 
 ---

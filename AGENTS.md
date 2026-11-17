@@ -10,7 +10,7 @@ BariSign + LocalDevVPN + Settings. iOS/iPadOS 27+.
   (2FA supported); the README must say plainly why that is safe.
 - **Single-device flow (2026-11-17 rewrite):** `sh barisign` opens a web page in a-Shell's
   internal browser and runs requirements → Apple ID → variant → download → pairing →
-  Developer Mode → portal → sign → install, all on this iPhone. `sh barisign one` is the
+  Developer Mode → portal → sign → install, all on this iPhone. `sh barisign shell` is the
   terminal fallback (same order). The two-device plan is deleted.
 - **Web UI, not terminal strain:** backend and page talk JSON over 127.0.0.1 with a per-run
   token (siboot's page model). The sheet keeps a-Shell foreground; silence plays while the
@@ -105,7 +105,7 @@ The web interface (no Shortcuts, no terminal strain):
   the final phase, using the cheap model, after asking which languages.
 - Interface: the web page (`sh barisign`), **no Shortcuts** and no generated
   `.shortcut` files. Questions are fields and buttons; the log mirrors the terminal.
-  `sh barisign one` stays as the terminal fallback. Audio keep-alive must be holdable
+  `sh barisign shell` stays as the terminal fallback. Audio keep-alive must be holdable
   from the page; never add a background mode we cannot hold from Python.
 
 ## Variant rules

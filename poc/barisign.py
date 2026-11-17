@@ -68,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.23"
+VERSION = "0.9.24"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1475,7 +1475,7 @@ def cmd_sign(argv):
     return 0
 
 
-def cmd_one(argv):
+def cmd_shell(argv):
     """Single-device full install: check -> Apple ID -> variant -> download ->
     portal -> pair -> sign -> install. No flags: loopback and keep-awake are
     always on, because that is what this command is.
@@ -1483,7 +1483,7 @@ def cmd_one(argv):
     if "--help" in argv or "-h" in argv or "help" in argv:
         print("BariSign %s" % VERSION)
         print()
-        print("  sh barisign one   terminal single-device run (no web page)")
+        print("  sh barisign shell   terminal run without the web page")
         print("  needs LocalDevVPN connected on this device; volume audible")
         return 0
     pair = os.path.join(_HERE, "pair_install.py")
@@ -1591,7 +1591,7 @@ COMMANDS = {
     "login": cmd_login,
     "portal": cmd_portal,
     "sign": cmd_sign,
-    "one": cmd_one,
+    "shell": cmd_shell,
 }
 
 

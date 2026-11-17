@@ -51,7 +51,7 @@ There is **no pip step**: the engine is part of the program files.
 
 ```
 sh barisign          # web UI: the whole install on this iPhone
-sh barisign one      # terminal run without the web page
+sh barisign shell    # terminal run without the web page
 sh barisign status   # what is saved
 sh barisign --help   # every command
 ```

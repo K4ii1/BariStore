@@ -3,7 +3,7 @@
 State: version **0.9.23**. Single-device rewrite: `sh barisign` opens a web UI in a-Shell's
 internal browser and runs the whole pipeline on this iPhone (requirements → Apple ID →
 variant → download → pairing → Developer Mode → portal → sign → install). The two-device
-guided flow is deleted; `sh barisign one` is the terminal fallback (same order, speech
+guided flow is deleted; `sh barisign shell` is the terminal fallback (same order, speech
 keep-alive). Developer Mode comes over the tunnel now (lockdownd GetValue + AMFI action,
 MIT idevice/siboot protocol facts, clean-room code in `poc/devmode.py`): no trigger
 install, no second device.

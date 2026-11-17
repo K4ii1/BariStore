@@ -203,11 +203,11 @@ if [ "$fail" -ne 0 ] || ! works; then
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
     exit 1
 fi
-if [ -d bin ]; then
-    rm -rf bin
-    printf '  retired    bin/ (now: sh barisign, sh update, sh barisignone)\n'
+if [ -d bin ] || [ -f barisignone ]; then
+    rm -rf bin barisignone
+    printf '  retired    bin/ and barisignone (now: sh barisign, sh update)\n'
 fi
 printf 'BariSign %s installed\n\n' "${VER:-?}"
-printf '  sh barisign ready (opens the page)\n'
-printf '  sh barisignone for the one-device experiment\n'
+printf '  sh barisign          opens the page, runs the whole install\n'
+printf '  sh barisign shell    terminal run without the page\n'
 printf '  help: sh barisign help\n'
