@@ -362,8 +362,8 @@ input:focus, select:focus { border-color: var(--accent); }
         <button class="secondary" onclick="clearCache()">Clear IPA Cache</button>
         <button class="secondary" onclick="openSetupWizard()">Run Setup Wizard</button>
         <button class="secondary" onclick="restartBariStore()">Restart BariStore</button>
-        <button class="secondary" onclick="quitServer()">Quit BariStore</button>
       </div>
+      <button class="secondary full" style="margin-top:0.5rem" onclick="quitServer()">Quit BariStore</button>
       <button class="danger full" style="margin-top:0.5rem" onclick="resetBariStore()">Reset BariStore</button>
       <div id="maintOut" class="sub" style="margin-top:0.55rem"></div>
     </div>
@@ -664,13 +664,23 @@ function switchTab(tab) {
 }
 
 /* --- First-Time Onboarding Wizard --- */
-async function enterOnboarding() {
+async function enterOnboarding(force) {
   document.getElementById("viewOnboarding").classList.remove("hidden");
   document.getElementById("viewFeatured").classList.add("hidden");
   document.getElementById("viewMyApps").classList.add("hidden");
   document.getElementById("viewOptions").classList.add("hidden");
   document.getElementById("bottomNav").classList.add("hidden");
   document.getElementById("topActions").classList.add("hidden");
+  try { window.scrollTo(0, 0); } catch (e) {}
+
+  // A forced wizard (Run Setup Wizard / after Reset) must NOT auto-complete
+  // just because the saved state looks valid — that was the "jumps to Options"
+  // bug. It also avoids the slow deep tunnel probe, which made Reset look hung.
+  if (force) {
+    APP.obStep = 1;
+    renderOnboardingStep();
+    return;
+  }
 
   if (APP.job && APP.job.active && APP.job.kind === "pair") {
     APP.obStep = 2;
@@ -700,7 +710,7 @@ async function openSetupWizard() {
   APP.onboarding_complete = false;
   try {
     await apiPost("/api/onboarding/reset", {});
-    await enterOnboarding();
+    await enterOnboarding(true);
   } catch (e) {
     await showAlert("Setup wizard failed to load: " + (e.message || e));
   }
@@ -1807,11 +1817,23 @@ async function openExternalUrl(url) {
   }
 }
 
-async function exportPairingFile() {
+async function exportPairingFile(save) {
   try {
-    const res = await apiPost("/api/pair/export", {});
+    const res = await apiPost("/api/pair/export", { save: Boolean(save) });
     if (!res.ok) {
-      await showAlert(res.error || "Could not export the pairing file.");
+      await showAlert(res.error || "Could not read the pairing file.");
+      return;
+    }
+    if (!save) {
+      openModal(`
+        <h3>Pairing File Preview</h3>
+        <p class="sub" style="margin-bottom:0.6rem">This is the exact XML plist BariStore injects into SideStore / AltStore / StikDebug. Review it, then export it to your Documents folder.</p>
+        <pre style="white-space:pre-wrap;word-break:break-all;max-height:16rem;overflow:auto;background:var(--card2);border:1px solid var(--border);border-radius:0.6rem;padding:0.6rem;font-size:0.72rem">${esc(res.plist_text || "")}</pre>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+          <button class="full" onclick="exportPairingFile(true)">Export &amp; Save</button>
+          <button class="secondary" onclick="closeModal()">Close</button>
+        </div>
+      `);
       return;
     }
     await showAlert(
@@ -1868,7 +1890,7 @@ async function resetBariStore() {
   APP.obStep = 1;
   lastHandledJobId = 0;
   try {
-    await enterOnboarding();
+    await enterOnboarding(true);
     await showAlert("BariStore has been reset. Start again from Step 1.");
   } catch (e) {
     await showAlert("Reset finished, but setup wizard failed to load: " + (e.message || e));

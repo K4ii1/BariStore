@@ -188,32 +188,50 @@ def ssl_context_for(host):
     return SSL_CTX
 
 
+_DNS_CACHE = {}
+_DNS_LOCK = threading.Lock()
+
+
 def _getaddrinfo_bounded(host, port, timeout=8):
-    """getaddrinfo with a hard deadline (system DNS can stall under VPN)."""
-    box = {}
+    """Resolve a hostname robustly, preferring IPv4, with retry and short cache.
 
-    def _run():
-        try:
-            box["v4"] = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
-        except Exception:
-            box["v4"] = None
-        try:
-            box["v6"] = socket.getaddrinfo(host, port, socket.AF_INET6, socket.SOCK_STREAM)
-        except Exception:
-            box["v6"] = None
+    getaddrinfo from a worker thread is unreliable in a-Shell on iOS (it can
+    return EAI_NONAME for otherwise valid hosts). We therefore resolve inline,
+    retry transient failures, and remember successful answers so a later call
+    never fails just because the resolver had a bad moment.
+    """
+    key = (host, int(port or 0))
+    with _DNS_LOCK:
+        cached = _DNS_CACHE.get(key)
+    if cached and (time.time() - cached[0] < 600):
+        return cached[1]
 
-    worker = threading.Thread(target=_run, daemon=True)
-    worker.start()
-    worker.join(max(1.0, float(timeout)))
-    v4 = box.get("v4")
-    v6 = box.get("v6")
-    if v4 and v6:
-        return v4 + v6
-    if v4:
-        return v4
-    if v6:
-        return v6
-    raise socket.gaierror("DNS lookup timed out for %s" % host)
+    last_error = None
+    for attempt in range(3):
+        try:
+            infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        except Exception as exc:
+            last_error = exc
+            infos = None
+        if infos:
+            with _DNS_LOCK:
+                _DNS_CACHE[key] = (time.time(), infos)
+            return infos
+        # Fall back to any-family resolution and keep only IPv4 entries.
+        try:
+            any_infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+            v4 = [item for item in any_infos if item[0] == socket.AF_INET]
+            if v4:
+                with _DNS_LOCK:
+                    _DNS_CACHE[key] = (time.time(), v4)
+                return v4
+            if any_infos:
+                return any_infos
+        except Exception as exc:
+            last_error = exc
+        if attempt < 2:
+            time.sleep(0.3 * (attempt + 1))
+    raise last_error or socket.gaierror("Could not resolve %s" % host)
 
 
 def _connect_preferred_ipv4(host, port, timeout):
@@ -1739,7 +1757,7 @@ def run_network_diagnostics():
         port = parts.port or 443
         entry = {"kind": kind, "host": host, "ok": False, "detail": ""}
         try:
-            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            infos = _getaddrinfo_bounded(host, port)
             ip = infos[0][4][0]
             probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             probe.settimeout(8)
@@ -1752,13 +1770,29 @@ def run_network_diagnostics():
             finally:
                 probe.close()
             if kind == "anisette":
-                status, _, _ = http_request("GET", url.rstrip("/") + "/v3/client_info", timeout=12)
-                entry["ok"] = status == 200
-                entry["detail"] = "%s · HTTP %d" % (version, status)
+                try:
+                    status, _, _ = http_request(
+                        "GET", url.rstrip("/") + "/v3/client_info", timeout=12
+                    )
+                    entry["ok"] = status == 200
+                    entry["detail"] = "%s · HTTP %d" % (version, status)
+                except Exception as hx:
+                    entry["ok"] = True  # TLS/TCP itself worked
+                    entry["detail"] = "%s · HTTP error: %s" % (version, str(hx)[:60])
             else:
                 entry["ok"] = True
                 entry["detail"] = "%s · %s" % (ip, version)
         except Exception as exc:
-            entry["detail"] = str(exc)[:120]
+            # A raw EAI_NONAME is confusing on iOS. Retry once using the
+            # hostname directly (system resolver path) before giving up.
+            try:
+                direct = socket.create_connection((host, port), timeout=8)
+                ctx = ssl_context_for(host)
+                tls = ctx.wrap_socket(direct, server_hostname=host)
+                tls.close()
+                entry["ok"] = True
+                entry["detail"] = "TLS %s (direct)" % host
+            except Exception:
+                entry["detail"] = "DNS/connect failed: %s" % str(exc)[:100]
         results.append(entry)
     return results

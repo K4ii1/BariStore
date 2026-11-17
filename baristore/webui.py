@@ -182,13 +182,12 @@ def start_pairing_worker(fresh_identity=False):
     with _LOCK:
         if _JOB["active"]:
             if _JOB.get("kind") == "pair":
-                # Already advertising — caller can re-read the current PIN.
                 return
             raise RuntimeError("Another operation is currently running.")
-    pin = "%06d" % secrets.randbelow(1000000)
-    my_id = _start_job(
-        "pair", "Device Pairing", "Generating pairing code…", pin=pin
-    )
+    # No PIN here: the code is generated when the device initiates Pair-Setup
+    # and is pushed through on_pin(), so it appears exactly when the Settings
+    # prompt is shown (Apple / SideInstaller behaviour).
+    my_id = _start_job("pair", "Device Pairing", "Waiting for device in Settings…")
 
     def _worker():
         try:
@@ -209,7 +208,6 @@ def start_pairing_worker(fresh_identity=False):
             _rec, udid, info = _run_coro(
                 tunnel.pair_with_device(
                     timeout=600,
-                    pin=pin,
                     fresh_identity=fresh_identity,
                     on_pin=on_pin,
                     on_status=on_status,
@@ -958,38 +956,45 @@ class _Handler(BaseHTTPRequestHandler):
 
             if route == "/api/pair/start":
                 start_pairing_worker(fresh_identity=bool(body.get("fresh")))
-                with _LOCK:
-                    pin = _JOB.get("pin") if _JOB.get("active") else None
-                self._send_json(200, {"ok": True, "pin": pin})
+                # The code is generated on M1, not here — it arrives through
+                # /api/status as soon as Settings shows its pairing prompt.
+                self._send_json(200, {"ok": True, "pin": None})
                 return
 
             if route == "/api/pair/export":
                 raw = storage.export_pairing_bytes()
                 saved = []
-                docs = os.path.join(os.path.expanduser("~"), "Documents")
-                candidates = [docs, os.path.expanduser("~"), storage.ROOT]
-                for folder in candidates:
-                    if not folder or not os.path.isdir(folder):
-                        continue
-                    try:
-                        out_file = os.path.join(
-                            folder, "BariStore-Pairing.mobiledevicepairing"
-                        )
-                        with open(out_file, "wb") as handle:
-                            handle.write(raw)
-                        if out_file not in saved:
-                            saved.append(out_file)
-                    except OSError:
-                        pass
-                self._send_json(
-                    200,
-                    {
-                        "ok": True,
-                        "paths": saved,
-                        "data_base64": base64.b64encode(raw).decode(),
-                        "message": "Pairing file saved to Documents/BariStore-Pairing.mobiledevicepairing",
-                    },
-                )
+                result = {
+                    "ok": True,
+                    "plist_text": raw.decode("utf-8", "replace"),
+                    "data_base64": base64.b64encode(raw).decode(),
+                    "paths": [],
+                    "message": "Preview only — tap Export & Save to write the file.",
+                }
+                # Default to saving for backwards compatibility; the UI asks
+                # for a preview first with {"save": false}.
+                if body.get("save", True):
+                    docs = os.path.join(os.path.expanduser("~"), "Documents")
+                    for folder in (docs, os.path.expanduser("~"), storage.ROOT):
+                        if not folder or not os.path.isdir(folder):
+                            continue
+                        try:
+                            out_file = os.path.join(
+                                folder, "BariStore-Pairing.mobiledevicepairing"
+                            )
+                            with open(out_file, "wb") as handle:
+                                handle.write(raw)
+                            if out_file not in saved:
+                                saved.append(out_file)
+                        except OSError:
+                            pass
+                    result["paths"] = saved
+                    result["message"] = (
+                        "Pairing file saved to Documents/BariStore-Pairing.mobiledevicepairing"
+                        if saved
+                        else "Could not write the pairing file to a local folder."
+                    )
+                self._send_json(200, result)
                 return
 
             if route == "/api/pair/import":

@@ -103,8 +103,13 @@ def main():
     assert "restartBariStore" in script and "exportPairingFile" in script
     assert 'onclick="restartBariStore()"' in html
     assert 'onclick="exportPairingFile()"' in html
+    q = html.index('onclick="quitServer()"')
+    r = html.index('onclick="resetBariStore()"')
+    assert q < r and 'secondary full' in html[q - 90:q], "Quit must sit above Reset, full-width and not red"
+    print("ok  1c Quit button sits directly above Reset, full-width and non-red")
     assert "obPinWrap" in script and "optPinWrap" in script
     assert "job.kind === \"update\"" in script
+    assert "enterOnboarding(true)" in script, "forced wizard must not auto-complete"
     assert "onerror=\"this.remove()\"" in script, "broken icon fallback returned"
     print("ok  1a UI has in-app dialogs, restart/export buttons, PIN surfaces")
     open("/tmp/opencode/regression-ui.js", "w").write(script)
@@ -234,12 +239,9 @@ def main():
         # ---------- 7. pairing PIN returned instantly ----------
         webui._JOB["active"] = False
         status, res = _post(server, "/%s/api/pair/start" % server.token, {"fresh": False})
-        assert status == 200 and res.get("pin"), (status, res)
-        pin = res["pin"]
-        assert re.fullmatch(r"\d{6}", pin), pin
-        assert webui._JOB["pin"] == pin
-        webui.cancel_active_job()
-        print("ok  7 /api/pair/start returns 6-digit PIN immediately:", pin)
+        assert status == 200 and res.get("pin") is None, (status, res)
+        assert webui._JOB["active"] and webui._JOB["kind"] == "pair"
+        print("ok  7 /api/pair/start returns no pre-generated PIN (generated on M1)")
 
         # Idempotency verified with a deliberately blocking pairing coroutine
         # (the real one cannot stay alive in this VPN-less test container).
@@ -252,9 +254,12 @@ def main():
             webui.start_pairing_worker()
             first = webui._JOB["pin"]
             webui.start_pairing_worker()
-            assert webui._JOB["pin"] == first, "second start changed the PIN"
+            assert webui._JOB["pin"] == first, "second start changed the state"
+            # Simulate the M1 callback publishing the freshly generated code.
+            webui._JOB["pin"] = "123456"
+            webui._JOB["step"] = "Enter PIN 123456 in Settings"
         webui.cancel_active_job()
-        print("ok  7b repeated Start Pairing is idempotent (same PIN)")
+        print("ok  7b repeated Start Pairing is idempotent; M1 pushes the code")
 
         # ---------- 8. export pairing POST ----------
         rec = {
@@ -267,12 +272,15 @@ def main():
         b64 = base64.b64encode(plistlib.dumps(rec, fmt=plistlib.FMT_XML)).decode()
         status, _ = _post(server, "/%s/api/pair/import" % server.token, {"data_base64": b64})
         assert status == 200
-        status, res = _post(server, "/%s/api/pair/export" % server.token)
+        status, preview = _post(server, "/%s/api/pair/export" % server.token, {"save": False})
+        assert status == 200 and "<plist" in preview["plist_text"], preview
+        assert preview["paths"] == []
+        status, res = _post(server, "/%s/api/pair/export" % server.token, {"save": True})
         assert status == 200 and res["ok"] and res["data_base64"], (status, res)
         exported = plistlib.loads(base64.b64decode(res["data_base64"]))
         assert exported["identifier"] == "REG-HOST"
         assert res["paths"], res
-        print("ok  8 POST /api/pair/export saves file + returns base64")
+        print("ok  8 POST /api/pair/export preview + save both work")
 
         # ---------- 9. reset / onboarding / restart / shutdown routes ----------
         assert _post(server, "/%s/api/onboarding/reset" % server.token)[0] == 200
@@ -303,7 +311,7 @@ def main():
     variants = [v for v in cfg["store_variants"] if "livecontainer" in v["id"]]
     assert len(variants) == 4
     for v in variants:
-        assert "DefaultIcon.png" in v["icon_url"], v
+        assert "AppIcon1024.png" in v["icon_url"], v
         assert v["icon_url"].startswith("https://"), v
     print("ok 11 LiveContainer icons fixed in sources.json (4 variants)")
 
@@ -314,10 +322,11 @@ def main():
             cli.main([])
         assert clear.called
     buf = io.StringIO()
-    with mock.patch.object(sys, "stdout", buf), mock.patch.object(cli.subprocess, "Popen"):
+    with mock.patch.object(sys, "stdout", buf):
         rc = cli.main(["--help"])
-    assert rc == 0 and "restart" in buf.getvalue()
-    print("ok 12 terminal clear on launch; restart subcommand in help")
+    assert rc == 0 and "restart" not in buf.getvalue()
+    assert "restartBariStore" in ui_page.render_html("T", VERSION)
+    print("ok 12 terminal clear; restart lives only in Web UI, not terminal")
 
     # ---------- 13. cancel flag + stale job guard ----------
     my_id = webui._start_job("install", "T", "s")
@@ -339,6 +348,22 @@ def main():
     # ---------- 14. bounded DNS ----------
     assert len(apple._getaddrinfo_bounded("gsa.apple.com", 443)) >= 1
     print("ok 14 bounded DNS resolves Apple host")
+
+    # 15. A transient EAI_NONAME must be retried, not reported to the user.
+    real_getaddrinfo = apple.socket.getaddrinfo
+    attempts = []
+
+    def _flaky(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise apple.socket.gaierror(-2, "[Errno 8] nodename nor servname provided")
+        return real_getaddrinfo(*args, **kwargs)
+
+    apple._DNS_CACHE.clear()
+    with mock.patch.object(apple.socket, "getaddrinfo", side_effect=_flaky):
+        infos = apple._getaddrinfo_bounded("gsa.apple.com", 443)
+    assert infos and len(attempts) >= 2, attempts
+    print("ok 15 transient DNS failure retried transparently (%d attempts)" % len(attempts))
 
     print("\nALL REGRESSION TESTS PASSED")
 

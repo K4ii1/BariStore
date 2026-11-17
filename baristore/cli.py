@@ -8,7 +8,6 @@
 # =============================================================================
 
 import os
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -40,20 +39,7 @@ def main(argv=None):
         except Exception as exc:
             print("  ! Update failed: %s" % exc)
             return 1
-    if argv and argv[0] in ("restart", "--restart"):
-        try:
-            subprocess.Popen(
-                [sys.executable, os.path.abspath(__file__)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            print("BariStore restarting in a new window…")
-            return 0
-        except Exception as exc:
-            print("  ! Restart failed: %s" % exc)
-            return 1
+
     if argv and argv[0] in ("--version", "-v", "version"):
         print("BariStore %s" % VERSION)
         return 0
@@ -64,7 +50,6 @@ def main(argv=None):
         print()
         print("  baristore          open BariStore UI")
         print("  baristore update   update BariStore in place")
-        print("  baristore restart  relaunch BariStore in a new window")
         return 0
     return webui.run(open_browser=True)
 

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import struct
 import sys
 
@@ -101,12 +102,16 @@ class MockClient:
         m2 = await self.pairing_data()
         salt, b_pub = m2[2], m2[3]
 
+        pin = self.pin() if callable(self.pin) else self.pin
+        if asyncio.iscoroutine(pin):
+            pin = await pin
+
         n, g, k = pairing.SRP_N, pairing.SRP_G, pairing.SRP_K
         a = int.from_bytes(os.urandom(32), "big")
         A = pow(g, a, n)
         B = int.from_bytes(b_pub, "big")
         u = pairing._hi(pairing._pad(A), pairing._pad(B))
-        x = pairing._hi(salt, pairing._h(("Pair-Setup:%s" % self.pin).encode()))
+        x = pairing._hi(salt, pairing._h(("Pair-Setup:%s" % pin).encode()))
         S = pow((B - k * pow(g, x, n)) % n, a + u * x, n)
         key = pairing._h(pairing._min_bytes(S))
         group = pairing._hi(pairing._min_bytes(n)) ^ pairing._hi(pairing._min_bytes(g))
@@ -191,6 +196,38 @@ async def main():
     writer.close()
     server.close()
     await server.wait_closed()
+
+    # Second scenario: no precomputed verifier. The host must generate the
+    # code on M1 and report it through pin_callback (Apple/SideStore style).
+    loop = asyncio.get_running_loop()
+    pin_ready = loop.create_future()
+    instant_pins = []
+
+    def on_pin(code):
+        instant_pins.append(code)
+        if not pin_ready.done():
+            pin_ready.set_result(code)
+
+    async def instant_handler(reader, writer):
+        host = pairing.PairableHost(reader, writer, identity)
+        try:
+            await host.accept(on_pin)
+        finally:
+            writer.close()
+
+    async def get_pin():
+        return await pin_ready
+
+    instant_server = await asyncio.start_server(instant_handler, "127.0.0.1", 0)
+    instant_port = instant_server.sockets[0].getsockname()[1]
+    r2, w2 = await asyncio.open_connection("127.0.0.1", instant_port)
+    client2 = MockClient(r2, w2, get_pin)
+    await asyncio.wait_for(client2.run(), 10)
+    assert len(instant_pins) == 1 and re.fullmatch(r"\d{6}", instant_pins[0]), instant_pins
+    w2.close()
+    instant_server.close()
+    await instant_server.wait_closed()
+    print("ok  pairing host generates PIN instantly on M1")
 
 
 if __name__ == "__main__":
