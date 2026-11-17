@@ -1,6 +1,6 @@
 # Next session — handoff (2026-11-17)
 
-State: version **0.9.18**. `sh barisign` is the short form of `sh bin/barisign` (same program; updates stay `sh bin/update` + `sh install.sh`). The signer-hosted UDID page is **removed**: no HTTP server, no median link, no `--manual`/`--page` — pairing is the only UDID source (`sh barisign udid` pairs, or takes a pasted UDID). If Developer Mode cannot be opened with a plain unsigned IPA, the page comes back. Guided order is unchanged otherwise, guided flow reordered (Apple ID → devmode check → pairing/UDID →
+State: version **0.9.19**. Experimental same-device path: `sh barisign pair --loopback --pair-only --keep-awake` (LocalDevVPN loopback + speech keep-alive; UNVERIFIED, see `docs/SINGLE_DEVICE.md` §5). `sh barisign` is the short form of `sh bin/barisign` (same program; updates stay `sh bin/update` + `sh install.sh`). The signer-hosted UDID page is **removed**: no HTTP server, no median link, no `--manual`/`--page` — pairing is the only UDID source (`sh barisign udid` pairs, or takes a pasted UDID). If Developer Mode cannot be opened with a plain unsigned IPA, the page comes back. Guided order is unchanged otherwise, guided flow reordered (Apple ID → devmode check → pairing/UDID →
 variant → download → portal → sign → install). Signing, the developer portal, the UDID fallback
 page and the self-updater are unchanged and still work. The download step now prints the
 resolved version before fetching (`SideStore 0.6.0 (24.1 MB)`, nightly by asset date) and

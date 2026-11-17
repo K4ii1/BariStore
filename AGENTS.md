@@ -149,7 +149,7 @@ The a-Shell interface (no Shortcuts):
   `sh install.sh` stay the only update paths.
 - Next: the on-device install (`pair` to Trust + open). Do not spend more effort on a-Shell-only
   pairing paths (DNS-SD, raw mDNS, host-initiated dialing: settled with device evidence) or on
-  single-device/background paths (settled against the a-Shell sources in `docs/SINGLE_DEVICE.md`).
+  single-device/background paths (0.9.19: `--loopback` + `--keep-awake` experiment in `docs/SINGLE_DEVICE.md` sect. 5; report device results, do not expand blind).
 
 ## Verified / unverified convention
 

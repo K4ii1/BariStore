@@ -67,7 +67,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.18"
+VERSION = "0.9.19"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1444,6 +1444,9 @@ _OPTIONS = {
         ("--setup", "verify the pure engine (nothing is downloaded)"),
         ("--timeout N", "give up if the target does not pair"),
         ("--host IP", "use this target address; the pairing port is scanned"),
+        ("--loopback", "EXPERIMENTAL same-device install via LocalDevVPN"),
+        ("--loopback-port P", "loopback port (default: probe 49152 + range)"),
+        ("--keep-awake", "EXPERIMENTAL speech loop to hold the process"),
         ("--raw-mdns", "force raw advertisement (automatic on a-Shell)"),
         ("--target-ip IP", "also send unicast mDNS to the target"),
         ("--repair", "new host identity; the target asks to pair again"),

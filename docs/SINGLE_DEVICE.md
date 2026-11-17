@@ -27,22 +27,27 @@ The two roles are not a UI choice; iOS enforces them:
   Paired Macs list, does not issue a pairing record, and does not turn the
   device into a pairing host for itself. See `docs/DEVELOPER_MODE.md`.
 
-So there is no `sh bin/barisign one` that installs on the same device, and we
-deliberately do **not** ship one: it would fail at the pairing screen with no
-way forward. When only one device is at hand, do everything that does not need
-a target (next section), then run `pair` when the second device is back.
+So there is no `sh barisign one` that installs on the same device by default — but
+since 0.9.19 there is an **experimental** attempt path: `sh barisign pair --loopback`
+(++`--pair-only` first to test without installing). It reuses the whole tunnel/install
+engine unchanged against the LocalDevVPN loopback (`10.7.0.1`, port probed) instead of the
+Wi-Fi target, and `--keep-awake` loops speech to hold the process while you enter the PIN
+in Settings. What it still cannot do: make the *same phone's* Settings list us (unverified —
+check with your eyes whether BariSign appears in Paired Macs on the same device), and no
+script can *guarantee* background survival. Full experiment steps in §5.
 
 ### What works with a single device today
 
 | Step | Needs a target? | Command |
 |---|---|---|
-| Self-check of the pure engine | no | `sh bin/barisign pair --check` |
+| Self-check of the pure engine | no | `sh barisign pair --check` |
 | Resolve the current release (proves freshness, downloads nothing) | no | part of `sign`: version line first |
-| Download the current IPA + size/SHA-256 check | no | `sh bin/barisign sign` (stops cleanly if portal data is missing) |
-| Apple sign-in + anisette | no | `sh bin/barisign login` |
-| Portal (device/cert/App ID/profile) once a UDID is saved | needs only the saved UDID, not the device in hand | `sh bin/barisign portal` |
-| Sign + verify + preflight | no | `sh bin/barisign sign` |
-| Install + pairing-file write | **yes, the target** | `sh bin/barisign pair` |
+| Download the current IPA + size/SHA-256 check | no | `sh barisign sign` (stops cleanly if portal data is missing) |
+| Apple sign-in + anisette | no | `sh barisign login` |
+| Portal (device/cert/App ID/profile) once a UDID is saved | needs only the saved UDID, not the device in hand | `sh barisign portal` |
+| Sign + verify + preflight | no | `sh barisign sign` |
+| Install + pairing-file write | **yes, the target** | `sh barisign pair` |
+| Same-device experiment (LocalDevVPN loopback) | **experimental, §5** | `sh barisign pair --loopback --pair-only` first |
 
 ## 2. Background execution — checked against the a-Shell sources (2026-11-17)
 
@@ -91,7 +96,7 @@ decision is documented, not implemented.
 This still needs **two physical devices**; it only puts both windows on one
 screen so nothing gets suspended:
 
-1. Open a-Shell, start `sh bin/barisign pair`, leave it visible in half of a
+1. Open a-Shell, start `sh barisign pair`, leave it visible in half of a
    Split View (or a Stage Manager window).
 2. Keep Safari/Settings on the *other* device for the target steps — the iPad
    window trick does not replace the target.
@@ -127,3 +132,25 @@ and the target's prompt times out.
 
 Linux-side, `tests/` covers the resolver rules; the live GitHub call itself
 is exercised by every real `sign` run.
+
+## 5. The loopback experiment (0.9.19, UNVERIFIED on a device)
+
+Prerequisites on the one device: **LocalDevVPN installed and connected**, a-Shell foreground,
+volume audible (the keep-alive speaks). Then:
+
+```
+sh barisign pair --loopback --pair-only --keep-awake
+```
+
+1. The signer advertises as **BariSign** (raw broadcast, as usual). Open **Settings ->
+   Developer -> Paired Macs on the SAME device** and look: if BariSign is listed, the same
+   phone can see our broadcast and pairing can proceed — enter the printed PIN.
+2. With a record, the tool probes `10.7.0.1` (explicit `--loopback-port P` wins, else 49152,
+   else a short scan) and runs pair-verify + tunnel + RSD over loopback — the same code as
+   the Wi-Fi path. `--pair-only` stops after the UDID check: **send back** the UDID line or
+   the exact error line plus `state/pair_debug.log`.
+3. If it pairs, drop `--pair-only` to install the newest `-signed.ipa` on the same device.
+
+Report these three separately: (a) same-device Paired Macs lists BariSign yes/no, (b) the
+loopback port that answered (or the LocalDevVPN error), (c) whether `--keep-awake` held us
+while you typed the PIN. Any `no` stops the experiment — that answer is the result.

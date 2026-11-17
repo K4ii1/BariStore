@@ -6,10 +6,12 @@
 #  wheel: every protocol piece is implemented in pure Python on top of the
 #  cryptography 3.4.8 that a-Shell ships.
 #
-#      sh bin/barisign pair                 pair (if needed) and install
-#      sh bin/barisign pair --pair-only     pair, save the UDID, stop
-#      sh bin/barisign pair --check         verify the pure engine imports
-#      sh bin/barisign pair --ipa FILE      install a specific signed IPA
+#      sh barisign pair                 pair (if needed) and install
+#      sh barisign pair --pair-only     pair, save the UDID, stop
+#      sh barisign pair --check         verify the pure engine imports
+#      sh barisign pair --ipa FILE      install a specific signed IPA
+#      sh barisign pair --loopback      EXPERIMENTAL: same-device install
+#                                        through LocalDevVPN (10.7.0.1)
 #
 #  The target only uses Settings > Developer > Paired Macs and then opens the
 #  app.  UNTESTED ON A DEVICE: the tunnel/install path is Linux-tested only.
@@ -22,7 +24,10 @@ import os
 import platform
 import plistlib
 import re
+import shutil
+import subprocess
 import sys
+import threading
 import time
 import traceback
 import zipfile
@@ -96,6 +101,88 @@ def _stage(title, lines=()):
     for line in lines:
         print("  %s" % line)
     print()
+
+
+# --------------------------------------------------------------------------
+# Experimental: same-device loopback + background keep-alive
+# --------------------------------------------------------------------------
+#
+# SideInstaller/StikPair/SideStore do on-device pairing+install from a NATIVE
+# app: silent audio holds the process while the user is in Settings, and a
+# LocalDevVPN loopback (10.7.0.1) reaches the phone's own lockdownd. From a
+# Python guest inside a-Shell only two halves are reachable:
+#   * outbound TCP to the loopback address needs no entitlement (a-Shell has
+#     network.client), so the tunnel/install code runs unchanged against it;
+#   * holding the process while backgrounded has exactly one tool: audible
+#     speech through `say` (no silent-audio API is exposed to Python).
+# Both halves are EXPERIMENTAL and UNVERIFIED on a device.
+
+LOOPBACK_HOST = "10.7.0.1"
+
+_KEEP_AWAKE_TEXT = (
+    "BariSign is pairing. Please stay in Settings and enter the code. "
+    "BariSign is pairing. Please stay in Settings and enter the code."
+)
+
+
+def keep_awake_start():
+    """Speak in a loop so iOS keeps the process alive (best effort).
+
+    Returns a stop function. When `say` is missing (Linux, CI) it is a no-op
+    that reports so. UNVERIFIED: whether speech holds us through a Settings
+    switch on a real device.
+    """
+    if shutil.which("say") is None:
+        _say("  keep-awake   no `say` here; continuing without it")
+        return lambda: None
+    _say("  keep-awake   speaking until pairing ends (lower the volume)")
+    stop = threading.Event()
+
+    def _loop():
+        while not stop.is_set():
+            try:
+                proc = subprocess.Popen(["say", "-r", "90", _KEEP_AWAKE_TEXT])
+            except Exception:                                   # noqa: BLE001
+                return
+            while proc.poll() is None and not stop.is_set():
+                stop.wait(0.5)
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:                                   # noqa: BLE001
+                pass
+
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
+
+    def _stop():
+        stop.set()
+        thread.join(timeout=5)
+
+    return _stop
+
+
+async def loopback_probe(host, explicit_port=0):
+    """Find the RPPairing port behind a LocalDevVPN loopback address.
+
+    Explicit --loopback-port wins; otherwise 49152, otherwise a short scan of
+    the usual range. Raises a plain error naming LocalDevVPN when shut.
+    UNVERIFIED: which port (if any) answers on a real device.
+    """
+    if explicit_port:
+        if await _tcp_open(host, explicit_port, timeout=2.0):
+            return explicit_port
+        raise RuntimeError(
+            "nothing answered on %s:%d "
+            "(is LocalDevVPN installed and connected?)" % (host, explicit_port))
+    if await _tcp_open(host, 49152, timeout=2.0):
+        return 49152
+    found = await scan_ports(host, start=49152, count=64, timeout=2.0, batch=16)
+    if found:
+        return found[0]
+    raise RuntimeError(
+        "nothing answered on %s "
+        "(is LocalDevVPN installed and connected?)" % host)
 
 
 def _udid_ok(value):
@@ -1022,46 +1109,68 @@ async def _run(args):
         entries = registry_upsert(info, RECORD_PATH, peer_ip)
         just_paired = True
 
-    explicit_host = args.get("host", "") or ""
-    explicit_udid = normalise_udid(args.get("udid") or "")
-    interactive = sys.stdin.isatty()
-    if explicit_host:
-        host, port = explicit_host, args.get("port", 0) or 0
-    elif explicit_udid:
-        match = next((entry for entry in entries
-                      if _norm_id(entry.get("udid")) == _norm_id(explicit_udid)), None)
-        if match is not None:
-            record, udid = registry_activate(match)
-        host, port = match.get("peer_ip", "") if match else "", 0
+    loopback = bool(args.get("loopback"))
+    if loopback:
+        # EXPERIMENTAL same-device path: the tunnel/install engine runs
+        # unchanged against the LocalDevVPN loopback instead of the Wi-Fi
+        # target. No discovery, no sweep, no menu.
+        host = args.get("loopback_host") or LOOPBACK_HOST
+        _stage("Loopback", [
+            "same-device experiment via %s" % host,
+            "LocalDevVPN must be installed and connected",
+        ])
+        try:
+            port = await loopback_probe(host, args.get("loopback_port") or 0)
+        except RuntimeError as exc:
+            _say("  ! %s" % exc)
+            return 2
+        _say("  loopback     %s:%d answered" % (host, port))
+        udid = normalise_udid(args.get("udid") or state.get("udid") or udid)
+        save_state(peer_ip=host)
+    else:
+        host, port = "", 0
+
+    if not loopback:
+        explicit_host = args.get("host", "") or ""
+        explicit_udid = normalise_udid(args.get("udid") or "")
+        interactive = sys.stdin.isatty()
+        if explicit_host:
+            host, port = explicit_host, args.get("port", 0) or 0
+        elif explicit_udid:
+            match = next((entry for entry in entries
+                          if _norm_id(entry.get("udid")) == _norm_id(explicit_udid)), None)
+            if match is not None:
+                record, udid = registry_activate(match)
+            host, port = match.get("peer_ip", "") if match else "", 0
+            if not host:
+                host, port = state.get("peer_ip") or peer_ip or "", 0
+        elif entries and interactive and not just_paired:
+            kind, picked = choose_device(entries)
+            if kind == "new":
+                try:
+                    record, udid, peer_ip, info = await pair_fresh(
+                        identity, timeout,
+                        raw=args.get("raw", False), target_ip=args.get("target_ip", ""))
+                except Exception as exc:                        # noqa: BLE001
+                    text = str(exc)
+                    if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
+                        _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
+                        return 2
+                    raise
+                entries = registry_upsert(info, RECORD_PATH, peer_ip)
+                just_paired = True
+                host, port = peer_ip, 0
+            else:
+                record, udid = registry_activate(picked)
+                host, port = picked.get("peer_ip", ""), 0
+        else:
+            if entries:
+                record, udid = registry_activate(entries[0])
+                host, port = entries[0].get("peer_ip", ""), 0
+            else:
+                host, port = state.get("peer_ip") or peer_ip or "", 0
         if not host:
             host, port = state.get("peer_ip") or peer_ip or "", 0
-    elif entries and interactive and not just_paired:
-        kind, picked = choose_device(entries)
-        if kind == "new":
-            try:
-                record, udid, peer_ip, info = await pair_fresh(
-                    identity, timeout,
-                    raw=args.get("raw", False), target_ip=args.get("target_ip", ""))
-            except Exception as exc:                        # noqa: BLE001
-                text = str(exc)
-                if "-65555" in text or "NoAuth" in text or "NSBonjourServices" in text:
-                    _say("  ! a-Shell cannot use Bonjour here; using raw advertisement")
-                    return 2
-                raise
-            entries = registry_upsert(info, RECORD_PATH, peer_ip)
-            just_paired = True
-            host, port = peer_ip, 0
-        else:
-            record, udid = registry_activate(picked)
-            host, port = picked.get("peer_ip", ""), 0
-    else:
-        if entries:
-            record, udid = registry_activate(entries[0])
-            host, port = entries[0].get("peer_ip", ""), 0
-        else:
-            host, port = state.get("peer_ip") or peer_ip or "", 0
-    if not host:
-        host, port = state.get("peer_ip") or peer_ip or "", 0
 
     # a-Shell can neither advertise nor browse Bonjour (-65555 on both), so
     # skip discovery there entirely: the paired address plus scans replace it.
@@ -1090,7 +1199,7 @@ async def _run(args):
     _stage("Pairing", ["target:  %s" % host])
 
     session = None
-    explicit = bool(args.get("host", ""))
+    explicit = bool(args.get("host", "")) or loopback
     try:
         while True:
             try:
@@ -1199,6 +1308,10 @@ def main(argv):
         _say("sh barisign pair --udid UDID     use an already paired target")
         _say("sh barisign pair --import FILE   use a pairing file from another host")
         _say("sh barisign pair --host IP          use this target address (port is scanned)")
+        _say("sh barisign pair --loopback        EXPERIMENTAL same-device install via LocalDevVPN")
+        _say("sh barisign pair --loopback-port P loopback port (default: probe 49152 + range)")
+        _say("sh barisign pair --loopback-host IP loopback address (default 10.7.0.1)")
+        _say("sh barisign pair --keep-awake      EXPERIMENTAL speech loop to hold the process")
         _say("sh barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
         _say("sh barisign pair --target-ip IP  also send unicast mDNS to the target")
         _say("sh barisign pair --export [FILE] copy the pairing file out (for manual import)")
@@ -1221,6 +1334,9 @@ def main(argv):
         "port": int(value("--port", "0") or 0),
         "import": value("--import"),
         "target_ip": value("--target-ip"),
+        "loopback": "--loopback" in argv,
+        "loopback_host": value("--loopback-host") or LOOPBACK_HOST,
+        "loopback_port": int(value("--loopback-port", "0") or 0),
         "raw": "--raw-mdns" in argv,
         "timeout": int(value("--timeout", "0") or 0) or None,
         "pair_only": "--pair-only" in argv,
@@ -1238,8 +1354,15 @@ def main(argv):
         return check()
     if "--setup" in argv or "--ensure" in argv:
         return check()
+    stop_awake = None
+    if "--keep-awake" in argv:
+        stop_awake = keep_awake_start()
     try:
-        return asyncio.run(_run(args))
+        try:
+            return asyncio.run(_run(args))
+        finally:
+            if stop_awake is not None:
+                stop_awake()
     except KeyboardInterrupt:
         _say("")
         return 130

@@ -113,6 +113,7 @@ target UDID) before uploading anything.
 
 ```
 sh bin/barisign pair                       # pick a paired device, or pair a new one
+sh bin/barisign pair --loopback          # EXPERIMENTAL: same device via LocalDevVPN (docs/SINGLE_DEVICE.md)
 sh bin/barisign pair --export [FILE]       # copy a pairing file out (AirDrop it, or
                                            # import it from the app's own settings)
 ```
