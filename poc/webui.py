@@ -720,6 +720,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 __META__
 <title>BariSign</title>
 <style>
@@ -730,7 +731,9 @@ body { font: 17px/1.45 -apple-system, "Segoe UI", sans-serif; margin: 0;
   padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(2rem + env(safe-area-inset-bottom)); }
 @media (prefers-color-scheme: dark) { body { background: #000; } }
 main { margin: 0 auto; max-width: 34rem; }
-h1 { font-size: 1.4rem; margin: 0 0 .1rem; letter-spacing: -.01em; }
+h1 { font-size: 1.4rem; margin: 0 0 .1rem; letter-spacing: -.01em;
+  display: flex; align-items: center; gap: .6rem; }
+.logo { width: 44px; height: 44px; border-radius: 24%; }
 .sub { color: #666; margin: 0 0 1rem; font-size: .85rem; }
 ol.steps { list-style: none; margin: 0 0 1rem; padding: 0; display: flex;
   flex-wrap: wrap; gap: .3rem; }
@@ -783,7 +786,7 @@ button.secondary { background: #e9e9ee; color: #000; }
 </head>
 <body>
 <main>
-<h1>BariSign</h1>
+<h1><img class="logo" src="icon.svg" alt="">BariSign</h1>
 <p class="sub">one iPhone, no computer. <span>keep-alive <span id="keepalive">__AUDIO__</span></span></p>
 <ol class="steps" id="steps">__STEPS__</ol>
 <div class="card"><h2 id="mtitle">__TITLE__</h2><div class="act" id="mactivity">__ACTIVITY__</div><div id="mbody">__BODY__</div></div>
@@ -1105,6 +1108,18 @@ class _Handler(BaseHTTPRequestHandler):
         if rest in ("", "/"):
             self._page()
             return
+        if rest == "/icon.svg":
+            icon = getattr(self.server, "icon", b"")
+            if not icon:
+                self._json(404, {})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(icon)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(icon)
+            return
         if rest == "/api/panel":
             with _LOCK:
                 rev = _REV["n"]
@@ -1265,9 +1280,15 @@ class _Handler(BaseHTTPRequestHandler):
 def run():
     """Serve the page, open the sheet, run nothing until Start is tapped."""
     token = secrets.token_hex(16)
+    try:
+        with open(os.path.join(_HERE, "..", "barisign.svg"), "rb") as handle:
+            icon = handle.read()
+    except OSError:
+        icon = b""
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     server.token = token
     server.port = server.server_address[1]
+    server.icon = icon
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = "http://127.0.0.1:%d/%s/" % (server.port, token)

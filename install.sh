@@ -116,7 +116,7 @@ download_all() {
                  poc/raw_mdns.py \
                  third_party/sideinstaller/signin.py third_party/sideinstaller/portal.py \
                  third_party/apple-roots/apple-roots.pem third_party/ca-bundle/cacert.pem \
-                 variants.json install.sh; do
+                 variants.json barisign.svg install.sh; do
         if fetch "$_file" "$_file.part"; then
             _n=$((_n + 1))
             if [ -f "$_file" ] && python3 -c "import sys,hashlib

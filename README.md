@@ -1,5 +1,7 @@
 # BariSign
 
+<img src="barisign.svg" width="128" alt="BariSign icon">
+
 Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classic** — on your iPhone or iPad
 **with no computer**, using your own free Apple ID. Everything runs **on the one device**: a-Shell +
 BariSign, LocalDevVPN, and this iPhone itself.

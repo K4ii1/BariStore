@@ -136,6 +136,24 @@ def _forms():
         server.shutdown()
 
 
+def _icon():
+    server = _serve()
+    try:
+        with open(os.path.join(HERE, "..", "barisign.svg"), "rb") as handle:
+            server.icon = handle.read()
+    except OSError:
+        server.icon = b""
+        status, body = _get(server, "/%s/icon.svg" % ("t" * 32))
+        if os.path.isfile(os.path.join(HERE, "..", "barisign.svg")):
+            assert status == 200 and body.lstrip().startswith(b"<svg"), (status, body[:20])
+            print("ok  icon served")
+        else:
+            assert status == 404, status
+            print("ok  icon missing -> 404")
+    finally:
+        server.shutdown()
+
+
 def _panel_rev():
     server = _serve()
     try:
@@ -229,6 +247,7 @@ def _cancel():
 
 if __name__ == "__main__":
     _forms()
+    _icon()
     _panel_rev()
     _back_and_cancel()
     _cancel()
