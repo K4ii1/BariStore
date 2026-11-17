@@ -19,9 +19,10 @@ same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 Both devices may be an **iPhone or an iPad**; iOS and iPadOS both work. The role is chosen at run time.
 They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSign.
 
-> **Status:** verified on a real device running iOS 27: Apple sign-in, the developer portal,
+> **Status (0.9.17):** verified on a real device running iOS 27: Apple sign-in, the developer portal,
 > signing, launching the signed app — and device-initiated pairing (M1–M6, UDID saved). The pure
-> tunnel/install engine is Linux-tested end to end; the on-device install is next.
+> tunnel/install engine is Linux-tested end to end; the on-device install is next. One device
+> cannot do the whole flow (see `docs/SINGLE_DEVICE.md`); keep a-Shell foreground for `pair`.
 
 ---
 
@@ -131,7 +132,10 @@ submits it. `sh bin/barisign udid --manual` keeps a paste-on-the-signer fallback
 | 6 | **Custom IPA** (your own file, already on the signer) | your file; pick `custom IPA file` in the guided run, or `sign --ipa FILE` |
 
 Every version is resolved **at runtime** from the project's official release page — never pinned here —
-and you are shown which version you are about to get. `variants.json` is the machine-readable list.
+and you are shown which version you are about to get (stable: the tag; nightly: the asset date,
+because its `published_at` is stale). A cached IPA is reused only when size **and** GitHub's SHA-256
+match; offline runs say `(no GitHub; using the saved file)`. `variants.json` is the machine-readable list.
+Single-device limits, background execution and iPad windowing: `docs/SINGLE_DEVICE.md`.
 
 ---
 
@@ -159,6 +163,7 @@ and you are shown which version you are about to get. `variants.json` is the mac
 | `docs/FORK_PLAN.md` | the pairing module inside the forked apps: licences, CI, risks |
 | `docs/RESULTS.md` | what is verified on device, and the device quirks we had to work around |
 | `docs/NEXT_SESSION.md` | handoff: the on-device gates for the pure pairing/tunnel/install engine |
+| `docs/SINGLE_DEVICE.md` | single device, background (Live Activity/notification/Shortcuts) and version freshness: what is possible |
 | `variants.json` | the variant registry and runtime resolution rules |
 | `bin/barisign` | the single entry point on the signer |
 | `sh bin/barisign pair` | the signer → target pairing install |

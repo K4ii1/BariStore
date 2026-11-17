@@ -1,8 +1,12 @@
-# Next session — handoff (2026-11-16)
+# Next session — handoff (2026-11-17)
 
-State: version **0.9.10**, guided flow reordered (Apple ID → devmode check → pairing/UDID →
+State: version **0.9.17**, guided flow reordered (Apple ID → devmode check → pairing/UDID →
 variant → download → portal → sign → install). Signing, the developer portal, the UDID fallback
-page and the self-updater are unchanged and still work.
+page and the self-updater are unchanged and still work. The download step now prints the
+resolved version before fetching (`SideStore 0.6.0 (24.1 MB)`, nightly by asset date) and
+`(cached, still current)` only when size + GitHub SHA-256 match — a stale cache can never
+pass as current; offline it says `(no GitHub; using the saved file)`. Details:
+`docs/SINGLE_DEVICE.md` §4.
 
 **Pairing works from a-Shell (device-verified 2026-11-15/16).** DNS-SD itself is still blocked
 (`-65555`: a-Shell's signed `Info.plist` has no `NSBonjourServices` entry), but raw broadcast
@@ -55,6 +59,15 @@ interop test proves against OpenSSL.
   pairing-file write into the app.
 
 ## Background options (only if the current path stalls)
+
+Single-device/background was investigated against the a-Shell sources on
+2026-11-17 and is **settled, not a fallback**: one device cannot pair with or
+install on itself (Paired Macs lists remote hosts; loopback/LocalDevVPN does
+not create a pairing record), a-Shell has no ActivityKit/notification API for
+Python, and its three Shortcuts intents force the app open and are
+time-boxed. Keep a-Shell foreground (iPad Split View/Stage Manager only keeps
+it visible). Full analysis: `docs/SINGLE_DEVICE.md`. What works with one
+device: `pair --check`, `login`, `portal` (saved UDID), `sign`, `status`.
 
 - **A. Pairing host with the right `Info.plist`.** Reliable but needs a developer source once.
 - **B. SideInstaller on the signer for pairing only**, then `--import` the record. Works but

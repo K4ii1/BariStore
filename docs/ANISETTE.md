@@ -54,3 +54,7 @@ sh bin/barisign login --server https://ani.jkcoxson.com    # pin a server
 To run your own, the SideStore docs walk through deploying `omnisette-server` (Docker image
 `ghcr.io/sidestore/omnisette-server`, or a Render free instance) — it needs the platform's ADI libraries.
 Then pin it with `--server`. Nothing in BariSign requires a specific server.
+
+Order tried by BariSign (Mac-emulating first, per the October 2026 Apple rules in
+`docs/RESULTS.md`): `mac-ani.jkcoxson.com`, then `ani.jkcoxson.com`. Failover on
+-80045 / -80046 / 503 mints a fresh identity on the next server.

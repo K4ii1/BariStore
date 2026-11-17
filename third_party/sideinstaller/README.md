@@ -48,9 +48,9 @@ provisioning-profile download/parsing.
    (`dev/app_groups.rs`, `dev/app_ids.rs`); without it the installed SideStore/LiveContainer
    cannot open its app-group container. Falls back to no-group signing when the team
    refuses it.
-7. The files were **cut** to the parts listed above; our command-line front ends live in
+8. The files were **cut** to the parts listed above; our command-line front ends live in
    `../../poc/poc_login.py`, `../../poc/poc_portal.py` and `../../poc/barisign.py`, all MIT.
-8. `STORAGE` is overridden by the caller to `state/` inside the installed folder, because a-Shell can
+9. `STORAGE` is overridden by the caller to `state/` inside the installed folder, because a-Shell can
    only write under `~/Documents`.
 
 ## Do not copy from here into MIT files

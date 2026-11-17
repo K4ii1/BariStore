@@ -71,7 +71,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.16"
+VERSION = "0.9.17"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1429,7 +1429,9 @@ def _obtain_ipa(state, argv):
         return "", {}
 
     size_mb = (info["size"] or 0) / 1048576.0
-    print(("  %s (%.1f MB)" % (variant["name"], size_mb))[:_columns() - 1])
+    # The version string is the proof this run really asked GitHub: stable
+    # shows the tag, nightly shows the asset date (its published_at is stale).
+    print(("  %s (%.1f MB)" % (info.get("version") or variant["name"], size_mb))[:_columns() - 1])
     last = [-5]
 
     def moved(received, total):
@@ -1446,6 +1448,11 @@ def _obtain_ipa(state, argv):
         print("! %s" % exc)
         return "", {}
     _line_clear()
+    # Reuse is only allowed when size AND GitHub's SHA-256 match, so a
+    # cached file can never hide a newer release: resolve() ran above on
+    # every run and the mismatch forces a fresh download.
+    if info.get("reused"):
+        print("  %s (cached, still current)" % (info.get("version") or variant["name"]))
     update_state(variant=variant["id"], asset_version=info["version"])
     update_state(ipa=info["path"])
     return info["path"], info

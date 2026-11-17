@@ -67,7 +67,7 @@ as-is; no code is copied from them here.
 | idevice (`jkcoxson/idevice`) | MIT | protocol reference; **preferred source** for reimplementation |
 | zsign (`zhlynn/zsign`) | MIT | reference for the Apple CMS layout |
 | pymobiledevice3 (`doronz88/pymobiledevice3`) | GPL-3.0 | protocol reference only for the pure engine; **not installed at run time**, not vendored and not redistributed. No code is copied into this repository. |
-| a-Shell (`holzschu/a-Shell`) | BSD-3-Clause | the on-device runtime (user installs it) |
+| a-Shell (`holzschu/a-Shell`) | BSD-3-Clause | the on-device runtime (user installs it); `docs/SINGLE_DEVICE.md` cites its `Info.plist`/intents sources for the background analysis |
 | LocalDevVPN / StosVPN | see upstream | runtime dependency (user installs it) |
 | anisette servers | see upstream | network service at runtime |
 

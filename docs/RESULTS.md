@@ -30,6 +30,12 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
   `NSBonjourServices`), and raw multicast send fails (`ENETUNREACH`, no multicast entitlement).
   `poc/raw_mdns.py` sends both plus subnet broadcast; broadcast is device-proven (the target lists
   BariSign, full M1–M6, UDID saved). `pair` uses it automatically on a-Shell.
+- **Single-device/background settled (2026-11-17, from the a-Shell sources):** one device cannot
+  pair with or install on itself; no ActivityKit, no notification keep-alive, Shortcuts intents
+  (`ExecuteCommand`/`GetFile`/`PutFile`) force the app open and are time-boxed. Full analysis:
+  `docs/SINGLE_DEVICE.md`.
+- **Version freshness at every signing (0.9.17):** `resolve()` lists GitHub releases live, prints
+  the version before downloading, and a cached IPA is reused only on size + SHA-256 match.
 
 ## Written but **never tested on a device**
 

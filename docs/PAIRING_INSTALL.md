@@ -1,11 +1,12 @@
 # Pairing + `installation_proxy` on iOS 27 — what is possible
 
-Status (2026-11-15): **the tunnel/install route is implemented; the pairing advertisement is blocked
-inside a-Shell.** `DNSServiceRegister` returns **-65555 (NoAuth)** because a-Shell's signed
-`Info.plist` has no `NSBonjourServices` entry for `_remotepairing-pairable-host._tcp`. The target's
-Settings cannot discover BariSign from a-Shell. The pure engine (pair-verify, TLS 1.2 PSK, userspace
-TCP, RSD, AFC, `installation_proxy`) is Linux-tested and can install **once a pairing record exists**.
-Options: `docs/NEXT_SESSION.md`.
+Status (0.9.17): **the tunnel/install route is implemented and pairing advertisement works
+from a-Shell via raw broadcast** (device-verified M1–M6, UDID saved). `DNSServiceRegister` returns
+**-65555 (NoAuth)** because a-Shell's signed `Info.plist` has no `NSBonjourServices` entry for
+`_remotepairing-pairable-host._tcp`, so `pair` broadcasts instead of registering — the target's
+Settings lists BariSign with no setup. The pure engine (pair-verify, TLS 1.2 PSK, userspace
+TCP, RSD, AFC, `installation_proxy`) is Linux-tested and installs **once paired**.
+Single-device/background limits: `docs/SINGLE_DEVICE.md`.
 
 The question was: can BariSign install its signed IPA on the **target** with **no computer**, using
 pairing plus `installation_proxy`, and generate pairing files that AltStore and SideStore can use?

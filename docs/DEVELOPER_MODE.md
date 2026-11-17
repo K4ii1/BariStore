@@ -120,3 +120,5 @@ StikPair, Husk and Madeira all use an app extension for exactly this.
 - `StikDebug/StikPair` and `willfaust/Madeira` release notes, `Leviidev/Husk` JIT guide: the iOS 27
   "Pair with <app>" steps and the PIN display.
 - `jkcoxson/LocalDevVPN` (App Store id 6755608044): loopback tunnel for SideStore/StikJIT.
+  It carries refresh/install traffic to the phone itself — it cannot enable Developer Mode and
+  cannot pair the phone with itself. See `docs/SINGLE_DEVICE.md`.

@@ -6,14 +6,13 @@ Two iOS/iPadOS devices on the same Wi-Fi are enough. Two roles, no computer:
 - **Target** — gets the app; uses only Safari and Settings.
 
 Either device can be an **iPhone or an iPad** (iOS/iPadOS 27+). They must be on the **same Wi-Fi**.
-a-Shell and BariSign are installed on the **signer only**.
+a-Shell and BariSign are installed on the **signer only**. One device cannot pair with or
+install on itself — see `docs/SINGLE_DEVICE.md` for what works single-device and why.
 
-**Status:** Apple sign-in, the developer portal, signing and launching the signed app are verified on
-a real device. The tunnel/install engine is pure Python (no qh3, no pip, no native wheel), but the
-**pairing advertisement is blocked on a-Shell**: iOS refuses `DNSServiceRegister` for
-`_remotepairing-pairable-host._tcp` with `-65555` (NoAuth) because a-Shell's signed Info.plist has no
-`NSBonjourServices` entry for it. A **raw mDNS fallback** is implemented: `pair` tries it
-automatically, so the easy test is just `sh bin/barisign pair` and open Paired Macs on the target. If
+**Status (0.9.17):** Apple sign-in, the developer portal, signing and launching the signed app are verified on
+a real device. Pairing runs over **raw broadcast** (device-verified M1–M6, UDID saved): `DNSServiceRegister`
+fails inside a-Shell with `-65555` (no `NSBonjourServices` entry), so `pair` advertises over
+broadcast automatically — just run `sh bin/barisign pair` and open Paired Macs on the target. If
 that still fails, the engine can install once a pairing record exists:
 `pair --import FILE --host <target-ip>` (options in `docs/NEXT_SESSION.md`).
 
@@ -94,7 +93,9 @@ device: team → device → App ID → certificate → profile, with the target'
 ## SIGN (signer)
 
 The guided run does this for you: it resolves the chosen variant's current `.ipa` from the project's own
-releases, checks the SHA-256 GitHub publishes, signs it with the key, certificate and profile from the
+releases **on every run** (stable: newest non-alpha/beta/rc tag; nightly: the `nightly` tag, versioned by
+asset date), prints the version and size **before** downloading, checks the SHA-256 GitHub publishes,
+reuses a cached file only when size **and** digest match (`(cached, still current)`), signs it with the key, certificate and profile from the
 portal, verifies the result, and writes `<name>-signed.ipa` (plus a `.zip`).
 
 ```
@@ -113,8 +114,9 @@ target UDID) before uploading anything.
 
 ## INSTALL on the target (signer + target)
 
-> DNS-SD advertising is blocked inside a-Shell, so `pair` announces itself with raw
-> broadcast instead — no setup needed. Bonjour stays as a fallback where it works.
+> `pair` advertises over raw broadcast automatically — no setup needed. Bonjour stays as a fallback where it works.
+> Keep a-Shell in the foreground for the whole run (iPad: Split View / Stage Manager keeps it
+> visible); there is no background/Live Activity/Shortcuts path — see `docs/SINGLE_DEVICE.md`.
 
 ```
 sh bin/barisign pair                       # pick a paired device, or pair a new one

@@ -1,9 +1,13 @@
-# Reading your UDID — three ways
+# Reading your UDID — pairing first, page as fallback (0.9.17)
 
-BariSign needs your device's **UDID** because a free Apple ID can only sign apps for devices that are
+BariSign needs your **target's UDID** because a free Apple ID can only sign apps for devices that are
 registered on it. There is nothing secret about a UDID: it is a hardware identifier developers paste into
 portals every day. It is **not** a credential, and no Apple ID, password or pairing record is involved in
 getting it.
+
+The normal route is **not** a page: run `sh bin/barisign pair` (or the guided run) and the signer
+reads the target's UDID from the pairing itself. The page below is only for the case where pairing
+cannot provide one.
 
 iOS will only hand it over through a **Profile Service** profile, and iOS only accepts such a profile from
 **HTTPS with a certificate it trusts**. That is the whole reason every option below needs *some* trusted

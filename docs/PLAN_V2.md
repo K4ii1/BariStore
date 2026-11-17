@@ -1,6 +1,8 @@
 # BariSign — plan v2 (two roles, no computer, no Shortcuts)
 
-Written 2026-10-29, rewritten 2026-10-31 after the AirDrop install was refused by iOS 27. The current
+Written 2026-10-29, rewritten 2026-10-31 after the AirDrop install was refused by iOS 27,
+updated 2026-11-17 (0.9.17: broadcast pairing verified, App Groups registered, version shown
+at every download). The current
 shape is **two roles**, not two specific devices:
 
 - **Signer** — runs a-Shell + BariSign: UDID page, Apple ID, portal, signing, install.
@@ -11,17 +13,23 @@ shape is **two roles**, not two specific devices:
 
 ```
 SIGNER (a-Shell)                              TARGET (Safari / Settings)
-  0. download the original IPA, offer it as a trigger if Developer Mode is off
-  1. pair     advertise as BariSign + code  -->  Settings -> Developer -> Paired Macs -> BariSign
-              read the UDID from the pairing/tunnel
-  2. Apple ID anisette + SRP-6a + 2FA         (verified)
-  3. portal   UDID -> App ID -> cert -> profile (verified)
-  4. sign the chosen IPA                       (verified on a device)
-  5. install over the same pairing             installation_proxy over Wi-Fi
-                                              (target Trust Developer, opens the app)
+  0. Apple ID anisette + SRP-6a + 2FA          (verified)
+  1. Developer Mode present? else trigger      (verified path)
+  2. pair     broadcast as BariSign + code -->  Settings -> Developer -> Paired Macs -> BariSign
+              read the UDID from the pairing/tunnel (device-verified M1–M6)
+  3. variant, then download: resolve live, show version, size + SHA-256 (0.9.17)
+  4. portal   UDID -> App ID -> App Group + cert -> profile (verified, incl. APG3427HIY)
+  5. sign the chosen IPA (verified) + preflight before upload
+  6. install over the same pairing             installation_proxy over Wi-Fi
+                                              (target Trust Developer, opens the app;
+                                               on-device install is the remaining gate)
   fallback: signer serves http://<signer-ip>:<port>/; target installs median.co/udid,
             copies the UDID and submits it (only if pairing cannot provide one)
 ```
+
+Single device cannot cover steps 2+6 on itself, and there is no background
+keep-alive (no ActivityKit/notifications/Shortcuts path) — `docs/SINGLE_DEVICE.md`.
+Keep a-Shell foreground for `pair` (iPad Split View is fine).
 
 a-Shell is installed **only on the signer**. The target installs nothing from BariSign. The program stays
 one integrated flow on the signer.

@@ -44,9 +44,18 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
 - **Languages:** English only for now; English + Turkish in the final phase, after it works.
 - Test devices are roles, not hardware: either device can be the signer or the target. Both run
   iOS/iPadOS 27+; a-Shell is installed only on the signer.
-- On device and verified: UDID, Apple sign-in, the **developer portal**, signing, and the signed app
-  launching after install. The pair-first UDID, the fallback UDID page and the signer→target pairing
-  install are written but not yet device-verified.
+- On device and verified: UDID, Apple sign-in, the **developer portal** (incl. App Groups
+  `list/add/assignApplicationGroup` + `APG3427HIY`, isideload protocol), signing, and the signed app
+  launching after install. The pair-first UDID (broadcast M1–M6, device-verified 2026-11-15/16),
+  the signer→target pairing install and the pairing-file write are written; the install step is
+  the remaining device gate. Details: `docs/RESULTS.md`, `docs/NEXT_SESSION.md`.
+- Single-device/background settled 2026-11-17 (a-Shell sources): one device cannot pair with or
+  install on itself; no Live Activity/notification/Shortcuts background path; keep a-Shell
+  foreground (iPad Split View ok). Full analysis: `docs/SINGLE_DEVICE.md`. `sh bin/barisign one`
+  does not exist by design.
+- Download freshness: `resolve()` runs live on every sign (stable tag / nightly asset date shown
+  before downloading); cached IPAs reused only on size + SHA-256 match. See
+  `docs/SINGLE_DEVICE.md` §4.
 - Sign-in requires **Mac-emulating anisette** and the server's own client_info (Apple's Oct 2026
   -80045/-80046/503 rules). `mac-ani.jkcoxson.com` and `ani.jkcoxson.com` come first. Details:
   `docs/ANISETTE.md`, `docs/RESULTS.md`.
@@ -135,9 +144,12 @@ The a-Shell interface (no Shortcuts):
 - Stages 1–2 are verified on device; pairing (M1–M6 over raw broadcast) is verified on
   device; the tunnel/install engine is written and Linux-tested. iOS 27 accepts only
   device-initiated network pairing, which is what BariSign does. The plan is `docs/PLAN_V2.md`,
-  verified facts are in `docs/RESULTS.md`.
+  verified facts are in `docs/RESULTS.md`, the session handoff in `docs/NEXT_SESSION.md`.
+- Version line: `0.9.x` until the user declares stable — never jump to 1.0.0; `sh bin/update` +
+  `sh install.sh` stay the only update paths.
 - Next: the on-device install (`pair` to Trust + open). Do not spend more effort on a-Shell-only
-  pairing paths: DNS-SD, raw mDNS and host-initiated dialing are settled with device evidence.
+  pairing paths (DNS-SD, raw mDNS, host-initiated dialing: settled with device evidence) or on
+  single-device/background paths (settled against the a-Shell sources in `docs/SINGLE_DEVICE.md`).
 
 ## Verified / unverified convention
 
