@@ -741,6 +741,7 @@ function renderOnboardingStep() {
         <input type="password" id="obPassword" placeholder="Password">
         <div id="obLoginErr" class="sub" style="color:var(--red)"></div>
         <button class="full" id="obLoginBtn" onclick="submitObLogin()">Sign In &amp; Finish Setup</button>
+        <button class="secondary full" onclick="showNetcheckModal()">Test Network &amp; Apple Servers</button>
       </div>
     `;
   }
@@ -835,6 +836,7 @@ function openLoginModal() {
       <input type="password" id="modPassword" placeholder="Password">
       <div id="modLoginErr" class="sub" style="color:var(--red)"></div>
       <button class="full" id="modLoginBtn" onclick="submitModalLogin()">Sign In</button>
+      <button class="secondary full" onclick="showNetcheckModal()">Test Network &amp; Apple Servers</button>
       <button class="secondary full" onclick="closeModal()">Cancel</button>
     </div>
   `);
@@ -1676,20 +1678,50 @@ async function saveAnisetteUrl() {
   }
 }
 
+async function showNetcheckModal() {
+  openModal(`<h3>Testing…</h3><p class="sub">Reaching Apple, GitHub and the Anisette servers…</p>`);
+  let res = {};
+  try {
+    res = await apiPost("/api/netcheck", {});
+  } catch (e) {
+    res = {};
+  }
+  if (!res.ok) {
+    openModal(`<h3>Network Test Failed</h3><p class="sub" style="color:var(--red)">${esc(res.error || "No answer from the local server.")}</p><button class="secondary full" onclick="closeModal()">Close</button>`);
+    return;
+  }
+  const trust = (res.trust || []).map(t => `<div class="sub" style="font-size:0.74rem">${esc(t)}</div>`).join("");
+  openModal(`
+    <h3>Network &amp; Apple Servers</h3>
+    <div style="max-height:20rem;overflow-y:auto">
+      ${(res.results || []).map(r => `
+        <div class="kv-row">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(r.host)}</span>
+          <span class="badge ${r.ok ? 'ok' : 'warn'}">${esc(r.detail)}</span>
+        </div>
+      `).join("")}
+    </div>
+    ${trust ? `<div style="margin-top:0.6rem">${trust}</div>` : ""}
+    <p class="sub" style="margin-top:0.7rem">If <b>gsa.apple.com bag</b> is not <i>bag ok</i>, sign-in cannot work yet: check the Wi-Fi connection, then retry.</p>
+    <button class="secondary full" style="margin-top:0.6rem" onclick="closeModal()">Close</button>
+  `);
+}
+
 async function runNetcheck() {
   const out = document.getElementById("netcheckOut");
-  out.innerHTML = '<span class="sub">Testing DNS, TLS, and Anisette hosts…</span>';
+  out.innerHTML = '<span class="sub">Testing DNS, TLS, Anisette hosts and Apple\'s sign-in service…</span>';
   const res = await apiPost("/api/netcheck", {});
   if (!res.ok) {
     out.textContent = res.error || "Test failed.";
     return;
   }
+  const trust = (res.trust || []).map(t => `<div class="sub" style="font-size:0.74rem">${esc(t)}</div>`).join("");
   out.innerHTML = (res.results || []).map(r => `
     <div class="kv-row">
       <span>${esc(r.host)}</span>
       <span class="badge ${r.ok ? 'ok' : 'warn'}">${esc(r.detail)}</span>
     </div>
-  `).join("");
+  `).join("") + (trust ? `<div style="margin-top:0.5rem">${trust}</div>` : "");
 }
 
 async function checkUpdates() {

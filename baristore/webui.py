@@ -1111,7 +1111,14 @@ class _Handler(BaseHTTPRequestHandler):
 
             if route == "/api/netcheck":
                 results = apple.run_network_diagnostics()
-                self._send_json(200, {"ok": True, "results": results})
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "results": results,
+                        "trust": apple.trust_report(),
+                    },
+                )
                 return
 
             if route == "/api/open-external":

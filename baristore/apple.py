@@ -354,6 +354,10 @@ class _WebSocket:
             if secure
             else raw
         )
+        # Provisioning is a request/response chat; a silent peer must not hang
+        # the sign-in forever.
+        self.sock.settimeout(timeout)
+        self.timeout = timeout
         nonce = base64.b64encode(secrets.token_bytes(16)).decode()
         handshake = (
             "GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -518,11 +522,17 @@ class AnisetteClient:
 
     def provision(self, gs):
         ws_url = self.url.replace("https://", "wss://").replace("http://", "ws://")
-        sock = _WebSocket(ws_url + "/v3/provisioning_session")
+        sock = None
         headers = {"X-Apple-I-MD-LU": self.md_lu, "X-Mme-Device-Id": self.device_id}
         try:
+            sock = _WebSocket(ws_url + "/v3/provisioning_session", timeout=40)
             while True:
-                message = sock.recv()
+                try:
+                    message = sock.recv()
+                except (socket.timeout, TimeoutError):
+                    raise AppleAuthError(
+                        "Anisette provisioning timed out on %s" % self.url
+                    )
                 if message is None:
                     raise AppleAuthError("Anisette provisioning socket closed prematurely.")
                 payload = json.loads(message)
@@ -553,7 +563,8 @@ class AnisetteClient:
                         % payload.get("message", result or message)
                     )
         finally:
-            sock.close()
+            if sock is not None:
+                sock.close()
 
     def headers(self):
         if self.version == 1:
@@ -678,7 +689,7 @@ def check_gs_error(response):
     return response
 
 
-def anisette_Order(preferred=""):
+def anisette_order(preferred=""):
     """Return ordered list of HTTPS Anisette URLs to try."""
     saved_pref = preferred or storage.load_state().get("anisette_url") or ""
     candidates = []
@@ -699,24 +710,11 @@ def connect_anisette(preferred_url="", state_path=None):
     """Connect and provision an Anisette server, with automatic failover."""
     state_path = state_path or storage.ANISETTE_STATE_FILE
     tried = []
-    for url in anisette_Order(preferred_url):
+    for url in anisette_order(preferred_url):
         try:
-            anisette = AnisetteClient(url, state_path)
-            anisette.detect()
-            gs = GrandSlam(anisette)
-            if anisette.needs_provisioning():
-                anisette.provision(gs)
-            try:
-                anisette.headers()
-            except AppleAuthError:
-                if anisette.version != 3 or not anisette.adi_pb:
-                    raise
-                anisette.forget_provisioning()
-                anisette.provision(gs)
-                anisette.headers()
-            return anisette, gs
+            return _open_anisette(url, state_path)
         except Exception as exc:
-            tried.append("%s (%s)" % (url, exc))
+            tried.append("%s (%s)" % (url, str(exc)[:110]))
     raise AppleAuthError("No Anisette server responded. Tried: " + "; ".join(tried[:4]))
 
 
@@ -1001,79 +999,148 @@ def get_saved_session():
 
 
 _PENDING_LOGINS = {}
+PENDING_LOGIN_TTL = 900  # seconds a 2FA prompt stays answerable
+
+
+def _classify_login_error(exc):
+    """'credentials', 'identity' (another server may work) or 'other'."""
+    text = str(exc).lower()
+    if "-22406" in text or "correct password" in text or "-20101" in text:
+        return "credentials"
+    if _is_identity_refused(text):
+        return "identity"
+    return "other"
+
+
+def _friendly_login_error(exc):
+    text = str(exc)
+    if "-22406" in text or "correct password" in text.lower():
+        return AppleAuthError(
+            "Apple rejected the Apple ID or the password (-22406). "
+            "Check the address, then type the password again."
+        )
+    if "-80045" in text or "-80046" in text:
+        return AppleAuthError(
+            "Apple refused the device identity behind this Anisette server. "
+            "BariStore tried every server it knows; wait 10-15 minutes and retry, "
+            "or pick another server in Options."
+        )
+    return exc if isinstance(exc, AppleAuthError) else AppleAuthError(text)
+
+
+def _prune_pending_logins():
+    now = time.time()
+    for key in [k for k, v in _PENDING_LOGINS.items()
+                if now - float(v.get("created_at") or 0) > PENDING_LOGIN_TTL]:
+        _PENDING_LOGINS.pop(key, None)
+
+
+def _open_anisette(url, state_path=None):
+    """Connect, provision and mint the first header set for one server."""
+    anisette = AnisetteClient(url, state_path or storage.ANISETTE_STATE_FILE)
+    anisette.detect()
+    gs = GrandSlam(anisette)
+    if anisette.needs_provisioning():
+        anisette.provision(gs)
+    try:
+        anisette.headers()
+    except AppleAuthError:
+        # A stored blob this server will not accept: throw it away and provision
+        # again before giving up on the server.
+        if anisette.version != 3 or not anisette.adi_pb:
+            raise
+        anisette.forget_provisioning()
+        anisette.provision(gs)
+        anisette.headers()
+    return anisette, gs
 
 
 def start_apple_login(email, password, preferred_anisette=""):
-    """Begin Apple ID login.
+    """Begin Apple ID login with failover across Anisette servers.
 
     Returns either:
       - {"status": "authenticated", "email": ..., "team_id": ..., "team_name": ..., "teams": [...]}
-      - {"status": "2fa_required", "login_id": ..., "mode": "device-2fa"|"sms-2fa", "message": ...}
+      - {"status": "2fa_required", "login_id": ..., "mode": ..., "message": ...}
     """
     email = (email or "").strip()
     if not email or not password:
         raise AppleAuthError("Apple ID and password are required.")
 
-    candidates = anisette_Order(preferred_anisette)
-    last_error = None
+    _prune_pending_logins()
+    candidates = anisette_order(preferred_anisette)
+    failures = []
+    identity_refusals = 0
 
     for url in candidates:
+        anisette = None
         try:
-            anisette = AnisetteClient(url, storage.ANISETTE_STATE_FILE)
-            anisette.detect()
-            gs = GrandSlam(anisette)
-            if anisette.needs_provisioning():
-                anisette.provision(gs)
-            try:
-                anisette.headers()
-            except AppleAuthError:
-                anisette.forget_provisioning()
-                anisette.provision(gs)
-                anisette.headers()
+            anisette, gs = _open_anisette(url)
+        except Exception as exc:
+            # A dead, slow or unprovisionable server is not a sign-in failure:
+            # move on to the next one instead of giving up on the first host.
+            failures.append("%s — %s" % (url, str(exc)[:110]))
+            continue
 
+        try:
             account = AppleAccount(email, gs, anisette)
             step = account.login_step(password)
-            if step == "ok":
-                return _finalize_login(account, password)
-
-            account.request_2fa_code(step)
-            login_id = secrets.token_hex(16)
-            _PENDING_LOGINS[login_id] = {
-                "account": account,
-                "password": password,
-                "mode": step,
-                "created_at": time.time(),
-            }
-            return {
-                "status": "2fa_required",
-                "login_id": login_id,
-                "mode": step,
-                "message": (
-                    "Enter the 6-digit verification code sent via SMS."
-                    if step == "sms-2fa"
-                    else "Enter the 6-digit verification code shown on your trusted device."
-                ),
-            }
         except Exception as exc:
-            last_error = exc
-            if _is_identity_refused(exc):
+            kind = _classify_login_error(exc)
+            failures.append("%s — %s" % (url, str(exc)[:110]))
+            if kind == "credentials":
+                raise _friendly_login_error(exc)
+            if kind == "identity":
+                identity_refusals += 1
                 try:
                     anisette.forget_provisioning()
                 except Exception:
                     pass
-                continue
-            raise
+            continue
 
+        if step == "ok":
+            return _finalize_login(account, password)
+
+        account.request_2fa_code(step)
+        login_id = secrets.token_hex(16)
+        _PENDING_LOGINS[login_id] = {
+            "account": account,
+            "password": password,
+            "mode": step,
+            "created_at": time.time(),
+        }
+        if step == "sms-2fa":
+            message = "Apple sent a code by SMS. Enter the 6-digit code below."
+        elif step == "device-2fa-sent":
+            message = "Apple already sent a code to your trusted devices. Enter the 6-digit code below."
+        else:
+            message = "Apple sent a code to your trusted devices. Enter the 6-digit code below."
+        return {
+            "status": "2fa_required",
+            "login_id": login_id,
+            "mode": step,
+            "message": message,
+        }
+
+    if identity_refusals:
+        raise AppleAuthError(
+            "Apple refused the sign-in identity on every Anisette server "
+            "(tried %d). This is Apple-side rate limiting, not your password: "
+            "wait 10-15 minutes and try again." % len(failures)
+        )
+    detail = " | ".join(failures[:4]) or "no Anisette server answered"
     raise AppleAuthError(
-        "Could not sign in with any Anisette server (last error: %s)." % last_error
+        "Could not reach Apple through any Anisette server. %s" % detail
     )
 
 
 def verify_apple_2fa(login_id, code):
     """Complete 2FA verification for a pending Apple login."""
+    _prune_pending_logins()
     pending = _PENDING_LOGINS.get(login_id)
     if not pending:
-        raise AppleAuthError("Login session expired. Please sign in again.")
+        raise AppleAuthError(
+            "This sign-in attempt expired. Enter your Apple ID and password again."
+        )
     account = pending["account"]
     password = pending["password"]
     mode = pending["mode"]
@@ -1081,7 +1148,13 @@ def verify_apple_2fa(login_id, code):
     account.submit_2fa_code(mode, code)
     step = account.login_step(password)
     if step != "ok" and not account._pet():
-        raise AppleAuthError("Sign-in did not complete after 2FA (%s)." % step)
+        # Another step is due (a second code, or an account repair): keep the
+        # pending login so the same code prompt can be answered again.
+        pending["mode"] = step if step in ("sms-2fa", "device-2fa") else mode
+        raise AppleAuthError(
+            "Apple wants one more verification step (%s). Enter the code again."
+            % step
+        )
     _PENDING_LOGINS.pop(login_id, None)
     return _finalize_login(account, password)
 
@@ -1486,13 +1559,32 @@ def provision_for_signing(
     }
 
 
+def trust_report():
+    """What the TLS trust store actually holds, for the diagnostics screen."""
+    try:
+        paths = ssl.get_default_verify_paths()
+        default_cafile = paths.cafile or "(none)"
+    except Exception:
+        default_cafile = "(unknown)"
+    try:
+        count = len(SSL_CTX.get_ca_certs())
+    except Exception:
+        count = -1
+    return [
+        "shipped CA bundle: %s" % (CA_BUNDLE_PATH or "MISSING"),
+        "Apple root CA: %s" % (APPLE_ROOT_PATH or "MISSING"),
+        "system CA file: %s" % default_cafile,
+        "trusted certificates: %s" % (count if count >= 0 else "unknown"),
+    ]
+
+
 def run_network_diagnostics():
     """Probe DNS, TCP, TLS, and HTTP for GitHub, Apple GSA, and Anisette servers."""
     targets = [
         ("github", "https://raw.githubusercontent.com/"),
         ("apple", "https://gsa.apple.com/"),
     ]
-    for url in anisette_Order()[:4]:
+    for url in anisette_order()[:4]:
         targets.append(("anisette", url))
 
     results = []
@@ -1524,4 +1616,20 @@ def run_network_diagnostics():
         except Exception as exc:
             entry["detail"] = str(exc)[:120]
         results.append(entry)
+
+    # The one request every sign-in depends on: Apple's URL bag.
+    bag = {"kind": "apple", "host": "gsa.apple.com bag", "ok": False, "detail": ""}
+    try:
+        status, _, body = http_request(
+            "GET",
+            GSA_URL_BAG,
+            headers={"User-Agent": GSA_USER_AGENT, "Accept": "*/*"},
+            timeout=20,
+        )
+        parsed = plistlib.loads(body) if status == 200 else {}
+        bag["ok"] = status == 200 and isinstance(parsed.get("urls"), dict)
+        bag["detail"] = "HTTP %d%s" % (status, " · bag ok" if bag["ok"] else " · bag unreadable")
+    except Exception as exc:
+        bag["detail"] = str(exc)[:120]
+    results.append(bag)
     return results

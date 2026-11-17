@@ -140,6 +140,95 @@ def test_clean_room_apple_crypto():
     assert parsed["status-code"] == 200
 
 
+def test_login_failover_skips_dead_servers():
+    """A dead first Anisette host must not end the sign-in attempt."""
+    real_order = apple.anisette_order
+    real_open = apple._open_anisette
+    real_account = apple.AppleAccount
+    calls = []
+
+    class _Boom:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login_step(self, password):
+            raise apple.AppleAuthError("Apple returned HTTP 503 for gsService.")
+
+    def fake_open(url, state_path=None):
+        calls.append(url)
+        if url.endswith("/dead"):
+            raise apple.AppleAuthError("connection refused")
+        return object(), object()
+
+    apple.anisette_order = lambda preferred="": [
+        "https://one/dead",
+        "https://two",
+    ]
+    apple._open_anisette = fake_open
+    apple.AppleAccount = _Boom
+    try:
+        try:
+            apple.start_apple_login("someone@example.com", "secret")
+        except apple.AppleAuthError as exc:
+            assert "rate limiting" in str(exc).lower(), exc
+        else:
+            raise AssertionError("expected the login to fail")
+        assert calls == ["https://one/dead", "https://two"], calls
+        print("ok  dead Anisette host is skipped, the next one is tried")
+    finally:
+        apple.anisette_order = real_order
+        apple._open_anisette = real_open
+        apple.AppleAccount = real_account
+
+
+def test_login_stops_on_wrong_password():
+    """A refused password is final: no server hopping, and a clear message."""
+    real_order = apple.anisette_order
+    real_open = apple._open_anisette
+    real_account = apple.AppleAccount
+    calls = []
+
+    class _BadPassword:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login_step(self, password):
+            raise apple.AppleAuthError(
+                "Apple rejected the request (-22406): Incorrect password."
+            )
+
+    def fake_open(url, state_path=None):
+        calls.append(url)
+        return object(), object()
+
+    apple.anisette_order = lambda preferred="": ["https://one", "https://two"]
+    apple._open_anisette = fake_open
+    apple.AppleAccount = _BadPassword
+    try:
+        try:
+            apple.start_apple_login("someone@example.com", "wrong")
+        except apple.AppleAuthError as exc:
+            assert "password" in str(exc).lower(), exc
+        else:
+            raise AssertionError("expected a credentials error")
+        assert calls == ["https://one"], calls
+        print("ok  wrong password stops after the first server")
+    finally:
+        apple.anisette_order = real_order
+        apple._open_anisette = real_open
+        apple.AppleAccount = real_account
+
+
+def test_login_requires_credentials():
+    try:
+        apple.start_apple_login("", "")
+    except apple.AppleAuthError as exc:
+        assert "required" in str(exc).lower(), exc
+        print("ok  empty credentials rejected")
+    else:
+        raise AssertionError("empty credentials were accepted")
+
+
 if __name__ == "__main__":
     for name, function in sorted(
         [(k, v) for k, v in globals().items() if k.startswith("test_") and callable(v)]
