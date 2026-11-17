@@ -9,6 +9,7 @@ import json
 import os
 import plistlib
 import secrets
+import select
 import shlex
 import shutil
 import subprocess
@@ -1202,23 +1203,36 @@ def run(open_browser=True):
     print("  url    %s" % url)
     if not opened and open_browser:
         print("  open   BROWSER=internalbrowser openurl %s" % url)
-    print("  press Enter or Ctrl-C here to stop the server.")
+    print("  press Enter here to stop the server (Ctrl-C works too).")
 
-    def _wait_enter():
-        try:
-            if sys.stdin and sys.stdin.isatty():
-                input()
-                _STOP.set()
-        except Exception:
-            pass
-
-    threading.Thread(target=_wait_enter, daemon=True).start()
+    # The main thread owns the keyboard: a stray keystroke or Ctrl-C ends the
+    # run, and the HTTP threads keep serving until then.
+    stdin = sys.stdin
     try:
         while not _STOP.is_set():
-            _STOP.wait(1.0)
+            if stdin is None:
+                _STOP.wait(0.5)
+                continue
+            try:
+                ready, _, _ = select.select([stdin], [], [], 0.5)
+            except KeyboardInterrupt:
+                break
+            except (OSError, ValueError):
+                _STOP.wait(0.5)
+                continue
+            if ready:
+                try:
+                    stdin.readline()
+                except Exception:
+                    pass
+                break
     except KeyboardInterrupt:
-        print()
+        pass
     finally:
+        print()
         _STOP.set()
-        server.shutdown()
+        try:
+            server.shutdown()
+        except Exception:
+            pass
     return 0

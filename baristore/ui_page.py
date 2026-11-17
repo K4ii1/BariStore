@@ -405,6 +405,34 @@ input:focus, select:focus { border-color: var(--accent); }
 <script>
 "use strict";
 const TOKEN = "/__TOKEN__";
+
+function showFatal(message) {
+  try {
+    let el = document.getElementById("fatalBanner");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "fatalBanner";
+      el.className = "banner";
+      el.style.borderColor = "var(--red)";
+      document.body.insertBefore(el, document.body.firstChild);
+    }
+    el.innerHTML =
+      '<strong>BariStore hit a script error</strong>' +
+      '<div class="sub" style="margin-top:0.3rem">' + esc(String(message || "unknown")) + "</div>" +
+      '<button class="secondary full" style="margin-top:0.5rem" onclick="location.reload()">Reload</button>';
+    el.classList.remove("hidden");
+  } catch (e) {
+    /* nothing else we can do */
+  }
+}
+window.addEventListener("error", function (event) {
+  showFatal(event && event.message ? event.message : "script error");
+});
+window.addEventListener("unhandledrejection", function (event) {
+  const reason = event && event.reason;
+  showFatal(reason && reason.message ? reason.message : String(reason || "promise error"));
+});
+
 let APP = {
   onboarding_complete: false,
   obStep: 1,
@@ -588,21 +616,25 @@ async function initApp() {
 
   if (APP.job && APP.job.active) renderJob(APP.job);
 
-  if (!APP.onboarding_complete) {
-    await enterOnboarding();
-  } else {
-    showStoreUI();
-    // Refresh sources in background without blocking the UI.
-    apiGet("/api/sources").then(res => {
-      if (res.ok && res.catalog) {
-        APP.catalog = res.catalog;
-        renderCatalog();
-      }
-    }).catch(() => {});
+  try {
+    if (!APP.onboarding_complete) {
+      await enterOnboarding();
+    } else {
+      showStoreUI();
+      // Refresh sources in background without blocking the UI.
+      apiGet("/api/sources").then(res => {
+        if (res.ok && res.catalog) {
+          APP.catalog = res.catalog;
+          try { renderCatalog(); } catch (e) { showFatal(e.message); }
+        }
+      }).catch(() => {});
+    }
+  } catch (e) {
+    showFatal(e && e.message ? e.message : String(e));
+    try { showStoreUI(); } catch (ignored) {}
   }
   setInterval(pollStatus, 1200);
 }
-
 async function openExternal(url) {
   try {
     const res = await apiPost("/api/open-external", { url });
@@ -617,9 +649,14 @@ function showStoreUI() {
   document.getElementById("bottomNav").classList.remove("hidden");
   document.getElementById("topActions").classList.remove("hidden");
   switchTab(APP.currentTab || "featured");
-  renderCatalog();
-  renderMyApps();
-  renderOptions();
+  // One broken renderer must never leave the user with an empty page.
+  for (const render of [renderCatalog, renderMyApps, renderOptions]) {
+    try {
+      render();
+    } catch (e) {
+      showFatal(e && e.message ? e.message : String(e));
+    }
+  }
 }
 
 function switchTab(tab) {
@@ -634,6 +671,11 @@ function switchTab(tab) {
   document.getElementById("tabBtnFeatured").classList.toggle("active", tab === "featured");
   document.getElementById("tabBtnMyApps").classList.toggle("active", tab === "myapps");
   document.getElementById("tabBtnOptions").classList.toggle("active", tab === "options");
+  // Belt and braces: the tab the user asked for is always visible.
+  const current = document.getElementById(
+    tab === "myapps" ? "viewMyApps" : tab === "options" ? "viewOptions" : "viewFeatured"
+  );
+  if (current) current.classList.remove("hidden");
   if (tab === "myapps") renderMyApps();
   if (tab === "options") renderOptions();
 }
@@ -1709,7 +1751,7 @@ async function showNetcheckModal() {
 
 async function runNetcheck() {
   const out = document.getElementById("netcheckOut");
-  out.innerHTML = '<span class="sub">Testing DNS, TLS, Anisette hosts and Apple\'s sign-in service…</span>';
+  out.innerHTML = '<span class="sub">Testing DNS, TLS, Anisette hosts and the Apple sign-in service…</span>';
   const res = await apiPost("/api/netcheck", {});
   if (!res.ok) {
     out.textContent = res.error || "Test failed.";

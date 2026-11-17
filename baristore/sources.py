@@ -181,7 +181,8 @@ def add_alt_source(url, name=""):
         url = "https://" + url
     # Fetch and validate the source JSON first
     raw = _fetch_source_json(url, timeout=15)
-    source_name = (raw.get("name") or name or urllib.parse.urlsplit(url).hostname or "Custom Source").strip()
+    source_name = _text(raw.get("name")) or _text(name) or urllib.parse.urlsplit(url).hostname or "Custom Source"
+    source_name = source_name.strip()
     sources = get_configured_sources()
     norm = url.rstrip("/").lower()
     for entry in sources:

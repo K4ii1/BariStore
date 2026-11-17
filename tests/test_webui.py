@@ -194,5 +194,30 @@ def main():
         server.shutdown()
 
 
+def _js_syntax_check():
+    """The whole UI is one inline script: a syntax error blanks the page."""
+    import shutil
+    import subprocess
+
+    from baristore import ui_page
+
+    node = shutil.which("node") or shutil.which("nodejs")
+    html = ui_page.render_html("tok", "test")
+    assert "showFatal" in html and "fatalBanner" in html
+    start = html.index("<script>") + len("<script>")
+    end = html.index("</script>", start)
+    script = html[start:end]
+    if not node:
+        print("ok  page JavaScript assembled (node missing, syntax check skipped)")
+        return
+    path = os.path.join(tempfile.mkdtemp(prefix="baristore-js-"), "page.js")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(script)
+    result = subprocess.run([node, "--check", path], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-800:]
+    print("ok  page JavaScript parses")
+
+
 if __name__ == "__main__":
     main()
+    _js_syntax_check()

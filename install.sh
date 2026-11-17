@@ -104,16 +104,17 @@ sys.exit(0 if a == b else 1)" "$_file" "$_file.part" 2>/dev/null; then
 
     cat > "$DOCS/baristore" <<'LAUNCHER'
 #!/bin/sh
-# BariStore launcher — runs from ~/Documents, no cd needed.
-cd "$(dirname "$0")/baristore_files" || exit 1
-exec python3 -u -m baristore.cli "$@"
+# BariStore launcher — works from any directory, never moves your shell.
+DIR="$(cd "$(dirname "$0")" && pwd)/baristore_files"
+PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec python3 -u -m baristore.cli "$@"
 LAUNCHER
     chmod +x "$DOCS/baristore" 2>/dev/null
     return $fail
 }
 
 works() {
-    python3 -m baristore.cli --check >/dev/null 2>&1 && sh -n "$DOCS/baristore"
+    PYTHONPATH="$PROG${PYTHONPATH:+:$PYTHONPATH}" python3 -m baristore.cli --check >/dev/null 2>&1 \
+        && sh -n "$DOCS/baristore"
 }
 
 printf 'Installing BariStore%s...\n' "${VER:+" $VER"}"
