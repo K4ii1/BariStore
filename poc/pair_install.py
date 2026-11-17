@@ -6,11 +6,11 @@
 #  wheel: every protocol piece is implemented in pure Python on top of the
 #  cryptography 3.4.8 that a-Shell ships.
 #
-#      sh barisign pair                 pair (if needed) and install
-#      sh barisign pair --pair-only     pair, save the UDID, stop
-#      sh barisign pair --check         verify the pure engine imports
-#      sh barisign pair --ipa FILE      install a specific signed IPA
-#      sh barisign pair --loopback      EXPERIMENTAL: same-device install
+#      barisign pair                 pair (if needed) and install
+#      barisign pair --pair-only     pair, save the UDID, stop
+#      barisign pair --check         verify the pure engine imports
+#      barisign pair --ipa FILE      install a specific signed IPA
+#      barisign pair --loopback      EXPERIMENTAL: same-device install
 #                                        through LocalDevVPN (10.7.0.1)
 #
 #  The target only uses Settings > Developer > Paired Macs and then opens the
@@ -1100,9 +1100,11 @@ async def run_devmode_command(session, action):
 async def ensure_devmode(session, host, port, record, udid):
     """Developer Mode must be ON for the installed app to launch.
 
-    Shows the switch when it is off or hidden (no restart), waits for the
-    user to turn it on and come back, then re-checks on a fresh session: the
-    restart kills the tunnel. Returns the (possibly new) session.
+    Shows the switch when it is off or hidden (no restart). Turning it on
+    always restarts the iPhone, which kills this run — so after show/turn-on
+    the flow ends with a restart card and the user re-runs: pairing record,
+    download and portal data are all saved, so the next run jumps straight
+    past them. Returns the session, or None when a restart comes first.
     """
     try:
         on = await devmode.status(session.stack, session.address, session.services)
@@ -1117,7 +1119,7 @@ async def ensure_devmode(session, host, port, record, udid):
         await devmode.show_switch(session.stack, session.address, session.services)
     except devmode.DevmodeError as exc:                         # noqa: BLE001
         raise _friendly_error(host, exc)
-    _say("  turn ON Developer Mode in Settings and let the device restart,")
+    _say("  switch shown: Settings > Privacy & Security > Developer Mode")
     choice = _ask("  turn it on now instead (restarts immediately)? y/N: ", "n")
     if choice.strip().lower() in ("y", "yes"):
         try:
@@ -1128,19 +1130,12 @@ async def ensure_devmode(session, host, port, record, udid):
             else:
                 raise _friendly_error(host, exc)
         else:
-            _say("  restarting...")
-    _ask("  press Enter when back with Developer Mode ON: ")
-    await session.close()
-    session = await asyncio.wait_for(open_session(record, host, port, udid), 120)
-    try:
-        on = await devmode.status(session.stack, session.address, session.services)
-    except Exception:                                           # noqa: BLE001
-        on = None
-    if not on:
-        raise RuntimeError("Developer Mode is still off, and the app would not "
-                           "launch. Turn it on and run again.")
-    _say("  devmode      on")
-    return session
+            _stage("Done", ["restarting: re-run after boot",
+                            "everything is saved; it jumps back here"])
+            return None
+    _say("  turn ON Developer Mode in Settings (it restarts the iPhone),")
+    _say("  then re-run: everything is saved and it jumps back here.")
+    return None
 
 
 async def _run(args):
@@ -1283,7 +1278,7 @@ async def _run(args):
         _stage("Pairing", ["the target was not found"])
         _say("  pass its Wi-Fi address directly:")
         _say("  target: Settings > Wi-Fi > (i) > IP Address, then")
-        _say("  sh barisign pair --host <target-ip>")
+        _say("  barisign pair --host <target-ip>")
         return 2
     _stage("Pairing", ["target:  %s" % host])
 
@@ -1370,17 +1365,19 @@ async def _run(args):
         ipa = find_ipa(explicit)
         if not ipa:
             _say("  ! no signed IPA found")
-            _say("    sign on the signer first (sh barisign sign), or pass --ipa FILE")
+            _say("    sign first (barisign sign), or pass --ipa FILE")
             return 2
         if not args.get("no_devmode"):
             session = await ensure_devmode(session, host, port, record, udid)
+            if session is None:
+                return 0
         _stage("Install", ["installing:  %s" % os.path.basename(ipa)])
         await asyncio.wait_for(install(session, ipa, RECORD_PATH), 900)
         done_lines = [
             "installed:  %s" % os.path.basename(ipa),
             "on the target: Settings > General > VPN & Device Management",
             "trust the developer, then open the app",
-            "pairing file: sh barisign pair --export FILE for a manual copy",
+            "pairing file: barisign pair --export FILE for a manual copy",
         ]
         variant_id = load_state().get("variant", "")
         if "nightly" in variant_id and "sidestore" in ipa_bundle_id(ipa).lower():
@@ -1415,7 +1412,7 @@ def main(argv):
                 ("pair --timeout N", "give up after N s"),
                 ("pair --check", "verify engine imports"),
                 ("pair --setup", "verify engine, no download")):
-            _say("sh barisign %s" % flag)
+            _say("barisign %s" % flag)
             _say("    %s" % text)
         return 0
 

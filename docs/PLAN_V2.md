@@ -20,8 +20,8 @@ THIS IPHONE (a-Shell + BariSign + LocalDevVPN)
                    (Trust Developer, open the app)
 ```
 
-`sh barisign` runs it as a web page (a-Shell internal browser sheet over the terminal);
-`sh barisign shell` runs the same pipeline in the terminal. Backend and page talk JSON over
+`barisign` runs it as a web page (a-Shell internal browser sheet over the terminal);
+`barisign shell` runs the same pipeline in the terminal. Backend and page talk JSON over
 127.0.0.1 with a per-run token (siboot's page security model).
 
 ## Why not AirDrop or OTA

@@ -104,21 +104,21 @@ class _WebLog:
             return 0
         cleaned = re.sub(r"\x1b\[[0-9;?]*[A-Za-z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", text)
         for part in cleaned.replace("\r", "\n").split("\n"):
-            # Spinner rewrites one line: keep the newest segment only.
             segment = part.strip()
-            if segment:
-                _log_line(segment)
-                activity = re.search(r"\(?\d+/\d+\)?\s*(.*)", segment)
-                if activity and len(segment) < 120:
-                    with _LOCK:
-                        _STATE["activity"] = activity.group(0)[:100]
-                percent = re.search(r"(\d{1,3})\s*%", segment)
-                if percent:
-                    with _LOCK:
-                        try:
-                            _STATE["progress"] = max(0, min(100, int(percent.group(1))))
-                        except ValueError:
-                            pass
+            if not segment:
+                continue
+            # Spinner/progress chatter never becomes the status line: the flow
+            # sets friendly activity text itself. Only the PIN escapes the log.
+            if re.fullmatch(r"\(?\d+/\d+\)?[\s.]*", segment):
+                continue
+            _log_line(segment)
+            percent = re.search(r"(\d{1,3})\s*%", segment)
+            if percent:
+                with _LOCK:
+                    try:
+                        _STATE["progress"] = max(0, min(100, int(percent.group(1))))
+                    except ValueError:
+                        pass
         return len(text)
 
     def flush(self):
@@ -186,6 +186,12 @@ def _heartbeat(text):
     return stop.set
 
 
+def _act(text):
+    """The one clean status line for the current step (never raw terminal)."""
+    with _LOCK:
+        _STATE["activity"] = text
+
+
 def _step_state(step_id, state):
     with _LOCK:
         for step in _STATE["steps"]:
@@ -232,8 +238,6 @@ def _patch_for_web(barisign, poc_login):
                 _log_line("  %s" % line)
 
     def _step(index, total, label):
-        with _LOCK:
-            _STATE["activity"] = "(%d/%d) %s" % (index, total, label)
         percent = re.search(r"(\d{1,3})\s*%", label)
         if percent:
             with _LOCK:
@@ -283,8 +287,8 @@ def _pair_args(udid="", ipa="", pair_only=False):
 def _wait_audio_ok(timeout=20):
     """True when the page confirmed silent audio is playing.
 
-    Without confirmation the speech loop holds the app instead (the fallback
-    when the sheet has no script or audio)."""
+    Without confirmation there is intentionally no sound fallback: the page
+    tells the user to keep the app open and the screen awake."""
     event = threading.Event()
     with _LOCK:
         _AUDIO_OK["event"] = event
@@ -321,8 +325,9 @@ def _run_flow():
         _flow(barisign, poc_login)
     except FlowStop:
         with _LOCK:
-            _STATE["done"] = {"ok": False, "title": "Stopped",
-                              "lines": ["Nothing was half-installed. Run again any time."]}
+            if _STATE["done"] is None:
+                _STATE["done"] = {"ok": False, "title": "Stopped",
+                                  "lines": ["Nothing was half-installed. Run again any time."]}
     except Exception as exc:                                    # noqa: BLE001
         _log_line("FAILED %r" % (exc,))
         with _LOCK:
@@ -395,14 +400,16 @@ def _flow(barisign, poc_login):
     with _LOCK:
         _STATE["audio"] = True
         _STATE["keepalive"] = "page audio…"
+    _act("Pairing: open Settings > Developer > Paired Macs…")
     _log_line("Advertising as BariSign. Open Settings > Developer > "
-              "Paired Macs on this iPhone and enter the printed PIN.")
-    say_stop = None
+              "Paired Macs on this iPhone and enter the printed PIN. "
+              "No Paired Macs entry yet? Look for a new Developer Mode section "
+              "in Settings — pairing itself can reveal it.")
     if not _wait_audio_ok():
+        # No sound on purpose: keep the app open and the screen awake.
         with _LOCK:
-            _STATE["keepalive"] = "speech"
-        _log_line("page audio not confirmed; speech fallback holds us")
-        say_stop = pair_install.keep_awake_start()
+            _STATE["keepalive"] = "page audio?"
+        _log_line("page audio not confirmed; keep the app open and the screen awake")
     else:
         with _LOCK:
             _STATE["keepalive"] = "page audio"
@@ -420,8 +427,6 @@ def _flow(barisign, poc_login):
             _STATE["keepalive"] = "—"
     if pin_cleared:
         _bump_rev()
-        if say_stop is not None:
-            say_stop()
     if code != 0:
         raise RuntimeError("pairing step failed; see the log")
     _step_state("pairing", "done")
@@ -453,15 +458,14 @@ def _flow(barisign, poc_login):
     _step_state("sign", "done")
 
     _step_state("install", "active")
+    _act("Installing…")
     with _LOCK:
         _STATE["audio"] = True
         _STATE["keepalive"] = "page audio…"
-    say_stop = None
     if not _wait_audio_ok():
         with _LOCK:
-            _STATE["keepalive"] = "speech"
-        _log_line("page audio not confirmed; speech fallback holds us")
-        say_stop = pair_install.keep_awake_start()
+            _STATE["keepalive"] = "page audio?"
+        _log_line("page audio not confirmed; keep the app open and the screen awake")
     else:
         with _LOCK:
             _STATE["keepalive"] = "page audio"
@@ -477,8 +481,6 @@ def _flow(barisign, poc_login):
             _STATE["keepalive"] = "—"
     if pin_cleared:
         _bump_rev()
-        if say_stop is not None:
-            say_stop()
     if code != 0:
         raise RuntimeError("install step failed; see the log")
     _step_state("install", "done")
@@ -493,8 +495,11 @@ def _flow(barisign, poc_login):
 def _devmode_web():
     """Developer Mode gate inside the web flow: status, show, optional turn-on.
 
-    One event loop for the whole gate: sessions die on restart, so the gate
-    re-opens and re-checks instead of juggling sessions across loops.
+    One event loop for the whole gate. A restart kills this run (reboot kills
+    the app), so whenever iOS restarts the gate ends with a restart card and
+    the user runs BariSign again after boot: pairing record, download and
+    portal data are all saved, so the second run jumps straight here and
+    verifies.
     """
     import barisign
     import devmode as devmode_module
@@ -539,6 +544,7 @@ def _devmode_web():
             raise RuntimeError("could not show Developer Mode: %s" % exc)
         finally:
             await _close(session)
+        _log_line("switch shown: Settings > Privacy & Security > Developer Mode")
         choice = _ask_web("Turn it on now? (restarts this iPhone at once)",
                           "choice", ["Turn on now (restarts)", "I'll do it in Settings"])
         if (choice or "").startswith("Turn on"):
@@ -551,12 +557,23 @@ def _devmode_web():
                     if str(exc) != "passcode-set":
                         raise RuntimeError("iOS refused: %s" % exc)
                     _log_line("Passcode is set: turn it on by hand in Settings.")
+                    choice = "manual"
+                else:
+                    choice = "restarting"
             finally:
                 await _close(session)
-            _ask_web("iPhone is restarting. When back, continue.", "bool")
-        else:
-            _ask_web("Turn ON Developer Mode in Settings (restart), then continue.",
-                     "bool")
+        if choice == "restarting":
+            with _LOCK:
+                _STATE["done"] = {
+                    "ok": True, "title": "Restarting…",
+                    "lines": ["Developer Mode is turning on; this iPhone restarts now.",
+                              "After boot: open BariSign, tap Start again.",
+                              "Everything is saved — the run jumps back here and verifies."]}
+            raise FlowStop()
+        answer = _ask_web("Turn ON Developer Mode in Settings (it restarts), "
+                          "then continue.", "bool")
+        if not answer:
+            raise FlowStop()
         session = await _open()
         try:
             on = await _status(session)
@@ -580,36 +597,57 @@ __META__
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body { font: 17px/1.45 -apple-system, "Segoe UI", sans-serif; margin: 0;
+  background: #f2f2f7;
   padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(2rem + env(safe-area-inset-bottom)); }
+@media (prefers-color-scheme: dark) { body { background: #000; } }
 main { margin: 0 auto; max-width: 34rem; }
-h1 { font-size: 1.5rem; margin: 0 0 .2rem; }
-.sub { color: #666; margin: 0 0 1rem; }
-ol.steps { list-style: none; margin: 0 0 1rem; padding: 0; }
-ol.steps li { padding: .3rem .6rem; border-radius: .5rem; color: #666; }
+h1 { font-size: 1.4rem; margin: 0 0 .1rem; letter-spacing: -.01em; }
+.sub { color: #666; margin: 0 0 1rem; font-size: .85rem; }
+ol.steps { list-style: none; margin: 0 0 1rem; padding: 0; display: flex;
+  flex-wrap: wrap; gap: .3rem; }
+ol.steps li { padding: .25rem .6rem; border-radius: 1rem; color: #666;
+  background: #e9e9ee; font-size: .82rem; }
+@media (prefers-color-scheme: dark) { ol.steps li { background: #1c1c1e; } }
 ol.steps li.active { background: #0a6cff; color: #fff; font-weight: 600;
   animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
-ol.steps li.done { color: #137333; }
+ol.steps li.done { color: #137333; background: transparent; }
 ol.steps li.done::after { content: " ✓"; }
-.card { border: 1px solid #ccc; border-radius: .8rem; padding: 1rem; margin: 0 0 1rem; }
-.card h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
-.pin { font-size: 3.2rem; font-weight: 800; letter-spacing: .35rem; text-align: center;
-  margin: .4rem 0; font-variant-numeric: tabular-nums; }
+ol.steps li.error { color: #b00020; }
+.card { background: #fff; border: 0; border-radius: 1rem; padding: 1.1rem 1.1rem 1.2rem;
+  margin: 0 0 1rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+@media (prefers-color-scheme: dark) { .card { background: #1c1c1e; } }
+.card h2 { font-size: 1.15rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+.card .act { color: #666; font-size: .92rem; margin: 0 0 .2rem; min-height: 1.2em; }
+.pin { font-size: 3.4rem; font-weight: 800; letter-spacing: .3rem; text-align: center;
+  margin: .5rem 0; font-variant-numeric: tabular-nums; }
 .hint { color: #666; font-size: .92rem; }
 input[type=text], input[type=password], input[type=tel] { font: inherit; width: 100%;
-  padding: .7rem; border: 1px solid #999; border-radius: .55rem; margin: .4rem 0 0; }
-button { font: inherit; font-weight: 600; width: 100%; padding: .8rem; border: 0;
-  border-radius: .55rem; background: #0a6cff; color: #fff; margin-top: .6rem; }
+  padding: .75rem; border: 1px solid #c6c6c8; border-radius: .6rem; margin: .4rem 0 0;
+  background: #f2f2f7; }
+@media (prefers-color-scheme: dark) {
+  input[type=text], input[type=password], input[type=tel] { background: #000; border-color: #38383a; } }
+button { font: inherit; font-weight: 600; width: 100%; padding: .85rem; border: 0;
+  border-radius: .7rem; background: #0a6cff; color: #fff; margin-top: .6rem; }
+button:active { filter: brightness(.92); }
 button.secondary { background: #e9e9ee; color: #000; }
+@media (prefers-color-scheme: dark) { button.secondary { background: #2c2c2e; color: #fff; } }
 .row { display: flex; gap: .6rem; } .row button { margin-top: .6rem; }
 .bar { height: .5rem; background: #e0e0e6; border-radius: .25rem; overflow: hidden; margin-top: .6rem; }
-.bar i { display: block; height: 100%; background: #0a6cff; }
+.bar i { display: block; height: 100%; background: #0a6cff; transition: width .4s; }
 .bar.indeterminate i { width: 30% !important;
   animation: slide 1.2s ease-in-out infinite alternate; }
 @keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
-.log { border: 1px solid #ccc; border-radius: .8rem; padding: .6rem 1rem; margin: 0 0 1rem; }
-.log pre { white-space: pre-wrap; word-break: break-word; font-size: .8rem;
-  max-height: 16rem; overflow-y: auto; margin: .4rem 0 0; }
+.log { background: #fff; border: 0; border-radius: 1rem; padding: .7rem 1rem; margin: 0 0 1rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+@media (prefers-color-scheme: dark) { .log { background: #1c1c1e; } }
+.log h3 { margin: 0; font-size: .9rem; }
+.log button.link { width: auto; background: none; color: #0a6cff; padding: 0; margin: 0;
+  font-size: .9rem; font-weight: 600; }
+.log pre { white-space: pre-wrap; word-break: break-word; font-size: .78rem;
+  max-height: 14rem; overflow-y: auto; margin: .4rem 0 0; }
+#logbox.closed pre { display: none; }
+.log.closed pre { display: none; }
 .stop { text-align: center; margin-top: 1.4rem; }
 .err { color: #b00020; font-weight: 600; }
 .ok { color: #137333; font-weight: 600; }
@@ -620,8 +658,8 @@ button.secondary { background: #e9e9ee; color: #000; }
 <h1>BariSign</h1>
 <p class="sub">one iPhone, no computer. <span>keep-alive <span id="keepalive">__AUDIO__</span></span></p>
 <ol class="steps" id="steps">__STEPS__</ol>
-<div class="card"><h2 id="mtitle">__TITLE__</h2><div id="mactivity">__ACTIVITY__</div><div id="mbody">__BODY__</div></div>
-<div class="log"><h3>Log</h3><pre id="log">__LOG__</pre></div>
+<div class="card"><h2 id="mtitle">__TITLE__</h2><div class="act" id="mactivity">__ACTIVITY__</div><div id="mbody">__BODY__</div></div>
+<div class="log" id="logbox"><h3><button class="link" id="logtoggle" type="button">Log &#8250;</button></h3><pre id="log">__LOG__</pre></div>
 <div class="stop">__STOP__</div>
 </main>
 <script>
@@ -651,6 +689,13 @@ async function ensureAudio() {
   } catch (e) { /* without it the speech fallback holds us */ }
 }
 document.addEventListener("submit", () => { ensureAudio(); });
+document.getElementById("logtoggle").onclick = () => {
+  const box = document.getElementById("logbox");
+  const btn = document.getElementById("logtoggle");
+  if (!box || !btn) return;
+  box.classList.toggle("closed");
+  btn.innerHTML = box.classList.contains("closed") ? "Log &#8250;" : "Log &#8595;";
+};
 document.addEventListener("input", (e) => {
   const inp = e.target;
   if (inp && inp.matches && inp.matches('input[type="tel"][data-autosend]') &&

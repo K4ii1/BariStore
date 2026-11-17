@@ -68,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.29"
+VERSION = "0.9.30"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -318,7 +318,7 @@ def _adopt_custom_bundle_id(bundle_id):
     if state.get("bundle_id"):
         print("  ! this IPA is %s" % bundle_id)
         print("    the saved profile is for %s" % state.get("bundle_id"))
-        print("    run: sh barisign portal --bundle-id %s" % bundle_id)
+        print("    run: barisign portal --bundle-id %s" % bundle_id)
         print("    (a custom App ID uses one of the 10 free slots)")
         return None
     update_state(bundle_id=bundle_id, variant="custom")
@@ -779,6 +779,46 @@ def cmd_check(_argv):
     print()
     print("CHECK  %s" % ("pass" if passed == 0 else "fail"))
     return passed
+
+
+def cmd_update(_argv):
+    """Self-update: fetch the newest install.sh and apply it in place."""
+    import tempfile
+    import urllib.request
+    prog = os.path.dirname(_HERE)
+    print("BariSign %s" % VERSION)
+    print("  checking for updates...")
+    try:
+        request = urllib.request.Request(
+            "https://github.com/barismd/barisign/commits/main.atom",
+            headers={"User-Agent": "BariSign"})
+        context = signin._ctx_for("github.com") if hasattr(signin, "_ctx_for") else None
+        with urllib.request.urlopen(request, timeout=25, context=context) as response:
+            atom = response.read().decode("utf-8", "replace")
+    except Exception:                                           # noqa: BLE001
+        atom = ""
+    match = re.search(r"barismd/barisign/commit/([0-9a-f]{40})", atom or "")
+    base = ("https://raw.githubusercontent.com/barismd/barisign/%s" % match.group(1)
+            if match else "https://raw.githubusercontent.com/barismd/barisign/main")
+    handle, tmp = tempfile.mkstemp(prefix=".barisign-update-", dir=prog)
+    try:
+        with os.fdopen(handle, "wb") as out:
+            request = urllib.request.Request(
+                base + "/install.sh",
+                headers={"User-Agent": "BariSign", "Cache-Control": "no-cache"})
+            with urllib.request.urlopen(request, timeout=60,
+                                         context=context) as response:
+                out.write(response.read())
+        print("  applying...")
+        env = dict(os.environ)
+        env["BARISIGN_DIR"] = prog
+        code = subprocess.call(["sh", tmp], env=env)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    return code
 
 
 def cmd_version(_argv):
@@ -1450,7 +1490,7 @@ def _sign_now(ipa, saved, argv, hint=True, make_zip=None):
     if result["zip"]:
         print("  zip   %s" % _display_path(result["zip"]))
     if hint:
-        print("  next  sh barisign pair  (install on the target over Wi-Fi)")
+        print("  next  barisign pair  (install here over loopback)")
     return result
 
 
@@ -1462,7 +1502,7 @@ def cmd_sign(argv):
                                          ("cert", saved["cert"]),
                                          ("profile", saved["profile"])) if not path]
     if missing:
-        print("  ! no %s: run 'sh barisign portal' first" % ", ".join(missing))
+        print("  ! no %s: run 'barisign portal' first" % ", ".join(missing))
         return 2
 
     ipa, info = _obtain_ipa(load_state(), argv)
@@ -1484,14 +1524,14 @@ def cmd_shell(argv):
     if "--help" in argv or "-h" in argv or "help" in argv:
         print("BariSign %s" % VERSION)
         print()
-        print("  sh barisign shell   terminal run without the web page")
+        print("  barisign shell   terminal run without the web page")
         print("  needs LocalDevVPN connected on this device; volume audible")
         return 0
     pair = os.path.join(_HERE, "pair_install.py")
     state = load_state()
     print("BariSign %s" % VERSION)
     if poc_login._selftest(quiet=True) != 0:
-        print("check  fail: run 'sh barisign check' for the details")
+        print("check  fail: run 'barisign check' for the details")
         return 1
     print("check  ok")
 
@@ -1593,6 +1633,7 @@ COMMANDS = {
     "portal": cmd_portal,
     "sign": cmd_sign,
     "shell": cmd_shell,
+    "update": cmd_update,
 }
 
 
@@ -1639,28 +1680,28 @@ def _usage():
     print("BariSign %s" % VERSION)
     print()
     for command, text in (
-            ("sh barisign", "page: the whole install"),
-            ("sh barisign shell", "terminal, no page"),
-            ("sh barisign login", "Apple sign-in"),
-            ("sh barisign portal", "device, cert, profile"),
-            ("sh barisign sign", "download, sign, zip"),
-            ("sh barisign pair", "loopback install"),
-            ("sh barisign status", "what is saved"),
-            ("sh barisign check", "diagnostics only"),
-            ("sh barisign version", "which copy is running"),
-            ("sh barisign update", "update in place"),
-            ("sh barisign forget", "clear saved state"),
-            ("sh barisign reset", "remove files + state")):
+            ("barisign", "page: the whole install"),
+            ("barisign shell", "terminal, no page"),
+            ("barisign login", "Apple sign-in"),
+            ("barisign portal", "device, cert, profile"),
+            ("barisign sign", "download, sign, zip"),
+            ("barisign pair", "loopback install"),
+            ("barisign status", "what is saved"),
+            ("barisign check", "diagnostics only"),
+            ("barisign version", "which copy is running"),
+            ("barisign update", "update in place"),
+            ("barisign forget", "clear saved state"),
+            ("barisign reset", "remove files + state")):
         print("  %s" % command)
         print("    %s" % text)
     print()
-    print("  options: sh barisign <command> help")
+    print("  options: barisign <command> help")
 
 
 def _options(command):
     print("BariSign %s" % VERSION)
     print()
-    print("  sh barisign %s" % command)
+    print("  barisign %s" % command)
     for flag, text in _OPTIONS[command]:
         print()
         print("    %s" % flag)

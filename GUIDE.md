@@ -13,7 +13,7 @@ and Linux-tested but **UNVERIFIED ON A DEVICE**. Run them and report back: what 
 
 ```
 curl -fsSL https://raw.githubusercontent.com/barismd/barisign/main/install.sh | sh
-sh barisign update   # later: updates everything in place
+barisign update   # later: updates everything in place
 ```
 
 ---
@@ -21,7 +21,7 @@ sh barisign update   # later: updates everything in place
 ## The run
 
 ```
-sh barisign
+barisign
 ```
 
 A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
@@ -34,11 +34,13 @@ A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
 3. **Variant** — 1–5, or 6 for your own `.ipa` (drop it into Files → a-Shell → Custom IPAs first;
    the picker rescans when the folder was empty).
 4. **Download** — the current IPA, with size + SHA-256 checked. Reused when still current.
-5. **Pairing** — open Settings → Developer → Paired Macs → BariSign, enter the big PIN. The page
-   plays silence so iOS holds the app while you are in Settings.
-6. **Developer Mode** — read over the tunnel. If off or hidden: the switch is shown (no restart);
-   either flip it in Settings (restart, come back) or tap **Turn on now** (restarts at once; needs
-   no passcode — with a passcode set, iOS refuses and you flip it by hand).
+5. **Pairing** — open Settings → Developer → Paired Macs → BariSign, enter the big PIN (if Paired
+   Macs is missing, look for a new Developer Mode section — pairing itself can reveal it).
+   The page plays silence so iOS holds the app while you are in Settings.
+6. **Developer Mode** — read over the tunnel. If off or hidden: the switch is shown (no restart).
+   Turning it on always restarts the iPhone, which ends the run: flip it (or tap **Turn on now**),
+   let it restart, then open BariSign and tap Start again — everything is saved and the run jumps
+   straight back here to verify. With a passcode set, iOS refuses the instant path: flip it by hand.
 7. **Portal** — registers this iPhone, issues the certificate, downloads the profile (with the App
    Group so SideStore/LiveContainer open their container).
 8. **Sign** — signs and verifies the IPA.
@@ -47,7 +49,7 @@ A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
 
 `Stop` (or Ctrl-C in the terminal) ends the run any time. Nothing is half-installed.
 
-Prefer the terminal? `sh barisign shell` runs the same pipeline without the page (same order,
+Prefer the terminal? `barisign shell` runs the same pipeline without the page (same order,
 same loopback, speech instead of page audio for keep-alive).
 
 ---
@@ -55,15 +57,15 @@ same loopback, speech instead of page audio for keep-alive).
 ## Manual commands
 
 ```
-sh barisign status              # what is saved (UDID, variant, release, session)
-sh barisign check               # diagnostics only
-sh barisign login               # Apple sign-in alone
-sh barisign portal              # device + certificate + profile alone
-sh barisign sign                # download + sign alone
-sh barisign pair --devmode status|show|on
+barisign status              # what is saved (UDID, variant, release, session)
+barisign check               # diagnostics only
+barisign login               # Apple sign-in alone
+barisign portal              # device + certificate + profile alone
+barisign sign                # download + sign alone
+barisign pair --devmode status|show|on
                                 # Developer Mode alone (status default in install)
-sh barisign forget              # clear the saved state
-sh barisign reset               # remove saved state, IPAs and zips
+barisign forget              # clear the saved state
+barisign reset               # remove saved state, IPAs and zips
 ```
 
 ---
@@ -80,7 +82,7 @@ sh barisign reset               # remove saved state, IPAs and zips
 
 | What you see | What it means |
 |---|---|
-| `check  fail` | `sh barisign check` prints what broke |
+| `check  fail` | `barisign check` prints what broke |
 | sheet does not open | run `BROWSER=internalbrowser openurl <the printed URL>` by hand |
 | LocalDevVPN never answers | connect it (tunnel must be ON, not just installed) |
 | login `-22406` | Apple says the password is wrong. BariSign retries twice |

@@ -4,9 +4,9 @@ The old trigger (share a signed IPA, tap it, delete it) is gone. Developer Mode 
 and requested through the same pairing + tunnel as the install:
 
 ```
-sh barisign pair --devmode status   # on / off / unknown  (default in the flow)
-sh barisign pair --devmode show     # reveal the switch in Settings (no restart)
-sh barisign pair --devmode on       # turn it on now (restarts; asks first)
+barisign pair --devmode status   # on / off / unknown  (default in the flow)
+barisign pair --devmode show     # reveal the switch in Settings (no restart)
+barisign pair --devmode on       # turn it on now (restarts; asks first)
 ```
 
 Mechanics (MIT sources, clean-room code in `poc/devmode.py`):

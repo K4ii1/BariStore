@@ -6,7 +6,7 @@
 #      curl -fsSL https://raw.githubusercontent.com/barismd/barisign/main/install.sh | sh
 #
 #  What it lays down in ~/Documents:
-#      barisign          the launcher: `sh barisign` from Documents, no cd needed
+#      barisign          the launcher: run `barisign` from Documents, no cd needed
 #      barisign_files/   everything else (poc/, state/, ipa/, third_party/...)
 #
 #  Run it again any time to update: it overwrites the program files and leaves
@@ -242,11 +242,11 @@ done
 
 if [ "$fail" -ne 0 ] || ! works; then
     printf '  ! install failed; nothing was changed outside the program files.\n'
-    printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
+    printf '    check the network (Safari should open github.com) and run the install line again.\n'
     exit 1
 fi
 printf 'BariSign %s installed\n\n' "${VER:-?}"
-printf '  sh barisign\n'
+printf '  barisign\n'
 printf '    opens the page, runs the install\n'
-printf '  sh barisign help\n'
+printf '  barisign help\n'
 printf '    every command\n'

@@ -15,7 +15,7 @@ BariSign, LocalDevVPN, and this iPhone itself.
 ## How the flow works
 
 ```
-sh barisign
+barisign
 ```
 
 opens a page over the terminal. Tap **Start** and it runs the whole install on this iPhone:
@@ -48,15 +48,15 @@ One line, run from anywhere in a-Shell. It lays down `barisign` (the launcher, s
 `cd` is ever needed) plus `barisign_files/` with everything else; an old `barisign/`
 folder is moved into place with its state kept.
 
-`sh barisign update` self-updates everything in place. Your saved state in
+`barisign update` self-updates everything in place. Your saved state in
 `barisign_files/state/` is kept.
 There is **no pip step**: the engine is part of the program files.
 
 ```
-sh barisign          # web UI: the whole install on this iPhone
-sh barisign shell    # terminal run without the web page
-sh barisign status   # what is saved
-sh barisign --help   # every command
+barisign          # web UI: the whole install on this iPhone
+barisign shell    # terminal run without the web page
+barisign status   # what is saved
+barisign --help   # every command
 ```
 
 ---
@@ -130,7 +130,7 @@ match; offline runs say `(no GitHub; using the saved file)`. `variants.json` is 
 | `docs/RESULTS.md` | what is verified on device, and the device quirks we had to work around |
 | `docs/NEXT_SESSION.md` | handoff: the on-device gates |
 | `variants.json` | the variant registry and runtime resolution rules |
-| `sh barisign` | the single entry point (web UI) |
+| `barisign` | the single entry point (web UI) |
 | `THIRD_PARTY_NOTICES.md` | licences and attribution |
 
 ## Licences — please read

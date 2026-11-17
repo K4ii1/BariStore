@@ -8,9 +8,9 @@ BariSign + LocalDevVPN + Settings. iOS/iPadOS 27+.
 
 - **Audience = everyone, no computer, one device.** Users sign in with their **main Apple ID**
   (2FA supported); the README must say plainly why that is safe.
-- **Single-device flow (2026-11-17 rewrite):** `sh barisign` opens a web page in a-Shell's
+- **Single-device flow (2026-11-17 rewrite):** `barisign` opens a web page in a-Shell's
   internal browser and runs requirements → Apple ID → variant → download → pairing →
-  Developer Mode → portal → sign → install, all on this iPhone. `sh barisign shell` is the
+  Developer Mode → portal → sign → install, all on this iPhone. `barisign shell` is the
   terminal fallback (same order). The two-device plan is deleted.
 - **Web UI, not terminal strain:** backend and page talk JSON over 127.0.0.1 with a per-run
   token (siboot's page model). The sheet keeps a-Shell foreground; silence plays while the
@@ -31,7 +31,7 @@ BariSign + LocalDevVPN + Settings. iOS/iPadOS 27+.
 - **Device = iOS 27+ only.** iOS 17.4–26.x is out of scope. Stated in `README.md`.
 - **Install = pairing + Developer Mode + `installation_proxy`, all on this iPhone, over the
   LocalDevVPN loopback.** AirDrop and OTA are dead for free-profile apps on iOS 27
-  (`MIInstallerErrorDomain` 111). Run `sh barisign`; pair from Settings → Developer →
+  (`MIInstallerErrorDomain` 111). Run `barisign`; pair from Settings → Developer →
   Paired Macs on the same iPhone; enter the code.
 - **Pure engine (no qh3, no GPL runtime).** `pymobiledevice3` needs `qh3` (native, no iOS
   wheel), so it is not used. The stack is self-contained MIT Python: RPPairing host (SRP-6a,
@@ -103,9 +103,9 @@ The web interface (no Shortcuts, no terminal strain):
 - **Localization**: all user-facing text (script messages, README) lives in
   per-language files so adding a language = adding a file. English first; translations only in
   the final phase, using the cheap model, after asking which languages.
-- Interface: the web page (`sh barisign`), **no Shortcuts** and no generated
+- Interface: the web page (`barisign`), **no Shortcuts** and no generated
   `.shortcut` files. Questions are fields and buttons; the log mirrors the terminal.
-  `sh barisign shell` stays as the terminal fallback. Audio keep-alive must be holdable
+  `barisign shell` stays as the terminal fallback. Audio keep-alive must be holdable
   from the page; never add a background mode we cannot hold from Python.
 
 ## Variant rules
@@ -133,7 +133,7 @@ The web interface (no Shortcuts, no terminal strain):
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
 - Bump `VERSION` in `poc/barisign.py` on every functional commit (0.9.x line; never 1.0.0): the installer title prints
   the version being installed, so the user can see the update arrived.
-- Install/update paths: one-line `curl ... install.sh | sh`, plus `sh barisign update`.
+- Install/update paths: one-line `curl ... install.sh | sh`, plus `barisign update`.
   No `bin/`, no root wrappers: the installer generates `~/Documents/barisign` (launcher).
 - Verified on device: sign-in, portal, signing, launch; pairing M1–M6 over raw broadcast.
   Written + Linux-tested, on-device run pending: loopback pairing, web sheet, devmode toggle,

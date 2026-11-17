@@ -18,7 +18,7 @@
 #      python3 -u poc/poc_portal.py --email YOU@example.com --udid <UDID> \
 #              --bundle-id com.SideStore.SideStore --device-name "My iPhone"
 #
-#  Get the UDID with `sh barisign udid`. The bundle identifier must match the app
+#  Get the UDID with `barisign udid`. The bundle identifier must match the app
 #  you later want to install (see variants.json).
 # =============================================================================
 
@@ -65,7 +65,7 @@ def _usage():
     print("          [--bundle-id ID] [--device-name NAME] [--app-name NAME]")
     print()
     print("  --email        the free Apple ID to sign in with (same one as poc_login)")
-    print("  --udid         this device's UDID (from sh barisign udid)")
+    print("  --udid         this device's UDID (from barisign udid)")
     print("  --bundle-id    defaults to com.barisign.smoke for a first test")
     print("  --device-name  name shown in the Apple developer portal")
     print("  --app-name     name for the App ID")

@@ -48,7 +48,7 @@ order. Two deliberate rules:
 ## Pinning one, or hosting your own
 
 ```
-sh barisign login --server https://ani.jkcoxson.com    # pin a server
+barisign login --server https://ani.jkcoxson.com    # pin a server
 ```
 
 To run your own, the SideStore docs walk through deploying `omnisette-server` (Docker image

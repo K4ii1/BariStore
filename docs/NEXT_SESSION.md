@@ -1,13 +1,13 @@
 # Next session — handoff (2026-11-17)
 
 State: version **0.9.25**. One-line install (`curl ... install.sh | sh`) into
-`~/Documents/barisign` (launcher) + `barisign_files/`; `sh barisign update` self-updates;
+`~/Documents/barisign` (launcher) + `barisign_files/`; `barisign update` self-updates;
 root wrappers and `bin/` are gone. The page is server-rendered + meta-refresh now, so it
 works with scripts off; silent audio is JS-enhanced with a speech fallback when the page
-never confirms audio. Single-device rewrite: `sh barisign` opens a web UI in a-Shell's
+never confirms audio. Single-device rewrite: `barisign` opens a web UI in a-Shell's
 internal browser and runs the whole pipeline on this iPhone (requirements → Apple ID →
 variant → download → pairing → Developer Mode → portal → sign → install). The two-device
-guided flow is deleted; `sh barisign shell` is the terminal fallback (same order, speech
+guided flow is deleted; `barisign shell` is the terminal fallback (same order, speech
 keep-alive). Developer Mode comes over the tunnel now (lockdownd GetValue + AMFI action,
 MIT idevice/siboot protocol facts, clean-room code in `poc/devmode.py`): no trigger
 install, no second device.
@@ -40,7 +40,7 @@ python3 tests/test_loopback.py        # loopback probe + keep-awake no-op
 ## Constraints that still apply
 
 - Everything on the device is pure Python + the shipped `cryptography`; never add a native wheel.
-- Keep `sh update` self-updating: `install.sh` must remain the single file it applies.
+- Keep `barisign update` self-updating: `install.sh` must remain the single file it applies.
 - Do not name or describe the user's test hardware; say this iPhone.
 - Do not claim device success without the user's confirmation. Mark untested code **untested**.
 - `third_party/sideinstaller/` stays isolated (non-commercial); never copy it into MIT files.
