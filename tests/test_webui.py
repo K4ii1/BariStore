@@ -220,6 +220,29 @@ def _back_and_cancel():
         server.shutdown()
 
 
+def _settings_and_export():
+    server = _serve()
+    try:
+        status, body = _get(server, "/%s/" % ("t" * 32))
+        assert status == 200, status
+        text = body.decode()
+        for needle in ("Settings", "Forget saved state", "Export pairing file",
+                       "Check for updates"):
+            assert needle in text, needle
+        print("ok  settings rendered")
+        home_docs = os.path.join(os.path.expanduser("~"), "Documents")
+        copied = os.path.join(home_docs, "BariSign-Pairing.plist")
+        had_copy = os.path.isfile(copied)
+        status, body = _post(server, "/%s/api/export" % ("t" * 32), b"{}",
+                              "application/json")
+        assert status == 200 and json.loads(body) == {"ok": True}, (status, body)
+        if os.path.isfile(copied) and not had_copy:
+            os.remove(copied)
+        print("ok  export endpoint")
+    finally:
+        server.shutdown()
+
+
 def _cancel():
     import asyncio as _a
     import threading
@@ -250,5 +273,6 @@ if __name__ == "__main__":
     _icon()
     _panel_rev()
     _back_and_cancel()
+    _settings_and_export()
     _cancel()
     main()

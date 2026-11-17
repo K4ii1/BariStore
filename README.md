@@ -33,8 +33,9 @@ opens a page over the terminal. Tap **Start** and it runs the whole install on t
    Turning it on restarts the iPhone and ends the run with a restart card: flip it, restart, run
    again — everything is saved and the run jumps straight back. No trigger install, no second device.
 8. **Sign & Install** — registers this iPhone, signs the IPA, installs it over the same loopback
-   tunnel; trust the developer, open the app. **Stop** ends the run anywhere; **Back** re-asks the
-   previous step; the page has a **Settings** card and a collapsible log.
+   tunnel; trust the developer, open the app. **Stop** ends the run anywhere (even mid-wait);
+   **Back** re-asks the previous step and replays your answers; the **Settings** card holds the
+   version, what is saved, an update check, a pairing-file export and a forget button.
 
 No computer, no second device, no AirDrop, no OTA, no enterprise certificate.
 

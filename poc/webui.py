@@ -54,6 +54,7 @@ _STATE = {
     "keepalive": "—",
     "started": False,
     "update_msg": "",
+    "export_msg": "",
 }
 _LOCK = threading.Lock()
 _STOP = threading.Event()
@@ -793,6 +794,7 @@ button.secondary { background: #e9e9ee; color: #000; }
 <div class="log" id="logbox"><h3><button type="button" class="link" id="logtoggle">Log &#8250;</button></h3><pre id="log">__LOG__</pre></div>
 <div class="card"><h2>Settings</h2><div>__SETTINGS__</div>
 <form method="post" action="api/update"><button type="submit">Check for updates</button></form>
+<form method="post" action="api/export"><button type="submit" class="secondary">Export pairing file</button></form>
 <form method="post" action="api/forget"><button type="submit" class="secondary">Forget saved state</button></form></div>
 <div class="stop">__STOP__</div>
 </main>
@@ -802,13 +804,26 @@ const TOKEN = "__TOKEN__";
 let lastRev = __REV__;
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 let audioStarted = false;
+let wakeLock = null;
+async function ensureWakeLock() {
+  try {
+    if (!("wakeLock" in navigator)) return;
+    if (wakeLock !== null) return;
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (e) { /* screen may still sleep; the log explains the rest */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { ensureWakeLock(); }
+});
 async function ensureAudio() {
-  if (audioStarted) return;
+  ensureWakeLock();
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     if (!window.__ac) window.__ac = new AC();
     if (window.__ac.state === "suspended") await window.__ac.resume();
+    if (window.__ac.state !== "running") return;
     const len = window.__ac.sampleRate * 2;
     const buf = window.__ac.createBuffer(1, len, window.__ac.sampleRate);
     buf.getChannelData(0).fill(0);
@@ -820,8 +835,12 @@ async function ensureAudio() {
     audioStarted = true;
     await fetch(TOKEN + "/api/audio", {method: "POST",
       headers: {"Content-Type": "application/json"}, body: "{}"});
-  } catch (e) { /* without it the speech fallback holds us */ }
+  } catch (e) { /* without it, keep the app open and the screen awake */ }
 }
+// Log starts closed; the toggle below re-opens it. (Plain closed class,
+// no re-render involved, so polling never resets it.)
+document.getElementById("logbox").classList.add("closed");
+document.getElementById("logtoggle").innerHTML = "Log &#8250;";
 document.addEventListener("submit", () => { ensureAudio(); });
 document.getElementById("logtoggle").onclick = () => {
   const box = document.getElementById("logbox");
@@ -947,8 +966,11 @@ def _render_page(server):
         for k, v in ([("BariSign", _version)] + _saved_rows))
     with _LOCK:
         _update_msg = _STATE.get("update_msg", "")
+        _export_msg = _STATE.get("export_msg", "")
     if _update_msg:
         settings_html += "<div>Update: <b>%s</b></div>" % _html.escape(_update_msg)
+    if _export_msg:
+        settings_html += "<div>Pairing file: <b>%s</b></div>" % _html.escape(_export_msg)
     token = server.token
     # Meta refresh only when the page script appears dead: with live JS
     # polling, reloads would wipe typed input.
@@ -1212,6 +1234,25 @@ class _Handler(BaseHTTPRequestHandler):
                     _log_line("back one step…")
                     return True
                 return False
+            if rest == "/api/export":
+                # Copy the pairing file where Files/AirDrop can reach it.
+                try:
+                    import barisign as _barisign_mod
+                    record = os.path.join(_barisign_mod.STATE_DIR,
+                                          "PairingFile_RemoteRP.plist")
+                    docs = os.path.join(os.path.expanduser("~"), "Documents")
+                    if os.path.isfile(record) and os.path.isdir(docs):
+                        import shutil as _shutil
+                        _shutil.copyfile(record, os.path.join(docs, "BariSign-Pairing.plist"))
+                        outcome = "saved as Files > BariSign-Pairing.plist — AirDrop it anywhere"
+                    else:
+                        outcome = "no pairing file yet — pair first"
+                except Exception as exc:                        # noqa: BLE001
+                    outcome = "export failed: %s" % exc
+                with _LOCK:
+                    _STATE["export_msg"] = outcome
+                _bump_rev()
+                return True
             if rest == "/api/forget":
                 try:
                     import barisign as _barisign_mod

@@ -95,4 +95,7 @@ barisign reset               # remove saved state, IPAs and zips
 | 2FA code rejected | enter the current code; after 3 misses the login restarts (password kept) |
 | BariSign missing in Paired Macs | same iPhone? LocalDevVPN connected? restart a-Shell and retry |
 | Developer Mode still off | flip it in Settings, let the iPhone restart, continue on the page |
+| sign-in fails on every anisette host | run `barisign netcheck`: it names the failing stage per host — send the output |
+| log will not open/close | tap the **Log** header — it toggles; reloads never reset it while the page polls |
+| Stop seems dead | it cancels even mid-wait now; if the page itself froze, close the sheet and rerun `barisign` |
 | `pair` finds no IPA | sign first, or pass `--ipa FILE` |
