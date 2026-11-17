@@ -476,7 +476,7 @@ def start_install_worker(params):
                 prov["cert"],
                 output_ipa=signed_out,
                 udid=current_udid,
-                progress=lambda msg: _update_job(step=msg),
+                progress=lambda msg: (_throw_if_cancelled(), _update_job(step=msg)),
                 drop_extensions=drop_extensions,
                 drop_extension_folders=drop_extension_folders,
                 custom_display_name=custom_name,
@@ -604,6 +604,7 @@ def start_refresh_all_worker():
                     prov["cert"],
                     output_ipa=signed_out,
                     udid=udid,
+                    progress=lambda msg: (_throw_if_cancelled(), _update_job(step=msg)),
                     drop_extensions=bool(app.get("drop_extensions")),
                 )
 
@@ -909,24 +910,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True})
                 return
 
-            if route == "/api/pair/speak":
-                with _LOCK:
-                    pin = (_JOB.get("pin") or "") if _JOB.get("active") else ""
-                if not pin:
-                    self._send_json(
-                        400, {"ok": False, "error": "No active pairing PIN to read aloud."}
-                    )
-                    return
-                try:
-                    subprocess.Popen(["say", " ".join(pin)])
-                except Exception as exc:
-                    self._send_json(
-                        400, {"ok": False, "error": "Could not speak PIN: %s" % exc}
-                    )
-                    return
-                self._send_json(200, {"ok": True})
-                return
-
             if route == "/api/pair/import":
                 b64_data = body.get("data_base64") or ""
                 raw_bytes = base64.b64decode(b64_data) if b64_data else b""
@@ -991,9 +974,50 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True})
                 return
 
+            if route == "/api/pair/export":
+                try:
+                    raw = storage.export_pairing_bytes()
+                    docs = os.path.join(os.path.expanduser("~"), "Documents")
+                    if not os.path.isdir(docs):
+                        raise RuntimeError("Documents folder not found.")
+                    out_file = os.path.join(docs, "BariStore-Pairing.mobiledevicepairing")
+                    with open(out_file, "wb") as handle:
+                        handle.write(raw)
+                    print("  pairing file exported to %s" % out_file)
+                    self._send_json(
+                        200,
+                        {
+                            "ok": True,
+                            "message": "Pairing file saved to Documents/BariStore-Pairing.mobiledevicepairing — import it from SideStore/AltStore/StikDebug if needed.",
+                        },
+                    )
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+
             if route == "/api/shutdown":
+                print("BariStore shutting down (requested from Web UI)…")
                 self._send_json(200, {"ok": True})
                 threading.Timer(0.3, _STOP.set).start()
+                return
+
+            if route == "/api/restart":
+                try:
+                    subprocess.Popen(
+                        ["baristore"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+                except Exception as exc:
+                    self._send_json(
+                        400, {"ok": False, "error": "Could not relaunch BariStore: %s" % exc}
+                    )
+                    return
+                print("BariStore restarting… (opening a new window)")
+                self._send_json(200, {"ok": True})
+                threading.Timer(2.0, _STOP.set).start()
                 return
 
             if route == "/api/sources/add":
@@ -1120,25 +1144,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             if route == "/api/update":
-                with _LOCK:
-                    if _JOB["active"]:
-                        self._send_json(
-                            200,
-                            {"ok": True, "message": "Another operation is running; retry after it finishes."},
-                        )
-                        return
-                my_id = _start_job("update", "Checking for updates", "Starting update…")
-                try:
-                    msg = run_self_update(
-                        progress=lambda pct, step: _update_job(
-                            step=step, progress=int(pct)
-                        )
-                    )
-                except Exception as exc:
-                    _finish_job(error=str(exc), job_id=my_id)
-                    self._send_json(400, {"ok": False, "error": str(exc)})
-                    return
-                _finish_job(result={"message": msg}, job_id=my_id)
+                msg = run_self_update()
                 self._send_json(200, {"ok": True, "message": msg})
                 return
 
@@ -1151,7 +1157,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             if route == "/api/reset":
+                print("BariStore reset requested — wiping state…")
                 storage.factory_reset()
+                print("BariStore reset complete.")
                 self._send_json(200, {"ok": True})
                 return
 
@@ -1196,7 +1204,7 @@ def run(open_browser=True):
     print("  url    %s" % url)
     if not opened and open_browser:
         print("  open   BROWSER=internalbrowser openurl %s" % url)
-    print("  press Enter to stop the server.")
+    print("  press Enter to stop the server (or use Quit / Restart in Options > System).")
 
     def _wait_for_enter():
         # Blocking readline in a daemon thread: works whether or not stdin is

@@ -1167,6 +1167,25 @@ def get_saved_session():
 _PENDING_LOGINS = {}
 
 
+_PROVISIONING_ERROR_MARKERS = (
+    "anisette",
+    "provisioning",
+    "adi_pb",
+    "-45061",
+    "-45062",
+    "mint headers",
+    "refused to mint",
+    "not a valid anisette",
+    "provisioning socket",
+    "routing",
+)
+
+
+def _is_provisioning_error(msg):
+    low = str(msg or "").lower()
+    return any(marker in low for marker in _PROVISIONING_ERROR_MARKERS)
+
+
 _FATAL_AUTH_ERROR_CODES = (
     "-22406",
     "-20970",
@@ -1264,10 +1283,14 @@ def start_apple_login(email, password, preferred_anisette=""):
                 if _is_fatal_credential_error(msg):
                     raise AppleAuthError(msg)
                 tried.append("%s: %s" % (host, msg))
-                try:
-                    anisette.forget_provisioning()
-                except Exception:
-                    pass
+                # Only discard the provisioned machine identity when the error
+                # actually points at provisioning. Wiping it on transient errors
+                # burns the machine the saved session token was issued for.
+                if _is_provisioning_error(msg):
+                    try:
+                        anisette.forget_provisioning()
+                    except Exception:
+                        pass
                 continue
 
         raise AppleAuthError(

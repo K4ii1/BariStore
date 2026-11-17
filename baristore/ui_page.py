@@ -326,7 +326,7 @@ input:focus, select:focus { border-color: var(--accent); }
       </div>
       <div id="optDeviceDetails" style="margin:0.6rem 0"></div>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-        <a class="btn secondary" href="/__TOKEN__/api/pair/export" download="ALTPairingFile.mobiledevicepairing">Export Pairing File</a>
+        <button class="secondary" onclick="exportPairingFile()">Export Pairing File</button>
         <button class="secondary" onclick="triggerPairingImport()">Import Pairing File</button>
         <button class="secondary" onclick="startPairing(true)">Re-Pair Device</button>
       </div>
@@ -361,6 +361,7 @@ input:focus, select:focus { border-color: var(--accent); }
         <button class="secondary" onclick="checkUpdates()">Check for Updates</button>
         <button class="secondary" onclick="clearCache()">Clear IPA Cache</button>
         <button class="secondary" onclick="openSetupWizard()">Run Setup Wizard</button>
+        <button class="secondary" onclick="restartBariStore()">Restart BariStore</button>
         <button class="secondary" onclick="quitServer()">Quit BariStore</button>
       </div>
       <button class="danger full" style="margin-top:0.5rem" onclick="resetBariStore()">Reset BariStore</button>
@@ -553,11 +554,6 @@ async function startPiPPin() {
 
 const OPEN_SETTINGS_MSG = "\\nOpen Settings > Developer > Paired Macs > BariStore.";
 
-async function speakPin() {
-  const res = await apiPost("/api/pair/speak", {});
-  if (!res.ok) await showAlert(res.error || "Could not speak PIN.");
-}
-
 /* --- Modal Helpers --- */
 function openModal(html) {
   document.getElementById("modalContent").innerHTML = html;
@@ -710,8 +706,12 @@ async function enterOnboarding() {
 
 async function openSetupWizard() {
   APP.onboarding_complete = false;
-  await apiPost("/api/onboarding/reset", {});
-  enterOnboarding();
+  try {
+    await apiPost("/api/onboarding/reset", {});
+    await enterOnboarding();
+  } catch (e) {
+    await showAlert("Setup wizard failed to load: " + (e.message || e));
+  }
 }
 
 function renderOnboardingStep() {
@@ -735,11 +735,8 @@ function renderOnboardingStep() {
       <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b>. BariStore instantly generates a 6-digit PIN and keeps advertising while you switch apps. Then open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>). If BariStore is not listed, come back here once and go to Settings again so the list refreshes. Tap <b>BariStore</b> and type the PIN into the <b>Settings pop-up</b> (not here). Then return here — setup continues automatically.</p>
       <div id="obPinWrap" class="hidden">
         <div class="pin-box" id="obPin">------</div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.65rem">
           <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
-        </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
-          <button class="secondary full" onclick="speakPin()">🔊 Read PIN Aloud</button>
         </div>
         <div id="obPairStatus" class="sub" style="margin-bottom:0.65rem;color:var(--accent);font-weight:600"></div>
       </div>
@@ -1704,9 +1701,6 @@ function renderOptions() {
         <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
           <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
         </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
-          <button class="secondary full" onclick="speakPin()">🔊 Read PIN Aloud</button>
-        </div>
         <div id="optPairStatus" class="sub" style="color:var(--accent);font-weight:600">${esc(APP.job.step || '')}</div>
       </div>
     `;
@@ -1780,13 +1774,25 @@ async function runNetcheck() {
 async function checkUpdates() {
   const out = document.getElementById("maintOut");
   out.textContent = "Checking GitHub for BariStore updates…";
-  const res = await apiPost("/api/update", {});
+  let res;
+  try {
+    res = await apiPost("/api/update", {});
+  } catch (e) {
+    out.textContent = "Update failed: " + (e.message || e);
+    return;
+  }
   out.textContent = res.ok ? res.message : (res.error || "Update failed.");
 }
 
 async function clearCache() {
   const out = document.getElementById("maintOut");
-  const res = await apiPost("/api/cache/clear", {});
+  let res;
+  try {
+    res = await apiPost("/api/cache/clear", {});
+  } catch (e) {
+    out.textContent = "Could not clear cache: " + (e.message || e);
+    return;
+  }
   out.textContent = res.ok ? res.message : (res.error || "Could not clear cache.");
 }
 
@@ -1795,14 +1801,51 @@ async function openExternalUrl(url) {
   window.open(url, "_blank");
 }
 
+async function exportPairingFile() {
+  let res;
+  try {
+    res = await apiPost("/api/pair/export", {});
+  } catch (e) {
+    await showAlert("Export failed: " + (e.message || e));
+    return;
+  }
+  await showAlert(res.ok ? (res.message || "Saved.") : (res.error || "Export failed."));
+}
+
+async function restartBariStore() {
+  let res;
+  try {
+    res = await apiPost("/api/restart", {});
+  } catch (e) {
+    await showAlert("Restart failed: " + (e.message || e));
+    return;
+  }
+  if (!res.ok) {
+    await showAlert(res.error || "Restart failed.");
+    return;
+  }
+  document.body.innerHTML = '<div class="container"><div class="card" style="margin-top:2rem;text-align:center"><h3>Restarting BariStore…</h3><p class="sub">A new BariStore window will open. You can close this one.</p></div></div>';
+}
+
 async function quitServer() {
-  await apiPost("/api/shutdown", {});
+  try {
+    await apiPost("/api/shutdown", {});
+  } catch (e) {
+    await showAlert("Quit failed: " + (e.message || e));
+    return;
+  }
   document.body.innerHTML = '<div class="container"><div class="card" style="margin-top:2rem;text-align:center"><h3>BariStore Closed</h3><p class="sub">You can now close this browser sheet.</p></div></div>';
 }
 
 async function resetBariStore() {
   if (!(await showConfirm("Reset BariStore and erase all saved Apple ID sessions, pairing files, and cached IPAs?"))) return;
-  const res = await apiPost("/api/reset", {});
+  let res;
+  try {
+    res = await apiPost("/api/reset", {});
+  } catch (e) {
+    await showAlert("Reset failed: " + (e.message || e));
+    return;
+  }
   if (!res.ok) {
     await showAlert(res.error || "Reset failed.");
     return;
@@ -1815,7 +1858,12 @@ async function resetBariStore() {
   APP.obStep = 1;
   APP._pinBuzzed = false;
   lastHandledJobId = 0;
-  await enterOnboarding();
+  try {
+    await enterOnboarding();
+  } catch (e) {
+    await showAlert("Reset done, but setup wizard failed to load: " + (e.message || e));
+    return;
+  }
   await showAlert("BariStore has been reset. Start again from Step 1.");
 }
 
