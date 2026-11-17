@@ -49,6 +49,9 @@ GSA_URL_BAG = "https://gsa.apple.com/grandslam/GsService2/lookup"
 DEV_HOST = "developerservices2.apple.com"
 DEV_CLIENT_ID = "XABBG36SBA"
 DEV_PROTOCOL = "QH65B2"
+# Matches what actively-maintained clients (isideload/AltSign, late-2026) send.
+# An old value here can make Apple answer 2FA validation with a bare (-1).
+XCODE_VERSION = "27.0 (27A5218g)"
 
 GSA_CLIENT_INFO = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 GSA_MAC_CLIENT_INFO = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
@@ -697,7 +700,7 @@ class GrandSlam:
             headers["Accept"] = "text/x-xml-plist"
         headers["X-Mme-Client-Info"] = self.anisette.client_info
         headers["User-Agent"] = self.anisette.user_agent
-        headers["X-Xcode-Version"] = "14.2 (14C18)"
+        headers["X-Xcode-Version"] = XCODE_VERSION
         headers["X-Apple-App-Info"] = "com.apple.gs.xcode.auth"
         return headers
 
@@ -781,7 +784,14 @@ def _fast_ordered_anisette(preferred=""):
         try:
             st, _, body = http_request("GET", url + "/v3/client_info", timeout=4)
             if st == 200 and b"client_info" in (body or b""):
-                return (0 if idx == 0 and preferred else 1, time.time() - t0, url)
+                if idx == 0 and preferred:
+                    return (0, time.time() - t0, url)
+                # Apple no longer honors the Xcode 11.2 client identity
+                # (com.apple.dt.Xcode/3594.4.19) for 2FA (2FA loop / -1).
+                # Keep such servers as last resort, prefer akd-based ones.
+                if b"3594.4.19" in (body or b"") or b"dt.Xcode" in (body or b""):
+                    return (2, time.time() - t0, url)
+                return (1, time.time() - t0, url)
         except Exception:
             pass
         try:
@@ -790,7 +800,7 @@ def _fast_ordered_anisette(preferred=""):
                 return (0 if idx == 0 and preferred else 1, time.time() - t0, url)
         except Exception:
             pass
-        return (2, 999.0 + idx, url)
+        return (3, 999.0 + idx, url)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates)) as pool:
@@ -1191,6 +1201,7 @@ def start_apple_login(email, password, preferred_anisette=""):
                     "account": account,
                     "password": password,
                     "mode": step,
+                    "host": host,
                     "created_at": time.time(),
                 }
                 return {
@@ -1223,6 +1234,47 @@ def start_apple_login(email, password, preferred_anisette=""):
         set_login_step("")
 
 
+def _is_wrong_code_error(exc):
+    """True when Apple says the code itself is wrong (user must enter a new code)."""
+    low = str(exc).lower()
+    return (
+        "-21669" in low
+        or "incorrect verification" in low
+        or "invalid verification" in low
+    )
+
+
+_RETRYABLE_2FA_MARKERS = (
+    "(-1)",
+    "-434",
+    "-80045",
+    "-80046",
+    "503",
+    "service unavailable",
+    "out of sync",
+    "connection",
+    "timeout",
+    "timed out",
+)
+
+
+def _is_retryable_2fa_error(exc):
+    if _is_wrong_code_error(exc):
+        return False
+    low = str(exc).lower()
+    return any(marker in low for marker in _RETRYABLE_2FA_MARKERS)
+
+
+def _refresh_anisette_once(account):
+    """Mint fresh one-time Anisette headers on the same machine identity (single resync)."""
+    try:
+        account.anisette.headers()
+    except AppleAuthError:
+        account.anisette.forget_provisioning()
+        account.anisette.provision(account.gs)
+        account.anisette.headers()
+
+
 def verify_apple_2fa(login_id, code):
     """Complete 2FA verification for a pending Apple login."""
     pending = _PENDING_LOGINS.get(login_id)
@@ -1231,9 +1283,33 @@ def verify_apple_2fa(login_id, code):
     account = pending["account"]
     password = pending["password"]
     mode = pending["mode"]
+    host = pending.get("host") or "anisette server"
 
-    account.submit_2fa_code(mode, code)
-    step = account.login_step(password)
+    try:
+        account.submit_2fa_code(mode, code)
+    except AppleAuthError as exc:
+        if not _is_retryable_2fa_error(exc):
+            raise
+        # Server-side/anisette-sync failure (e.g. -1): resync once on the SAME
+        # machine identity and retry the same code once. Wrong codes are NOT retried.
+        try:
+            _refresh_anisette_once(account)
+            account.submit_2fa_code(mode, code)
+        except AppleAuthError as exc2:
+            if _is_wrong_code_error(exc2):
+                raise exc2
+            raise AppleAuthError(
+                "%s (via %s). If this persists, request a new code and try once more."
+                % (exc2, host)
+            )
+
+    try:
+        step = account.login_step(password)
+    except AppleAuthError as exc:
+        if not _is_retryable_2fa_error(exc):
+            raise
+        _refresh_anisette_once(account)
+        step = account.login_step(password)
     if step != "ok" and not account._pet():
         raise AppleAuthError("Sign-in did not complete after 2FA (%s)." % step)
     _PENDING_LOGINS.pop(login_id, None)
