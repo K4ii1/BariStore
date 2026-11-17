@@ -90,6 +90,7 @@ download_all() {
                  "third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem" \
                  "third_party/ca-bundle/cacert.pem third_party/ca-bundle/cacert.pem" \
                  "variants.json variants.json" \
+                 "barisign barisign" \
                  "bin/barisign bin/barisign" \
                  "bin/update bin/update"; do
         # shellcheck disable=SC2086

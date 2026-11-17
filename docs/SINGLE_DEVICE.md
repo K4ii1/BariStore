@@ -44,7 +44,12 @@ a target (next section), then run `pair` when the second device is back.
 | Sign + verify + preflight | no | `sh bin/barisign sign` |
 | Install + pairing-file write | **yes, the target** | `sh bin/barisign pair` |
 
-## 2. Background execution — checked against the a-Shell sources
+## 2. Background execution — checked against the a-Shell sources (2026-11-17)
+
+BariSign is a **guest inside a-Shell**: Python scripts running in another app's sandbox, under
+another app's signed `Info.plist` and entitlements. Anything that needs a new entitlement, a new
+background mode, a new `NSBonjourServices` entry or native Swift code cannot be added from our
+side — it would mean rebuilding a-Shell itself, which is not our app.
 
 | Idea | Verdict | Why |
 |---|---|---|
@@ -58,6 +63,28 @@ Practical consequence: **keep a-Shell in the foreground** for the whole `pair`
 run, and keep the target unlocked on the same Wi-Fi. On iPad use Split View or
 Stage Manager (next section) — that is a foreground-management trick, not
 background execution.
+
+### Why SideInstaller can do it on-device and we cannot (yet)
+
+SideInstaller's iOS app (Madeira) pairs and installs **from the same phone**: its own
+`PairingController.swift` runs an RPPairing host, **keeps the app alive with silent audio**
+(SideInstaller NOTES: "works iOS 17.4+"), and talks to the phone's own lockdownd over a
+**LocalDevVPN-loopback** connection. Every piece of that is a *native-app* capability:
+
+| Piece | SideInstaller (native app, own entitlements) | BariSign (Python guest in a-Shell) |
+|---|---|---|
+| Silent-audio keep-alive | its own `audio` background mode + `AVAudioSession` in Swift | a-Shell's `audio` mode exists but exposes **no** playback API to Python (`say` is speech, `ffmpeg` is file conversion); we cannot start an audio session from a script |
+| Loopback lockdown via LocalDevVPN | its own code connects to `10.7.0.1` | a TCP connect to `10.7.0.1` from Python needs no special entitlement and may work — but it is useless without the pairing first, see next row |
+| Being pairable by the same phone | the app advertises itself through its own stack with its own `Info.plist` | our host runs inside a-Shell: no `NSBonjourServices` entry (proven `-65555`), so the *same phone's* Settings cannot discover us either |
+| Showing the PIN | its own screen | our terminal — only visible while a-Shell is foreground |
+
+So "they do on-device pairing, why can't we" has a real answer: they are an app, we are a
+script inside somebody else's app. Replicating their loop means becoming an app too — which
+is exactly what the fork plan (`docs/FORK_PLAN.md`) is: the pairing module with silent audio
+goes into *our* builds of SideStore/LiveContainer/AltStore, where we own the entitlements.
+Writing a silent-audio hack in Python (a `say` loop, a notification) would not hold the
+pairing socket open and would only burn the test budget. No code was added for this: the
+decision is documented, not implemented.
 
 ## 3. iPad windowed running (the only supported "one screen" setup)
 

@@ -34,7 +34,7 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
    install that makes it appear.
 3. Pair the target: on the **target** open Settings → Developer Mode (or Settings →
    Developer) → Paired Macs, pick **BariSign**, enter the code. The signer takes the
-   target's **UDID from the pairing** and continues; the median page is only a fallback.
+   target's **UDID from the pairing** and continues; there is no UDID page anymore.
 4. Pick the variant, then the signer downloads its **original** IPA, registers the
    target in the developer portal (device + App ID + certificate + profile), and signs.
 5. Install over Wi-Fi with `installation_proxy`. The pairing file is saved under
@@ -50,9 +50,9 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
 > house_arrest writes the pairing file into the app. The target only trusts the developer and
 > opens the app. Device-tested through pairing; the install step is next in line for a device run.
 
-If pairing cannot produce a UDID (old target, Developer Mode not available), the signer falls back to
-a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<port>/`, installs the
-**median.co/udid** profile, copies the UDID and submits it.
+If pairing cannot produce a UDID (old target, Developer Mode not available), there is
+currently no fallback in the tool — the signer-hosted UDID page was removed in 0.9.18.
+If Developer Mode cannot be opened with a plain unsigned IPA, the page comes back.
 
 ---
 
@@ -64,8 +64,7 @@ a short-lived page on its Wi-Fi address: the target opens `http://<signer-ip>:<p
 | **Device, certificate, profile** (developer portal) | ✅ verified |
 | **Download + sign + verify** | ✅ verified — the signed IPA installs and the app launches on a device |
 | **UDID from pairing** (pair-first) | ✅ verified on a device |
-| **UDID page** fallback served by the signer | written (rarely needed now) |
-| **Signer → target pairing install** (`sh bin/barisign pair`) | ⚠️ engine + discovery ready; on-device install is next |
+| **Signer → target pairing install** (`sh barisign pair`) | ⚠️ engine + discovery ready; on-device install is next |
 | **Two devices, no computer** | the design; pairing proven, install pending a device run |
 
 ---
@@ -85,11 +84,14 @@ repository and applies it (files and `bin/update` itself). Your saved state in `
 There is **no engine download and no pip step**: the pairing engine is part of the program files.
 
 ```
-sh bin/barisign          # guided: check -> Apple ID -> devmode -> pairing/UDID -> variant -> download -> portal -> sign -> install
-sh bin/barisign pair     # pair the target and install over Wi-Fi
-sh bin/barisign status   # what is already known
-sh bin/barisign --help   # every command
+sh barisign          # guided: check -> Apple ID -> devmode -> pairing/UDID -> variant -> download -> portal -> sign -> install
+sh barisign pair     # pair the target and install over Wi-Fi
+sh barisign status   # what is already known
+sh barisign --help   # every command
 ```
+
+`sh barisign` is the same program as `sh bin/barisign`, only shorter. Updates stay
+`sh bin/update` and `sh install.sh`.
 
 ---
 
@@ -110,13 +112,8 @@ sh bin/barisign --help   # every command
 ## The UDID, in one paragraph
 
 A free Apple ID signs apps for **specific devices**, so the **target's UDID** must be known. The **pairing gives the UDID**: the signer runs the pairing host, the target pairs from Settings, and
-the signer reads the target's UDID from the pairing/tunnel. No median profile is needed in the normal
-flow.
-
-If pairing cannot provide it, `sh bin/barisign udid` serves a fallback page on the signer's Wi-Fi
-address: the target opens it in Safari, installs the `median.co/udid` profile, copies the UDID and
-submits it. `sh bin/barisign udid --manual` keeps a paste-on-the-signer fallback for testing.
-`docs/UDID_OPTIONS.md` lists other UDID sites (not affiliated with us) and self-hosting.
+the signer reads the target's UDID from the pairing/tunnel. There is no UDID page anymore (removed
+in 0.9.18); `docs/UDID_OPTIONS.md` lists independent UDID sources (not affiliated with us).
 
 ---
 
@@ -145,8 +142,7 @@ Single-device limits, background execution and iPad windowing: `docs/SINGLE_DEVI
   on the signer. It is never written to disk.
 - **The anisette server never sees your account.** It is asked only for device-identity headers, with a
   random identifier we generate — never your Apple ID, password or token.
-- **No BariSign server exists.** The UDID page is served only from the signer on your own Wi-Fi for the
-  duration of that step. Nothing is collected: no analytics, no telemetry, no accounts.
+- **No BariSign server exists.** Nothing is collected: no analytics, no telemetry, no accounts.
 - TLS verification is never disabled anywhere in this project.
 
 ---
@@ -157,7 +153,7 @@ Single-device limits, background execution and iPad windowing: `docs/SINGLE_DEVI
 |---|---|
 | **`GUIDE.md`** | step-by-step, in plain language |
 | `docs/PAIRING_INSTALL.md` | how the signer pairs with and installs on the target |
-| `docs/UDID_OPTIONS.md` | UDID sources, including the signer page |
+| `docs/UDID_OPTIONS.md` | UDID sources (pairing only; page removed in 0.9.18) |
 | `docs/ANISETTE.md` | anisette servers: what they see, which ones we use, how to pin or self-host |
 | `docs/PLAN_V2.md` | the current architecture and why |
 | `docs/FORK_PLAN.md` | the pairing module inside the forked apps: licences, CI, risks |

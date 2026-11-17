@@ -26,22 +26,22 @@ curl -sSL "https://github.com/barismd/barisign/blob/main/install.sh?raw=true" -o
 sh install.sh
 ```
 
-Then one command drives everything:
+Then one command drives everything (`sh barisign` works the same, shorter):
 
 ```
-sh bin/barisign            # guided
-sh bin/barisign status     # what is saved
+sh barisign            # guided
+sh barisign status     # what is saved
 ```
 
 ---
 
-## UDID (pairing first)
+## UDID (pairing only)
 
-The normal flow takes the target's UDID **from the pairing**, so no median profile is needed.
-`udid` pairs by itself; there is no separate `--pair` step:
+The target's UDID comes **from the pairing** — there is no page anymore (removed in 0.9.18).
+`udid` pairs by itself:
 
 ```
-sh bin/barisign udid
+sh barisign udid
 ```
 
 1. The signer advertises as **BariSign** and prints a code.
@@ -50,20 +50,13 @@ sh bin/barisign udid
 3. The signer reads the UDID from the pairing/tunnel and saves it.
 
 The guided run asks whether Developer Mode is already on the target (Settings > Privacy &
-Security > Developer Mode, or Settings > Developer). If it is missing, the run signs first and
-then walks you through the trigger: it opens the signed IPA on the signer, you share it to
-the target (AirDrop), tap it once on the target, then delete it from the target. The
-Developer Mode switch appears after the attempt, and the install continues.
-
-If pairing cannot provide a UDID, fall back to the page:
-
-```
-sh bin/barisign udid
-```
-
-The signer prints `http://<signer-ip>:<port>/`; on the target open it in Safari, install the
-`median.co/udid` profile, copy the UDID, paste it into the box and submit. `--manual` keeps a
-paste-on-the-signer fallback. Other UDID sources: `docs/UDID_OPTIONS.md`.
+Security > Developer Mode, or Settings > Developer). If it is missing, pairing may still reveal
+the switch (Apple documents this); the run then signs and walks you through the trigger: it opens
+the signed IPA on the signer, you share it to the target (AirDrop), tap it once on the target,
+then delete it from the target. The Developer Mode switch appears after the attempt, and the
+install continues. If pairing stays unreachable with no Developer Mode at all, the tool stops —
+the UDID page comes back only if Developer Mode cannot be opened with a plain unsigned IPA.
+Other UDID sources: `docs/UDID_OPTIONS.md`.
 
 ---
 
@@ -161,11 +154,11 @@ refused on any other device or Apple ID. To use another target, register its UDI
 
 | What you see | What it means |
 |---|---|
-| `check  fail` | `sh bin/barisign check` prints what broke |
+| `check  fail` | `sh barisign check` prints what broke |
 | login `-22406` | Apple says the password is wrong. The Apple ID is case-sensitive here; watch the keyboard's autocorrect. BariSign retries twice and shows the ID it sent |
 | login `-80045` / `-80046` / `503` | Apple refused the identity, not the password. It moves to the next anisette server; if all fail, wait 10–15 minutes without retrying |
 | UDID not recognised | `40` hex characters, or `24` like `00008110-001a2c3e0e91801e` |
-| target cannot open the page | same Wi-Fi? Allow **Local Network** for a-Shell; the address has the signer's Wi-Fi IP |
+| pairing finds no Paired Macs entry | run plain `sh barisign pair` (raw broadcast is automatic); if the target has no entry after 1 min, restart a-Shell and retry |
 | `bin/barisign pair` finds no IPA | sign on the signer first, or pass `--ipa FILE` |
 | BariSign does not appear in Paired Macs | run plain `sh bin/barisign pair` (raw broadcast is automatic); if the target has no entry after 1 min, restart a-Shell and retry |
 | terminal stops taking input | quit a-Shell from the app switcher and reopen it |

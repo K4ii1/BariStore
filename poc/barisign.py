@@ -5,7 +5,7 @@
 #  Runs on the SIGNER device (a-Shell). The target needs Safari + Settings only.
 #
 #      python3 -u poc/barisign.py            guided run
-#      python3 -u poc/barisign.py udid       serve the target's UDID page
+#      python3 -u poc/barisign.py udid       pair the target, save its UDID
 #      python3 -u poc/barisign.py login      Apple sign-in
 #      python3 -u poc/barisign.py portal     UDID + certificate + profile
 #      python3 -u poc/barisign.py sign       download, sign and zip
@@ -17,12 +17,10 @@
 
 import glob
 import hashlib
-import html
 import json
 import os
 import shlex
 import shutil
-import socket
 import threading
 import re
 import plistlib
@@ -30,9 +28,7 @@ import subprocess
 import sys
 import time
 import traceback
-import urllib.parse
 import zipfile
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _candidate in (os.path.join(_HERE, "..", "third_party", "sideinstaller"),
@@ -71,7 +67,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.17"
+VERSION = "0.9.18"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -809,8 +805,6 @@ def cmd_reset(_argv):
     return 0
 
 
-UDID_URL = "https://median.co/udid"
-
 UDID_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{24})$")
 
 
@@ -844,11 +838,6 @@ def extract_udid(text):
     return ""
 
 
-def _clipboard_text():
-    """What is on the iOS clipboard, if a-Shell exposes it (pbpaste)."""
-    return poc_login._clipboard_text()
-
-
 def normalise_udid(text):
     """Accept what a UDID page copies: 40 hex characters, or the 8+16 form that
     A12-and-later devices use, with or without the dash."""
@@ -862,190 +851,16 @@ def normalise_udid(text):
 
 
 
-def _lan_ip():
-    """The signer's address on the Wi-Fi network, without sending a packet."""
-    try:
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        probe.settimeout(1.0)
-        probe.connect(("8.8.8.8", 80))
-        address = probe.getsockname()[0]
-        probe.close()
-        return address
-    except Exception:                                         # noqa: BLE001
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except Exception:                                     # noqa: BLE001
-            return "127.0.0.1"
-
-
-UDID_PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BariSign — target device</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         margin: 0 auto; max-width: 34rem; padding: 2.2rem 1.3rem 3rem; }
-  h1 { font-size: 1.7rem; margin: 0 0 .2rem; }
-  .role { color: #666; margin: 0 0 1.6rem; }
-  ol { padding-left: 1.3rem; }
-  li { margin: .55rem 0; }
-  a { color: #0a6cff; }
-  form { margin-top: 1.5rem; }
-  input[type=text] { box-sizing: border-box; width: 100%; font: inherit;
-         padding: .75rem; border: 1px solid #999; border-radius: .55rem; }
-  button { font: inherit; font-weight: 600; margin-top: .8rem; width: 100%;
-         padding: .8rem; border: 0; border-radius: .55rem; background: #0a6cff;
-         color: #fff; }
-  .error { color: #b00020; font-weight: 600; }
-  .small { color: #666; font-size: .9rem; margin-top: 1.8rem; }
-  code { overflow-wrap: anywhere; }
-</style>
-</head>
-<body>
-<h1>BariSign</h1>
-<p class="role">This is the <strong>target device</strong> — the one that will get the app.</p>
-<ol>
-  <li>Install the profile from <a href="__UDID_URL__">median.co/udid</a>.</li>
-  <li>Copy the UDID shown at the end.</li>
-  <li>Paste it below and submit.</li>
-</ol>
-__ERROR__
-<form method="post" action="">
-  <input type="text" name="udid" inputmode="text" autocomplete="off"
-         autocapitalize="off" autocorrect="off" spellcheck="false"
-         placeholder="00008110-001a2c3d4e5f6071" aria-label="UDID">
-  <button type="submit">Submit UDID</button>
-</form>
-<p class="small">Both devices must be on the same Wi-Fi. The signer device is
-waiting; after submitting you can close this tab.</p>
-</body>
-</html>
-"""
-
-UDID_DONE = """<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BariSign — UDID received</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         margin: 0 auto; max-width: 34rem; padding: 2.2rem 1.3rem; }
-  code { overflow-wrap: anywhere; }
-  .ok { color: #137333; font-weight: 600; }
-</style></head>
-<body>
-<h1>UDID received</h1>
-<p class="ok">The signer device has it and is continuing.</p>
-<p><code>__UDID__</code></p>
-<p>You can close this tab and return to the signer device.</p>
-</body></html>
-"""
-
-
-class _UDIDServer(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.result = ""
-        self.done = threading.Event()
-        self.timeout = 1.0
-
-
-class _UDIDHandler(BaseHTTPRequestHandler):
-    server_version = "BariSignUDID/1.0"
-
-    def log_message(self, fmt, *args):                        # noqa: A003
-        return
-
-    def _send(self, status, body):
-        payload = body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def do_GET(self):                                         # noqa: N802
-        if self.path == "/favicon.ico":
-            self.send_response(204)
-            self.end_headers()
-            return
-        self._send(200, UDID_PAGE.replace("__UDID_URL__", UDID_URL)
-                              .replace("__ERROR__", ""))
-
-    def do_POST(self):                                        # noqa: N802
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if length < 1 or length > 4096:
-            self._send(413, UDID_PAGE.replace("__UDID_URL__", UDID_URL)
-                                  .replace("__ERROR__", '<p class="error">Empty submission.</p>'))
-            return
-        raw = self.rfile.read(length).decode("utf-8", "replace")
-        fields = urllib.parse.parse_qs(raw, keep_blank_values=True)
-        typed = (fields.get("udid") or [""])[0]
-        udid = extract_udid(typed)
-        if not udid:
-            self._send(200, UDID_PAGE.replace("__UDID_URL__", UDID_URL)
-                                  .replace("__ERROR__",
-                                           '<p class="error">That is not a UDID. '
-                                           'Copy the 24-character value (or 40 hex characters) '
-                                           'from the profile page.</p>'))
-            return
-        self.server.result = udid
-        self._send(200, UDID_DONE.replace("__UDID__", html.escape(udid)))
-        self.server.done.set()
-
-    def log_request(self, code="-", size="-"):                # noqa: A003
-        return
-
-
-def _serve_udid_page():
-    """Serve the target-device UDID page and return the submitted value."""
-    server = _UDIDServer(("0.0.0.0", 0), _UDIDHandler)
-    port = server.server_address[1]
-    address = _lan_ip()
-    print("  On the TARGET device, open this address in Safari:")
-    print()
-    print("    http://%s:%d/" % (address, port))
-    print()
-    if address.startswith("127."):
-        print("  ! no Wi-Fi address: connect the signer to the Wi-Fi network")
-        print()
-    print("  The page has the median.co/udid link and the UDID box.")
-    print("  Allow Local Network if iOS asks. Waiting...")
-    print()
-    try:
-        while not server.done.is_set():
-            server.handle_request()
-    except KeyboardInterrupt:
-        print()
-        server.result = ""
-    finally:
-        server.server_close()
-    return server.result
-
-
 def cmd_udid(argv):
-    """Get the target device's UDID: serve a page, or paste it manually."""
+    """Get the target device's UDID from pairing (no page anymore)."""
     typed = [item for item in argv if not item.startswith("-")]
     udid = extract_udid(typed[0]) if typed else ""
-    manual = "--manual" in argv or "--no-open" in argv
-    page_only = "--page" in argv
-    # Pairing is the normal way to get the UDID, so `udid` pairs by itself;
-    # --pair is kept only as a compatibility no-op. --page skips pairing and
-    # serves the UDID page straight away (fresh targets with no Developer
-    # Mode cannot reach Paired Macs yet, so pairing would only time out).
+    for flag in ("--manual", "--no-open", "--page"):
+        if flag in argv:
+            print("  ! the UDID page is gone; pairing gives the UDID now")
+            break
     # No stage header here: the pair subprocess owns the screen from here.
-    if not udid and not manual and not page_only:
+    if not udid:
         print("  Pairing the TARGET; the pairing gives its UDID.")
         print("  If Paired Macs shows nothing, the target needs")
         print("  Developer Mode first (guided run walks you through it).")
@@ -1055,33 +870,10 @@ def cmd_udid(argv):
                                 "--timeout", "180"])
         udid = extract_udid(load_state().get("udid", ""))
         if code != 0 or not udid:
-            print("  pairing did not return a UDID; falling back to the page")
-            udid = ""
-    if not udid and manual:
-        _stage("UDID")
-        print("  On this signer device, install the profile from:")
-        print("    %s" % UDID_URL)
-        print("  then paste the UDID below.")
-        print()
-        for _attempt in range(3):
-            udid = extract_udid(_ask("  UDID: "))
-            if udid:
-                break
-            print("  not a UDID; try again")
-    elif not udid:
-        _stage("UDID")
-        print("  This is the SIGNER device.")
-        print("  The TARGET device — the one that gets the app — opens a page here.")
-        print("  Both devices must be on the same Wi-Fi.")
-        print()
-        udid = _serve_udid_page()
-        if not udid:
-            print("  stopped")
+            print("  pairing did not return a UDID")
+            print("  turn on Developer Mode on the target, then run again")
             return 1
 
-    if not udid:
-        print("  stopped")
-        return 1
     update_state(udid=udid)
     _result("UDID", "%s saved" % udid)
     return 0
@@ -1555,7 +1347,11 @@ def cmd_guided(argv):
             if cmd_udid([]) != 0:
                 return 1
         else:
-            if cmd_udid(["--page"]) != 0:
+            # No UDID page anymore: pairing is the only source. The attempt
+            # itself can reveal the Developer Mode setting (Apple docs), and
+            # the trigger step after signing covers the rest.
+            print("  no UDID page: pairing now; it can reveal Developer Mode")
+            if cmd_udid([]) != 0:
                 return 1
         state = load_state()
 
@@ -1668,8 +1464,6 @@ _OPTIONS = {
         ("--no-extensions", "drop PlugIns (an app extension needs its own App ID)"),
     ),
     "udid": (
-        ("--manual", "paste the UDID on the signer instead of serving the page"),
-        ("--page", "serve the UDID page without pairing first"),
     ),
 }
 
@@ -1678,7 +1472,7 @@ def _usage():
     print("BariSign %s" % VERSION)
     print()
     print("  sh bin/barisign           guided run")
-    print("  sh bin/barisign udid      serve the target-device UDID page")
+    print("  sh bin/barisign udid      pair the target, save its UDID")
     print("  sh bin/barisign login     Apple sign-in")
     print("  sh bin/barisign portal    UDID + certificate + profile")
     print("  sh bin/barisign sign      download, sign and zip the chosen variant")

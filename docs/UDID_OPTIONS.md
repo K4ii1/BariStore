@@ -1,66 +1,29 @@
-# Reading your UDID — pairing first, page as fallback (0.9.17)
+# Reading your UDID — pairing only (0.9.18)
 
 BariSign needs your **target's UDID** because a free Apple ID can only sign apps for devices that are
 registered on it. There is nothing secret about a UDID: it is a hardware identifier developers paste into
-portals every day. It is **not** a credential, and no Apple ID, password or pairing record is involved in
-getting it.
+portals every day. It is **not** a credential, and no Apple ID or password is involved in getting it.
 
-The normal route is **not** a page: run `sh bin/barisign pair` (or the guided run) and the signer
-reads the target's UDID from the pairing itself. The page below is only for the case where pairing
-cannot provide one.
+The **only** route is pairing: run `sh barisign pair` (or the guided run) and the signer reads the
+target's UDID from the pairing itself and saves it. `sh barisign udid` does the same pairing step
+alone; `sh barisign udid <paste>` also accepts a UDID you already have.
 
-iOS will only hand it over through a **Profile Service** profile, and iOS only accepts such a profile from
-**HTTPS with a certificate it trusts**. That is the whole reason every option below needs *some* trusted
-endpoint. Pick one:
+> The signer-hosted UDID page is **removed** (0.9.18): `median.co/udid` link, submit box and
+> `--manual`/`--page` are gone, with the HTTP server code. If Developer Mode cannot be opened
+> with a plain unsigned IPA — i.e. pairing stays unreachable and there is no UDID to sign
+> with — the page comes back.
 
----
+iOS only hands the UDID over through a **Profile Service** profile from **HTTPS with a certificate
+it trusts**. If you ever need a UDID without BariSign's pairing, these independent options still
+exist (not affiliated with us, not vetted, they see the UDID you send them — never type an Apple
+ID or password into one; use Safari; remove the profile afterwards):
 
-## A — median.co (what BariSign asks for by default)
-
-One tap, no trust switch, works on any iOS 27 device.
-
-1. On the **signer**, run `sh bin/barisign udid`; it prints a `http://<signer-ip>:<port>/` address.
-2. On the **target** (the device that will get the app), open that address in **Safari** (not Chrome,
-   not an in-app browser). Tap the **median.co/udid** link on the page.
-3. Tap the install button → **Allow** the profile download → then finish it:
-   **Settings → General → VPN & Device Management → Downloaded Profile → Median UDID Retrieval →
-   Install → passcode → Install**.
-4. Safari comes back showing the UDID. Tap **Copy UDID to Clipboard**, return to the BariSign page,
-   paste it into the box and tap **Submit**.
-5. Remove the profile on the target: **Settings → General → VPN & Device Management → Median UDID
-   Retrieval → Remove Profile**.
-
-**Privacy:** median.co sees your UDID and the device model — nothing else. Your Apple ID is not involved.
-**We are not affiliated with median.co** and we do not control what it logs; if you would rather not use a
-third party at all, use option C.
-
----
-
-## B — any other third-party site
-
-Several services do the same thing. At the time of writing `udid.io` and `get.udid.io` both redirect to
-**udid.tech** (checked 2026-10-29), which is a working example.
-
-- **We have no connection with any of these sites.** They are not vetted, endorsed or paid by BariSign, and
-  they can change owners or behaviour at any time.
-- They **do** see the UDID you send them. That is unavoidable with this route; it is not a password, but
-  treat it as something you would not post publicly.
-- **Never type your Apple ID or password into a "get your UDID" site.** No legitimate one needs it. If it
-  asks, close the page.
-- Use Safari, and remove the profile afterwards as in step 5 above.
-
-Whatever the site gives you, BariSign accepts it as long as it is the right shape (see the end of this
-file).
-
----
-
-## C — serve the profile yourself (no third party)
-
-BariSign does not ship a server: bring your own HTTPS endpoint with a certificate iOS trusts (a certificate
-authority you generate and install once is enough). Two pieces are needed.
-
-**1. The profile** — a `.mobileconfig` containing a `Profile Service` payload. iOS does not use `URL` for
-anything except the POST target:
+- **median.co/udid** — one tap, no trust switch.
+- **udid.tech** (at the time of writing `udid.io` and `get.udid.io` both redirect there;
+  checked 2026-10-29) — same idea.
+- **Serve the profile yourself** (no third party): bring your own HTTPS endpoint with a certificate
+  iOS trusts (a CA you generate and install once is enough). The profile is a `.mobileconfig`
+  containing a `Profile Service` payload whose `URL` names your server:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -81,25 +44,6 @@ anything except the POST target:
 </dict></plist>
 ```
 
-**2. An HTTPS endpoint that accepts the POST.** iOS sends a plist body; this prints it:
-
-```python
-import http.server, ssl
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        print(body.decode("utf-8", "replace"))          # <key>UDID</key><string>...</string>
-        self.send_response(200); self.end_headers()
-        self.wfile.write(b"<html><body>Done. Check the terminal.</body></html>")
-
-srv = http.server.HTTPServer(("0.0.0.0", 8443), Handler)
-ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-ctx.load_cert_chain("fullchain.pem", "privkey.pem")     # a chain iOS already trusts
-srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-srv.serve_forever()
-```
-
 Rules that matter, learned the hard way:
 
 - The chain must be **trusted** by the device. A self-signed root works **only** after you install it and
@@ -118,5 +62,4 @@ Rules that matter, learned the hard way:
 - **8 + 16 hex characters** on A12-and-later devices, written `00008110-001a2c3e0e91801e` (the dash is
   optional).
 
-BariSign lowercases it, restores the dash when needed, and refuses anything else — three attempts, then it
-stops without saving.
+BariSign lowercases it, restores the dash when needed, and refuses anything else.

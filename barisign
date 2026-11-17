@@ -1,0 +1,4 @@
+#!/bin/sh
+# BariSign — short cut for `sh bin/barisign`. Same program, less typing.
+cd "$(dirname "$0")" || exit 1
+exec sh bin/barisign "$@"

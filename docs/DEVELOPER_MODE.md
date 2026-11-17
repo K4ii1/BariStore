@@ -96,7 +96,7 @@ StikPair, Husk and Madeira all use an app extension for exactly this.
 
 - **Signer and target are roles, not models.** The signer runs a-Shell; the target runs only Safari
   and Settings. Either can be an iPhone or an iPad, and they share the Wi-Fi.
-- **The target** needs *its* UDID registered (`bin/barisign udid` serves the page; the target submits it)
+- **The target** needs *its* UDID registered (`sh barisign udid` pairs and saves it — no page since 0.9.18)
   **and** Developer Mode on. The pairing host runs on the **signer**, in a-Shell, while the user is on
   the target — so the "a-Shell is suspended by Settings" problem does not arise.
 - **The install** is `sh bin/barisign pair`: the signer advertises `BariSign`, the target pairs from Settings,

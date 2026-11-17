@@ -39,8 +39,7 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
 
 ## Written but **never tested on a device**
 
-- The **pair-first UDID** (`sh bin/barisign pair --pair-only`), the fallback **UDID page**
-  (`sh bin/barisign udid`), the **signer → target pairing install** and the **pairing-file writer**
+- The **signer → target pairing install** and the **pairing-file writer**
   (state/ + AFC into AltStore/SideStore). The pure engine and its Linux tests are in `poc/` and
   `tests/`; the device run is the remaining gate. Mark it **untested** until the user confirms.
 
@@ -109,5 +108,5 @@ Sources: [SideStore #1506](https://github.com/SideStore/SideStore/issues/1506),
   resolver must list releases and reject `alpha`/`beta`/`rc` tags.
 - **Nightly releases** are rolling: their `published_at` is stale — show the asset's `updated_at` instead.
 - **AltStore Classic** embeds the version in the asset name — resolve by pattern, never by filename.
-- **`median.co/udid`** serves a one-tap UDID profile (verified by their documentation; the BariSign flow
-  that pastes its output is written, not yet device-tested).
+- **`median.co/udid`** serves a one-tap UDID profile (verified by their documentation). BariSign no
+  longer serves a page around it (removed 0.9.18); `sh barisign udid <paste>` still accepts its output..

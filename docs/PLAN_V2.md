@@ -5,7 +5,7 @@ updated 2026-11-17 (0.9.17: broadcast pairing verified, App Groups registered, v
 at every download). The current
 shape is **two roles**, not two specific devices:
 
-- **Signer** — runs a-Shell + BariSign: UDID page, Apple ID, portal, signing, install.
+- **Signer** — runs a-Shell + BariSign: pairing/UDID, Apple ID, portal, signing, install.
 - **Target** — the device that gets the app: Safari and Settings only.
 - Either role may be an **iPhone or an iPad** (iOS/iPadOS 27+); they must share the same Wi-Fi.
 
@@ -23,8 +23,8 @@ SIGNER (a-Shell)                              TARGET (Safari / Settings)
   6. install over the same pairing             installation_proxy over Wi-Fi
                                               (target Trust Developer, opens the app;
                                                on-device install is the remaining gate)
-  fallback: signer serves http://<signer-ip>:<port>/; target installs median.co/udid,
-            copies the UDID and submits it (only if pairing cannot provide one)
+  no UDID page (removed 0.9.18): if pairing cannot provide a UDID there is no fallback;
+  the page comes back only if Developer Mode cannot be opened with a plain unsigned IPA
 ```
 
 Single device cannot cover steps 2+6 on itself, and there is no background
@@ -48,13 +48,12 @@ The same IPA installs through a developer `installation_proxy` source, which is 
 pairing tunnel does over Wi-Fi. OTA is enterprise/ad-hoc territory and is not available with a free
 certificate. Both are out.
 
-## Why the UDID is a page, not a paste into a-Shell
+## Why the UDID comes from pairing
 
-The target is the device that needs the UDID, and it does not run a-Shell. The normal route is the pairing: the signer pairs the target, reads the target's UDID from the
-pairing/tunnel, and uses it for the profile. If that is unavailable, the signer starts a short-lived
-HTTP server on its Wi-Fi address; the target opens it in Safari, installs the `median.co/udid` profile,
-copies the value and submits it. `sh bin/barisign udid --manual` keeps a paste-on-the-signer fallback
-for development.
+The target is the device that needs the UDID, and it does not run a-Shell. The only route is the pairing: the signer pairs the target, reads the target's UDID from the
+pairing/tunnel, and uses it for the profile. The signer-hosted page was removed in 0.9.18; it comes back
+only if Developer Mode cannot be opened with a plain unsigned IPA. `sh barisign udid <paste>` still
+accepts a UDID obtained elsewhere (see `docs/UDID_OPTIONS.md`).
 
 ## Pairing file — decided: fork the three apps
 

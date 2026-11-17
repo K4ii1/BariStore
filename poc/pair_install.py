@@ -1193,18 +1193,18 @@ async def _run(args):
 
 def main(argv):
     if "--help" in argv or "-h" in argv:
-        _say("sh bin/barisign pair                 pair the target and install the newest -signed.ipa")
-        _say("sh bin/barisign pair --ipa FILE      use a specific signed IPA")
-        _say("sh bin/barisign pair --pair-only     pair only; save the UDID and pairing file")
-        _say("sh bin/barisign pair --udid UDID     use an already paired target")
-        _say("sh bin/barisign pair --import FILE   use a pairing file from another host")
-        _say("sh bin/barisign pair --host IP          use this target address (port is scanned)")
-        _say("sh bin/barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
-        _say("sh bin/barisign pair --target-ip IP  also send unicast mDNS to the target")
-        _say("sh bin/barisign pair --export [FILE] copy the pairing file out (for manual import)")
-        _say("sh bin/barisign pair --timeout N     give up if the target never pairs")
-        _say("sh bin/barisign pair --check         verify the pure engine imports")
-        _say("sh bin/barisign pair --setup         verify the engine (no download needed)")
+        _say("sh barisign pair                 pair the target and install the newest -signed.ipa")
+        _say("sh barisign pair --ipa FILE      use a specific signed IPA")
+        _say("sh barisign pair --pair-only       pair only; save the UDID and pairing file")
+        _say("sh barisign pair --udid UDID     use an already paired target")
+        _say("sh barisign pair --import FILE   use a pairing file from another host")
+        _say("sh barisign pair --host IP          use this target address (port is scanned)")
+        _say("sh barisign pair --raw-mdns     force raw advertisement (default on a-Shell)")
+        _say("sh barisign pair --target-ip IP  also send unicast mDNS to the target")
+        _say("sh barisign pair --export [FILE] copy the pairing file out (for manual import)")
+        _say("sh barisign pair --timeout N     give up if the target never pairs")
+        _say("sh barisign pair --check         verify the pure engine imports")
+        _say("sh barisign pair --setup         verify the engine (no download needed)")
         return 0
 
     def value(flag, default=""):

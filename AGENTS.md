@@ -12,11 +12,11 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
 - **Two-role flow (2026-10-31 pivot):** a-Shell runs **only on the signer**. The signer does
   login, portal, signing, packaging and the install. The **target** only uses Safari and Settings.
   Both devices may be iOS or iPadOS; they must be on the same Wi-Fi. No computer, no AirDrop, no OTA.
-- **UDID = pairing first.** The signer pairs the target; the pairing/tunnel reports the target's UDID,
-  which the signer saves and registers. No median profile in the normal path. If pairing cannot provide
-  it, fall back to a short-lived HTTP page served by the signer: the target opens
-  `http://<signer-ip>:<port>/`, installs the **median.co/udid** profile, copies the UDID and submits it.
-  `docs/UDID_OPTIONS.md` lists other sites; no permanent server of ours.
+- **UDID = pairing only (0.9.18: page removed).** The signer pairs the target; the pairing/tunnel
+  reports the target's UDID, which the signer saves and registers (`sh barisign udid` pairs, or takes
+  a pasted UDID). No page, no median flow, no `--manual`/`--page` in the tool. If Developer Mode cannot
+  be opened with a plain unsigned IPA, the page comes back. `docs/UDID_OPTIONS.md` lists independent
+  UDID sources; no permanent server of ours.
 - **Shortcuts are suspended** (user decision). The interface is a plain text flow in a-Shell.
 - **Pairing file = a module inside the apps (user decision, 2026-10-29):** fork SideStore, AltStore
   Classic and LiveContainer+SideStore, add a pairing-file step to each start screen, rebuild on every
@@ -139,7 +139,7 @@ The a-Shell interface (no Shortcuts):
 
 - Budget ~5 USD total. Be token-frugal: grep/head/tail instead of dumping whole files.
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
-- Bump `VERSION` in `poc/barisign.py` on every functional commit: the installer title prints
+- Bump `VERSION` in `poc/barisign.py` on every functional commit (0.9.x line; never 1.0.0): the installer title prints
   the version being installed, so the user can see the update arrived.
 - Stages 1–2 are verified on device; pairing (M1–M6 over raw broadcast) is verified on
   device; the tunnel/install engine is written and Linux-tested. iOS 27 accepts only

@@ -46,14 +46,14 @@ record obtained from an advertising host unlocks the pure install path.
 Commands (all on the signer):
 
 ```sh
-sh bin/barisign pair --check                 # imports the pure engine; no qh3/sslpsk/native wheel
-sh bin/barisign udid --pair                  # pair, save the UDID and the pairing file
-sh bin/barisign pair                         # pair (if needed) and install over Wi-Fi
-sh bin/barisign pair --pair-only --timeout 180
-sh bin/barisign pair --ipa FILE              # a specific signed IPA
-sh bin/barisign pair --host IP --port PORT   # skip Bonjour (debugging)
-sh bin/barisign pair --repair                # new host identity: the target offers a new prompt
-sh bin/barisign pair --debug                 # traceback on failure
+sh barisign pair --check                 # imports the pure engine; no qh3/sslpsk/native wheel
+sh barisign udid                          # pair, save the UDID and the pairing file
+sh barisign pair                         # pair (if needed) and install over Wi-Fi
+sh barisign pair --pair-only --timeout 180
+sh barisign pair --ipa FILE              # a specific signed IPA
+sh barisign pair --host IP --port PORT   # skip Bonjour (debugging)
+sh barisign pair --repair                # new host identity: the target offers a new prompt
+sh barisign pair --debug                 # traceback on failure
 ```
 
 There is no engine install: `install.sh` only fetches the program files, and `pair --check` proves
