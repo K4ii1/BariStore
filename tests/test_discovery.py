@@ -133,6 +133,19 @@ def test_multi_source_deduplication():
     assert len(catalog["store_variants"]) >= 7
 
 
+def test_sources_config_fallback():
+    tmp = tempfile.mkdtemp(prefix="sources-cfg-")
+    old = storage.SOURCES_CONFIG_FILE
+    storage.SOURCES_CONFIG_FILE = os.path.join(tmp, "missing.json")
+    try:
+        config = sources.load_sources_config()
+        assert len(config["store_variants"]) == 7, config["store_variants"]
+        assert len(config["default_sources"]) >= 8, config["default_sources"]
+        assert all(v.get("bundle_id") for v in config["store_variants"])
+    finally:
+        storage.SOURCES_CONFIG_FILE = old
+
+
 def test_loopback_probe():
     async def main():
         server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
@@ -158,5 +171,7 @@ if __name__ == "__main__":
     print("ok  test_export_pairing_bytes")
     test_multi_source_deduplication()
     print("ok  test_multi_source_deduplication")
+    test_sources_config_fallback()
+    print("ok  test_sources_config_fallback")
     test_loopback_probe()
     print("ok  test_loopback_probe")

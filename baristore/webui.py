@@ -9,6 +9,8 @@ import json
 import os
 import plistlib
 import secrets
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +49,65 @@ def _log(msg):
         del _JOB["logs"][:-150]
 
 
+# --- Keep-alive -------------------------------------------------------------
+#
+# Pairing needs one trip to Settings > Developer > Paired Macs, and iOS suspends
+# a-Shell the moment the user leaves it. The only hold available to a Python
+# guest inside a-Shell is audible speech through the `say` command (a-Shell sets
+# the playback audio session at launch), so we keep saying one short line while
+# a job runs. On Linux / CI `say` does not exist and this is a silent no-op.
+
+_KEEPALIVE = {"stop": None, "thread": None}
+_KEEPALIVE_TEXT = (
+    "BariStore is waiting. Open Settings, Developer, Paired Macs, "
+    "and enter the code shown on screen."
+)
+
+
+def keepalive_start():
+    with _LOCK:
+        if _KEEPALIVE["thread"] is not None and _KEEPALIVE["thread"].is_alive():
+            return
+        if shutil.which("say") is None:
+            return
+        stop = threading.Event()
+
+        def _loop():
+            while not stop.is_set():
+                try:
+                    process = subprocess.Popen(
+                        ["say", "-r", "150", _KEEPALIVE_TEXT],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    return
+                while process.poll() is None:
+                    if stop.wait(0.4):
+                        break
+                if process.poll() is None:
+                    try:
+                        process.terminate()
+                    except Exception:
+                        pass
+                if stop.wait(0.4):
+                    return
+
+        thread = threading.Thread(target=_loop, daemon=True)
+        _KEEPALIVE["stop"] = stop
+        _KEEPALIVE["thread"] = thread
+        thread.start()
+
+
+def keepalive_stop():
+    with _LOCK:
+        stop = _KEEPALIVE["stop"]
+        _KEEPALIVE["stop"] = None
+        _KEEPALIVE["thread"] = None
+    if stop is not None:
+        stop.set()
+
+
 def _start_job(kind, title, step="Starting…"):
     with _LOCK:
         _JOB["id"] += 1
@@ -60,7 +121,10 @@ def _start_job(kind, title, step="Starting…"):
         _JOB["prompt"] = None
         _JOB["result"] = None
         _JOB["logs"] = []
-        return _JOB["id"]
+        job_id = _JOB["id"]
+    if kind in ("pair", "install", "refresh-all"):
+        keepalive_start()
+    return job_id
 
 
 def _update_job(step=None, progress=None, pin=None):
@@ -85,6 +149,7 @@ def _finish_job(result=None, error=None, prompt=None):
             _JOB["prompt"] = prompt
         if result is not None:
             _JOB["result"] = result
+    keepalive_stop()
 
 
 def cancel_active_job():
@@ -124,6 +189,13 @@ def probe_environment(check_tunnel=False):
     paired = storage.has_pairing_record()
     udid = storage.normalise_udid(state.get("udid") or "")
     devmode = state.get("devmode_on")
+
+    with _LOCK:
+        busy = _JOB["active"]
+    # Never open a second tunnel while a job already owns one: the pairing
+    # listener must not be disturbed by a probe.
+    if busy and check_tunnel:
+        check_tunnel = False
 
     if check_tunnel and vpn_connected and paired:
         async def _check():
@@ -1022,6 +1094,24 @@ class _Handler(BaseHTTPRequestHandler):
             if route == "/api/netcheck":
                 results = apple.run_network_diagnostics()
                 self._send_json(200, {"ok": True, "results": results})
+                return
+
+            if route == "/api/open-external":
+                target = (body.get("url") or "").strip()
+                if not target.startswith(("https://", "http://")):
+                    raise RuntimeError("Only http(s) links can be opened.")
+                environment = dict(os.environ)
+                environment.pop("BROWSER", None)
+                try:
+                    subprocess.Popen(
+                        ["openurl", target],
+                        env=environment,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception as exc:
+                    raise RuntimeError("Could not launch a browser: %s" % exc)
+                self._send_json(200, {"ok": True, "url": target})
                 return
 
             if route == "/api/update":

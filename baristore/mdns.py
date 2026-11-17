@@ -58,7 +58,15 @@ def _rr(name, rtype, rclass, ttl, rdata):
 
 
 def build_announcement(identity, port, ipv4, name="BariStore", ttl=120):
-    """Build an mDNS announcement advertising the pairable host."""
+    """Build an mDNS announcement advertising the pairable host.
+
+    `ipv4` is either one address or a list of addresses: mDNS allows several A
+    records for the same host name, and advertising every local address means
+    the device can always reach us - over Wi-Fi, over the LocalDevVPN tunnel, or
+    over its own loopback.
+    """
+    addresses = [ipv4] if isinstance(ipv4, str) else list(ipv4 or [])
+    addresses = [a for a in addresses if a]
     txt = _txt_record(pairing.mdns_txt(identity, name=name))
     short_id = (identity.identifier or "baristore")[:8].lower()
     host = "baristore-%s.local" % short_id
@@ -74,27 +82,55 @@ def build_announcement(identity, port, ipv4, name="BariStore", ttl=120):
         _rr(SERVICE, 12, 1, ttl, _name(named_instance)),
         _rr(named_instance, 33, 0x8001, ttl, struct.pack(">HHH", 0, 0, int(port)) + _name(host)),
         _rr(named_instance, 16, 0x8001, ttl, txt),
-        # Host A record
-        _rr(host, 1, 0x8001, ttl, socket.inet_aton(ipv4)),
     ]
+    for address in addresses:
+        try:
+            packed = socket.inet_aton(address)
+        except OSError:
+            continue
+        records.append(_rr(host, 1, 0x8001, ttl, packed))
     header = struct.pack(">HHHHHH", 0, 0x8400, 0, len(records), 0, 0)
     return header + b"".join(records)
 
 
-def wifi_ipv4():
-    """Determine the primary local IPv4 address, falling back to 10.7.0.1."""
-    for target in (("8.8.8.8", 80), ("1.1.1.1", 80), ("10.7.0.1", 49152)):
+def ipv4_candidates():
+    """Every usable local IPv4 address, Wi-Fi first, VPN/loopback last."""
+    found = []
+
+    def add(address):
+        if not address:
+            return
+        if address.startswith(("127.", "0.", "169.254.")):
+            return
+        if address not in found:
+            found.append(address)
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            add(info[4][0])
+    except OSError:
+        pass
+    for target in (("192.0.2.1", 80), ("8.8.8.8", 80), (LOOPBACK_VPN, 49152)):
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             probe.connect(target)
-            ip = probe.getsockname()[0]
-            if ip and not ip.startswith(("127.", "0.")):
-                return ip
+            add(probe.getsockname()[0])
         except OSError:
             pass
         finally:
             probe.close()
-    return LOOPBACK_VPN
+    if not found:
+        add(LOOPBACK_VPN)
+    # Put the LocalDevVPN address last: the Wi-Fi address is the one the
+    # device's mDNS responder prefers.
+    found.sort(key=lambda ip: (ip.startswith("10.7."),))
+    return found
+
+
+def wifi_ipv4():
+    """The first usable local IPv4 address (kept for callers that want one)."""
+    candidates = ipv4_candidates()
+    return candidates[0] if candidates else LOOPBACK_VPN
 
 
 def subnet_broadcast(ipv4):
@@ -119,7 +155,8 @@ class Advertiser:
         self.identity = identity
         self.port = int(port)
         self.name = name
-        self.ipv4 = wifi_ipv4()
+        self.addresses = []
+        self.ipv4 = ""
         self.sock = None
         self.bound = False
         self.packets = []
@@ -127,12 +164,12 @@ class Advertiser:
         self._task = None
 
     def start(self):
-        primary_ip = self.ipv4 or LOOPBACK_VPN
-        self.packets = [build_announcement(self.identity, self.port, primary_ip, name=self.name)]
-        if primary_ip != LOOPBACK_VPN:
-            self.packets.append(
-                build_announcement(self.identity, self.port, LOOPBACK_VPN, name=self.name)
-            )
+        self.addresses = ipv4_candidates()
+        primary_ip = self.addresses[0] if self.addresses else LOOPBACK_VPN
+        self.ipv4 = primary_ip
+        self.packets = [
+            build_announcement(self.identity, self.port, self.addresses, name=self.name)
+        ]
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -201,9 +238,8 @@ class Advertiser:
         if not self.sock:
             return
         for (address, port), _label in self.destinations:
-            pkt = self.packets[-1] if address == LOOPBACK_VPN and len(self.packets) > 1 else self.packets[0]
             try:
-                self.sock.sendto(pkt, (address, port))
+                self.sock.sendto(self.packets[0], (address, port))
             except OSError:
                 pass
 

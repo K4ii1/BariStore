@@ -230,11 +230,10 @@ input:focus, select:focus { border-color: var(--accent); }
       <img src="/__TOKEN__/icon.svg" alt="BariStore">
       <div>
         <h1>BariStore</h1>
-        <div class="ver">v__VERSION__ · On-Device Store</div>
+        <div class="ver">v__VERSION__</div>
       </div>
     </div>
     <div class="top-actions" id="topActions">
-      <button class="pill" onclick="triggerCustomIpaPicker()">+ Custom IPA</button>
       <button class="pill" onclick="openSourcesModal()">Sources</button>
     </div>
   </header>
@@ -369,7 +368,8 @@ input:focus, select:focus { border-color: var(--accent); }
 
     <div class="card">
       <div class="card-title"><span>About BariStore</span></div>
-      <p class="sub">BariStore v__VERSION__ — 100% On-Device iOS App Store, Signer, and StikDebug-style JIT Enabler running in a-Shell over LocalDevVPN. MIT Licensed.</p>
+      <p class="sub">BariStore v__VERSION__ — an on-device iOS App Store, IPA signer and StikDebug-style JIT enabler. Runs entirely on this iPhone inside a-Shell over LocalDevVPN. MIT licensed.</p>
+      <button class="secondary full" style="margin-top:0.6rem" onclick="openExternal('https://github.com/barismd/BariStore')">Open GitHub Repository</button>
     </div>
   </section>
 </div>
@@ -561,20 +561,31 @@ async function saveTheme(theme) {
 
 /* --- Bootstrap & Navigation --- */
 async function initApp() {
-  const data = await apiGet("/api/bootstrap");
-  if (!data.ok) return;
-  APP.onboarding_complete = data.onboarding_complete;
+  let data = {};
+  try {
+    data = await apiGet("/api/bootstrap");
+  } catch (e) {
+    data = {};
+  }
+  if (!data.ok) {
+    document.body.insertAdjacentHTML("afterbegin",
+      '<div class="card" style="margin:1rem"><b>BariStore could not reach its backend.</b><p class="sub">Close this sheet and run baristore again in a-Shell.</p></div>');
+    return;
+  }
+  APP.onboarding_complete = Boolean(data.onboarding_complete);
   APP.state = data.state || {};
   APP.catalog = data.catalog || { sources: [], apps: [], store_variants: [] };
   APP.installed_apps = data.installed_apps || [];
   APP.job = data.job || { active: false };
   applyTheme(APP.state.theme);
 
+  if (APP.job && APP.job.active) renderJob(APP.job);
+
   if (!APP.onboarding_complete) {
     await enterOnboarding();
   } else {
     showStoreUI();
-    // Refresh sources in background without blocking UI
+    // Refresh sources in background without blocking the UI.
     apiGet("/api/sources").then(res => {
       if (res.ok && res.catalog) {
         APP.catalog = res.catalog;
@@ -583,6 +594,15 @@ async function initApp() {
     }).catch(() => {});
   }
   setInterval(pollStatus, 1200);
+}
+
+async function openExternal(url) {
+  try {
+    const res = await apiPost("/api/open-external", { url });
+    if (!res.ok) throw new Error(res.error || "open failed");
+  } catch (e) {
+    window.location.href = url;
+  }
 }
 
 function showStoreUI() {
@@ -620,14 +640,28 @@ async function enterOnboarding() {
   document.getElementById("bottomNav").classList.add("hidden");
   document.getElementById("topActions").classList.add("hidden");
 
-  const envRes = await apiGet("/api/check-env?tunnel=1");
-  APP.env = envRes.env || {};
+  let env = {};
+  try {
+    const envRes = await apiGet("/api/check-env?tunnel=1");
+    env = envRes.env || {};
+  } catch (e) {
+    env = {};
+  }
+  APP.env = env;
 
-  if (!APP.env.vpn_connected) {
-    APP.obStep = 1;
-  } else if (!APP.env.paired) {
+  // A pairing run that is still going owns the screen, whatever the probes say:
+  // iOS may have suspended us mid-hop and this is the reload after coming back.
+  if (APP.job && APP.job.active && APP.job.kind === "pair") {
     APP.obStep = 2;
-  } else if (!APP.env.devmode_on) {
+    renderOnboardingStep();
+    return;
+  }
+
+  if (!env.vpn_connected) {
+    APP.obStep = 1;
+  } else if (!env.paired) {
+    APP.obStep = 2;
+  } else if (!env.devmode_on) {
     APP.obStep = 3;
   } else if (!APP.state.has_session) {
     APP.obStep = 4;
@@ -659,9 +693,22 @@ function renderOnboardingStep() {
       </div>
     `;
   } else if (APP.obStep === 2) {
+    if (APP.job && APP.job.active && APP.job.kind === "pair") {
+      box.innerHTML = `
+        <h3 style="margin:0 0 0.35rem">Enter this code on the Settings screen</h3>
+        <div class="pin-box">${esc(APP.job.pin || "------")}</div>
+        <p class="sub" style="margin-bottom:0.75rem">${esc(APP.job.step || "Waiting for Settings…")}</p>
+        <p class="sub" style="margin-bottom:0.75rem">In Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs (or Settings &gt; Developer &gt; Paired Macs), tap <b>BariStore</b>. iOS asks for your device passcode first, then shows the six-digit code screen. Keep this sheet open; BariStore keeps a-Shell running while you are away.</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <button class="secondary full" onclick="startPiPPin()">Float the PIN over Settings (PiP)</button>
+          <button class="secondary full" onclick="cancelJob()">Cancel Pairing</button>
+        </div>
+      `;
+      return;
+    }
     box.innerHTML = `
       <h3 style="margin:0 0 0.35rem">Step 2: Pair This iPhone</h3>
-      <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b> below. BariStore will immediately display a 6-digit PIN and keep a-Shell active in the background while you open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>) and tap <b>BariStore</b>.</p>
+      <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b> below. BariStore shows a six-digit PIN straight away, then keeps a-Shell running while you open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>), tap <b>BariStore</b>, enter your device passcode and then the PIN.</p>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
         <button class="full" onclick="startPairing(false)">Start Pairing</button>
         <button class="secondary full" onclick="triggerPairingImport()">Import Existing Pairing File</button>
@@ -855,7 +902,8 @@ async function startPairing(fresh) {
     alert(res.error || "Could not start pairing.");
     return;
   }
-  pollStatus();
+  await pollStatus();
+  if (!APP.onboarding_complete) renderOnboardingStep();
 }
 
 function triggerPairingImport() {
@@ -890,60 +938,72 @@ function onPairFileSelected(input) {
 }
 
 let lastHandledJobId = 0;
+
+function renderJob(job) {
+  const banner = document.getElementById("jobBanner");
+  if (!banner) return;
+  if (!job || !job.active) {
+    banner.classList.add("hidden");
+    return;
+  }
+  startKeepAlive();
+  banner.classList.remove("hidden");
+  document.getElementById("jobTitle").textContent = job.title || "Working…";
+  document.getElementById("jobStep").textContent = job.step || "";
+  const pinWrap = document.getElementById("jobPinWrap");
+  if (job.pin) {
+    pinWrap.classList.remove("hidden");
+    document.getElementById("jobPin").textContent = job.pin;
+    drawPiPFrame(job.pin);
+  } else {
+    pinWrap.classList.add("hidden");
+  }
+  const bar = document.getElementById("jobBar");
+  if (typeof job.progress === "number") {
+    bar.classList.remove("indeterminate");
+    bar.style.width = job.progress + "%";
+  } else {
+    bar.classList.add("indeterminate");
+    bar.style.width = "";
+  }
+}
+
 async function pollStatus() {
   try {
     const res = await apiGet("/api/status");
     if (!res.ok || !res.job) return;
     const job = res.job;
     APP.job = job;
-    const banner = document.getElementById("jobBanner");
-    if (job.active) {
-      startKeepAlive();
-      banner.classList.remove("hidden");
-      document.getElementById("jobTitle").textContent = job.title || "Working…";
-      document.getElementById("jobStep").textContent = job.step || "";
-      const pinWrap = document.getElementById("jobPinWrap");
-      if (job.pin) {
-        pinWrap.classList.remove("hidden");
-        document.getElementById("jobPin").textContent = job.pin;
-        drawPiPFrame(job.pin);
-      } else {
-        pinWrap.classList.add("hidden");
-      }
-      const bar = document.getElementById("jobBar");
-      if (typeof job.progress === "number") {
-        bar.classList.remove("indeterminate");
-        bar.style.width = job.progress + "%";
-      } else {
-        bar.classList.add("indeterminate");
-      }
-    } else {
-      banner.classList.add("hidden");
-      if (job.id && job.id !== lastHandledJobId) {
-        lastHandledJobId = job.id;
-        if (job.prompt) {
-          handleJobPrompt(job.prompt);
-        } else if (job.error) {
-          alert(job.error);
-        } else if (job.result) {
-          await onJobFinished(job);
-        }
+    renderJob(job);
+    if (!job.active && job.id && job.id !== lastHandledJobId) {
+      lastHandledJobId = job.id;
+      if (job.prompt) {
+        handleJobPrompt(job.prompt);
+      } else if (job.error) {
+        alert(job.error);
+      } else if (job.result) {
+        await onJobFinished(job);
       }
     }
   } catch (e) {}
 }
 
 async function onJobFinished(job) {
-  const boot = await apiGet("/api/bootstrap");
+  let boot = {};
+  try {
+    boot = await apiGet("/api/bootstrap");
+  } catch (e) {
+    boot = {};
+  }
   if (boot.ok) {
     APP.state = boot.state || APP.state;
     APP.installed_apps = boot.installed_apps || APP.installed_apps;
+    APP.catalog = boot.catalog || APP.catalog;
+    APP.onboarding_complete = Boolean(boot.onboarding_complete);
   }
   if (job.kind === "pair") {
     if (!APP.onboarding_complete) {
-      APP.obStep = job.result?.devmode_on ? (APP.state.has_session ? 5 : 4) : 3;
-      if (APP.obStep === 5) await completeOnboarding();
-      else renderOnboardingStep();
+      await enterOnboarding();
     } else {
       renderOptions();
     }
@@ -955,7 +1015,8 @@ async function onJobFinished(job) {
 
 async function cancelJob() {
   await apiPost("/api/job/cancel", {});
-  pollStatus();
+  await pollStatus();
+  if (!APP.onboarding_complete) renderOnboardingStep();
 }
 
 /* --- Featured Catalog & Multi-Source Rendering --- */
@@ -983,9 +1044,14 @@ function renderCatalog() {
   // Render built-in Store & Container variants
   const storesSec = document.getElementById("storesSection");
   const vGrid = document.getElementById("storeVariantsGrid");
-  const variants = (APP.catalog.store_variants || []).filter(v =>
-    !srcFilter && (!q || v.name.toLowerCase().includes(q) || v.subtitle.toLowerCase().includes(q))
-  );
+  const variants = (APP.catalog.store_variants || []).filter(v => {
+    if (srcFilter) return false;
+    if (!q) return true;
+    return (
+      (v.name || "").toLowerCase().includes(q) ||
+      (v.subtitle || "").toLowerCase().includes(q)
+    );
+  });
   if (variants.length) {
     storesSec.classList.remove("hidden");
     vGrid.innerHTML = variants.map(v => `
@@ -1005,11 +1071,11 @@ function renderCatalog() {
 
   // Render AltSource apps
   const apps = (APP.catalog.apps || []).filter(a => {
-    if (srcFilter && !a.offers.some(o => o.source_url === srcFilter)) return false;
+    if (srcFilter && !(a.offers || []).some(o => o.source_url === srcFilter)) return false;
     if (!q) return true;
     return (
-      a.name.toLowerCase().includes(q) ||
-      a.bundle_id.toLowerCase().includes(q) ||
+      (a.name || "").toLowerCase().includes(q) ||
+      (a.bundle_id || "").toLowerCase().includes(q) ||
       (a.developer || "").toLowerCase().includes(q) ||
       (a.subtitle || "").toLowerCase().includes(q)
     );
@@ -1018,7 +1084,15 @@ function renderCatalog() {
   document.getElementById("catalogCount").textContent = apps.length + " apps";
   const grid = document.getElementById("catalogGrid");
   if (!apps.length) {
-    grid.innerHTML = `<div class="card" style="grid-column:1/-1"><p class="sub">No matching apps found. Tap <b>Sources</b> at the top to refresh or add an AltSource.</p></div>`;
+    const reachable = (APP.catalog.sources || []).some(s => Number(s.app_count) > 0);
+    grid.innerHTML = `
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-title">${q || srcFilter ? "No matches" : (reachable ? "Nothing here yet" : "AltSources not loaded")}</div>
+        <p class="sub">${q || srcFilter
+          ? "No app matched your search. Clear the search box or pick another source."
+          : "BariStore could not read any AltSource yet. Check the network, then tap Retry."}</p>
+        <button class="secondary full" style="margin-top:0.6rem" onclick="retrySources()">Retry Sources</button>
+      </div>`;
     return;
   }
 
@@ -1042,6 +1116,17 @@ function renderCatalog() {
       </div>
     `;
   }).join("");
+}
+
+async function retrySources() {
+  const heading = document.getElementById("catalogHeading");
+  if (heading) heading.textContent = "Loading AltSources…";
+  try {
+    const res = await apiGet("/api/sources?refresh=1");
+    if (res.ok && res.catalog) APP.catalog = res.catalog;
+  } catch (e) {}
+  if (heading) heading.textContent = "Featured Apps";
+  renderCatalog();
 }
 
 function openVariantDetail(variantId) {

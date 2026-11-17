@@ -157,6 +157,39 @@ def main():
         status, ob_res = _post(server, "/%s/api/onboarding/complete" % token, {})
         assert status == 200 and ob_res["ok"] is True
         print("ok  /api/settings and /api/onboarding/complete")
+
+        # External links are only opened for http(s) targets.
+        status, bad = _post(
+            server, "/%s/api/open-external" % token, {"url": "javascript:alert(1)"}
+        )
+        assert status == 400 and bad.get("ok") is False, (status, bad)
+        print("ok  /api/open-external rejects non-http targets")
+
+        # A finished job is restored on reload instead of dropping the user into the store.
+        with webui._LOCK:
+            webui._JOB.update(
+                {
+                    "id": 91,
+                    "active": True,
+                    "kind": "pair",
+                    "title": "Device Pairing",
+                    "step": "waiting",
+                    "pin": "123456",
+                    "progress": None,
+                    "error": None,
+                    "prompt": None,
+                    "result": None,
+                    "logs": [],
+                }
+            )
+        status, boot_raw = _get(server, "/%s/api/bootstrap" % token)
+        boot = json.loads(boot_raw.decode("utf-8"))
+        assert boot["job"]["active"] is True
+        assert boot["job"]["kind"] == "pair"
+        assert boot["job"]["pin"] == "123456"
+        with webui._LOCK:
+            webui._JOB.update({"active": False, "pin": None})
+        print("ok  /api/bootstrap restores an in-flight pairing job")
     finally:
         server.shutdown()
 

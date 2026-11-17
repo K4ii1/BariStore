@@ -468,6 +468,7 @@ async def pair_with_device(
     fresh_identity=False,
     on_pin=None,
     on_status=None,
+    port=0,
 ):
     """Advertise BariStore over fast raw mDNS and complete Pair-Setup M1-M6.
 
@@ -480,66 +481,83 @@ async def pair_with_device(
     else:
         identity = pairing.HostIdentity.load_or_create(storage.IDENTITY_PATH)
 
-    # Pre-compute the SRP server (and 6-digit PIN) before opening the listener
-    srp_cache = {"server": pairing.prepare_srp_server(pin)}
-    chosen_pin = srp_cache["server"].pin
-    if on_pin:
-        on_pin(chosen_pin)
+    # Pre-compute the SRP server (and 6-digit PIN) before opening the listener, so
+    # the PIN can be shown immediately and M1 -> M2 answers in well under a
+    # millisecond. Every extra connection iOS opens (it dials more than once)
+    # gets its own SRP context but the SAME PIN, so whichever socket it finishes
+    # on, the code the user sees is the right one.
+    primed = pairing.prepare_srp_server(pin)
+    chosen_pin = primed.pin
+    primed_state = {"used": False}
 
     loop = asyncio.get_running_loop()
     result = loop.create_future()
-    active = {"busy": False}
 
     async def handle(reader, writer):
-        if result.done() or active["busy"]:
+        if result.done():
             try:
                 writer.close()
             except Exception:
                 pass
             return
-        active["busy"] = True
         peer = writer.get_extra_info("peername")
         peer_ip = (peer[0] if peer else "").split("%", 1)[0]
 
-        if on_status:
-            on_status("Device connected — waiting for PIN %s in Settings…" % chosen_pin)
+        if not primed_state["used"]:
+            primed_state["used"] = True
+            srp = primed
+        else:
+            srp = pairing.prepare_srp_server(chosen_pin)
 
-        # Consume the pre-computed SRP server for this connection; if it fails,
-        # prepare a fresh one with the SAME PIN for the next connection attempt.
-        current_srp = srp_cache["server"]
+        if on_status:
+            on_status(
+                "Device connected — enter PIN %s on the Settings screen" % chosen_pin
+            )
+
         host = pairing.PairableHost(
             reader,
             writer,
             identity,
             name="BariStore",
-            precomputed_srp=current_srp,
+            precomputed_srp=srp,
         )
         try:
-            info = await host.accept(pin_callback=on_pin)
+            # pin_callback=None: the PIN never changes mid-session, so there is
+            # nothing to re-display here.
+            info = await host.accept(pin_callback=None)
             if not result.done():
                 result.set_result((info, peer_ip))
         except Exception as exc:
-            # Do NOT kill the pairing listener on a dropped/probe socket or typo!
-            # Prepare a fresh SRP server with the same PIN and wait for reconnect.
-            srp_cache["server"] = pairing.prepare_srp_server(chosen_pin)
-            if on_status:
-                msg = str(exc)
-                if "code did not match" in msg:
-                    on_status("Incorrect PIN entered. Tap BariStore in Settings and enter %s." % chosen_pin)
+            # A dropped socket, a probe, or a mistyped code must never take the
+            # listener down: keep advertising the same PIN and wait for the next
+            # connection.
+            if on_status and not result.done():
+                message = str(exc)
+                if "code did not match" in message:
+                    on_status(
+                        "Wrong PIN entered. Tap BariStore in Settings again and enter %s."
+                        % chosen_pin
+                    )
                 else:
-                    on_status("Waiting for selection in Settings > Developer > Paired Macs…")
+                    on_status(
+                        "Still waiting — tap BariStore in Settings and enter PIN %s."
+                        % chosen_pin
+                    )
         finally:
-            active["busy"] = False
             try:
                 writer.close()
                 await writer.wait_closed()
             except Exception:
                 pass
 
-    server = await asyncio.start_server(handle, "0.0.0.0", 0)
+    server = await asyncio.start_server(handle, "0.0.0.0", port)
     port = server.sockets[0].getsockname()[1]
     advertiser = mdns.Advertiser(identity, port, name="BariStore").start()
 
+    # Publish the PIN only once the listener and the advertiser are live, so the
+    # number on screen can always be typed in immediately.
+    if on_pin:
+        on_pin(chosen_pin)
     if on_status:
         on_status("Advertising BariStore — open Settings > Developer > Paired Macs")
 
