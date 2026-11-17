@@ -107,5 +107,5 @@ Sources: [SideStore #1506](https://github.com/SideStore/SideStore/issues/1506),
   resolver must list releases and reject `alpha`/`beta`/`rc` tags.
 - **Nightly releases** are rolling: their `published_at` is stale — show the asset's `updated_at` instead.
 - **AltStore Classic** embeds the version in the asset name — resolve by pattern, never by filename.
-- **`median.co/udid`** serves a one-tap UDID profile (verified by their documentation). BariSign no
-  longer serves a page around it (removed 0.9.18); `sh barisign udid <paste>` still accepts its output..
+- **`median.co/udid`** serves a one-tap UDID profile (verified by their documentation).
+  BariSign has no UDID page and no paste box; pairing is the only route.

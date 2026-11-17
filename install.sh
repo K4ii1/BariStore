@@ -107,6 +107,8 @@ fetch() {   # fetch <file-in-repo> <destination>
 download_all() {
     fail=0
     _n=0
+    _updated=0
+    _current=0
     for _file in poc/poc_login.py poc/poc_portal.py poc/barisign.py poc/signer.py \
                  poc/download.py poc/pair_install.py poc/tls_psk.py poc/tcp6.py \
                  poc/remote_xpc.py poc/devmode.py poc/webui.py \
@@ -115,11 +117,19 @@ download_all() {
                  third_party/sideinstaller/signin.py third_party/sideinstaller/portal.py \
                  third_party/apple-roots/apple-roots.pem third_party/ca-bundle/cacert.pem \
                  variants.json install.sh; do
-        if fetch "$_file" "$_file"; then
+        if fetch "$_file" "$_file.part"; then
             _n=$((_n + 1))
+            if [ -f "$_file" ] && cmp -s "$_file" "$_file.part"; then
+                _current=$((_current + 1))
+                rm -f "$_file.part"
+            else
+                _updated=$((_updated + 1))
+                mv -f "$_file.part" "$_file"
+            fi
         else
             _n=$((_n + 1))
             fail=1
+            rm -f "$_file.part"
         fi
         # Same cycling indicator as the other stages: one line,
         # rewritten in place (. → .. → ... → .), no background job.
@@ -200,7 +210,12 @@ while [ "$attempt" -le 2 ]; do
     download_all
     if [ "$fail" -eq 0 ]; then
         clear_screen
-printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
+        printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
+        if [ "${_updated:-0}" -eq 0 ]; then
+            printf '  files: all current, nothing to replace\n'
+        else
+            printf '  files: %d updated, %d current\n' "$_updated" "$_current"
+        fi
     else
         printf '\r\033[2K  (1/2) files failed\n'
         printf '  ! could not fetch:\n'

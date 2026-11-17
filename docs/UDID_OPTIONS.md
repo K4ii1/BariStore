@@ -4,9 +4,8 @@ BariSign needs your **target's UDID** because a free Apple ID can only sign apps
 registered on it. There is nothing secret about a UDID: it is a hardware identifier developers paste into
 portals every day. It is **not** a credential, and no Apple ID or password is involved in getting it.
 
-The **only** route is pairing: run `sh barisign pair` (or the guided run) and the signer reads the
-target's UDID from the pairing itself and saves it. `sh barisign udid` does the same pairing step
-alone; `sh barisign udid <paste>` also accepts a UDID you already have.
+The **only** route is pairing: the run pairs this iPhone with itself and
+reads the UDID from the pairing, then saves it.
 
 > The signer-hosted UDID page is **removed** (0.9.18): `median.co/udid` link, submit box and
 > `--manual`/`--page` are gone, with the HTTP server code. If Developer Mode cannot be opened
