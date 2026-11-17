@@ -102,19 +102,23 @@ sys.exit(0 if a == b else 1)" "$_file" "$_file.part" 2>/dev/null; then
         printf '\r\033[2K  downloading files (%d)...' "$_n"
     done
 
-    cat > "$DOCS/baristore" <<'LAUNCHER'
-#!/bin/sh
-# BariStore launcher — works from any directory, never moves your shell.
-DIR="$(cd "$(dirname "$0")" && pwd)/baristore_files"
-PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec python3 -u -m baristore.cli "$@"
-LAUNCHER
+    # The launcher is generated with the absolute program path baked in: no
+    # `cd`, no `dirname "$0"`, no nested quoting, and it never moves the shell.
+    {
+        printf '#!/bin/sh\n'
+        printf '# BariStore launcher - works from any directory.\n'
+        printf 'PYTHONPATH="%s"\n' "$PROG"
+        printf 'export PYTHONPATH\n'
+        printf 'exec python3 -u -m baristore.cli "$@"\n'
+    } > "$DOCS/baristore" || return 1
     chmod +x "$DOCS/baristore" 2>/dev/null
     return $fail
 }
 
 works() {
-    PYTHONPATH="$PROG${PYTHONPATH:+:$PYTHONPATH}" python3 -m baristore.cli --check >/dev/null 2>&1 \
-        && sh -n "$DOCS/baristore"
+    PYTHONPATH="$PROG" python3 -m baristore.cli --check >/dev/null 2>&1 \
+        && sh -n "$DOCS/baristore" \
+        && sh "$DOCS/baristore" --version >/dev/null 2>&1
 }
 
 printf 'Installing BariStore%s...\n' "${VER:+" $VER"}"
@@ -131,5 +135,7 @@ if [ "$fail" -ne 0 ] || ! works; then
 fi
 
 printf 'BariStore %s installed!\n\n' "${VER:-}"
-printf '  Run in a-Shell:\n'
+printf '  Run in a-Shell (from any folder):\n'
 printf '    baristore\n'
+printf '  If the launcher ever fails, this always works:\n'
+printf '    python3 -m baristore.cli\n'
