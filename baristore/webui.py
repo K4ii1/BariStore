@@ -710,7 +710,14 @@ class _Handler(BaseHTTPRequestHandler):
             with _LOCK:
                 job_copy = dict(_JOB)
                 job_copy["logs"] = list(_JOB["logs"][-40:])
-            self._send_json(200, {"ok": True, "job": job_copy})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "job": job_copy,
+                    "login_step": apple.get_login_step(),
+                },
+            )
             return
 
         if route == "/api/bootstrap":

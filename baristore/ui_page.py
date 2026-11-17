@@ -751,25 +751,36 @@ async function submitObLogin() {
   const errEl = document.getElementById("obLoginErr");
   const btn = document.getElementById("obLoginBtn");
   if (!email || !password) {
+    errEl.style.color = "var(--red)";
     errEl.textContent = "Please enter both your Apple ID and password.";
     return;
   }
+  startKeepAlive();
+  errEl.style.color = "var(--accent)";
   errEl.textContent = "Signing in with Apple (SRP-6a)…";
   btn.disabled = true;
-  const res = await apiPost("/api/apple/login", { email, password });
-  btn.disabled = false;
-  if (!res.ok) {
-    errEl.textContent = res.error || "Sign-in failed.";
-    return;
-  }
-  if (res.result.status === "2fa_required") {
-    open2FAModal(res.result.login_id, res.result.message, true);
-  } else {
-    APP.state.email = res.result.email;
-    APP.state.team_id = res.result.team_id;
-    APP.state.team_name = res.result.team_name;
-    APP.state.has_session = true;
-    await completeOnboarding();
+  try {
+    const res = await apiPost("/api/apple/login", { email, password });
+    btn.disabled = false;
+    if (!res.ok) {
+      errEl.style.color = "var(--red)";
+      errEl.textContent = res.error || "Sign-in failed.";
+      return;
+    }
+    if (res.result.status === "2fa_required") {
+      errEl.textContent = "";
+      open2FAModal(res.result.login_id, res.result.message, true);
+    } else {
+      APP.state.email = res.result.email;
+      APP.state.team_id = res.result.team_id;
+      APP.state.team_name = res.result.team_name;
+      APP.state.has_session = true;
+      await completeOnboarding();
+    }
+  } catch (e) {
+    btn.disabled = false;
+    errEl.style.color = "var(--red)";
+    errEl.textContent = "Connection error while signing in: " + (e.message || e);
   }
 }
 
@@ -806,26 +817,36 @@ async function submitModalLogin() {
   const errEl = document.getElementById("modLoginErr");
   const btn = document.getElementById("modLoginBtn");
   if (!email || !password) {
+    errEl.style.color = "var(--red)";
     errEl.textContent = "Enter your Apple ID and password.";
     return;
   }
+  startKeepAlive();
+  errEl.style.color = "var(--accent)";
   errEl.textContent = "Authenticating with Apple…";
   btn.disabled = true;
-  const res = await apiPost("/api/apple/login", { email, password });
-  btn.disabled = false;
-  if (!res.ok) {
-    errEl.textContent = res.error || "Sign-in failed.";
-    return;
-  }
-  if (res.result.status === "2fa_required") {
-    open2FAModal(res.result.login_id, res.result.message, false);
-  } else {
-    APP.state.email = res.result.email;
-    APP.state.team_id = res.result.team_id;
-    APP.state.team_name = res.result.team_name;
-    APP.state.has_session = true;
-    closeModal();
-    renderOptions();
+  try {
+    const res = await apiPost("/api/apple/login", { email, password });
+    btn.disabled = false;
+    if (!res.ok) {
+      errEl.style.color = "var(--red)";
+      errEl.textContent = res.error || "Sign-in failed.";
+      return;
+    }
+    if (res.result.status === "2fa_required") {
+      open2FAModal(res.result.login_id, res.result.message, false);
+    } else {
+      APP.state.email = res.result.email;
+      APP.state.team_id = res.result.team_id;
+      APP.state.team_name = res.result.team_name;
+      APP.state.has_session = true;
+      closeModal();
+      renderOptions();
+    }
+  } catch (e) {
+    btn.disabled = false;
+    errEl.style.color = "var(--red)";
+    errEl.textContent = "Connection error while signing in: " + (e.message || e);
   }
 }
 
@@ -844,21 +865,30 @@ async function submit2FA(loginId, isOnboarding) {
   const code = document.getElementById("tfaCode").value.trim();
   const errEl = document.getElementById("tfaErr");
   const btn = document.getElementById("tfaBtn");
+  startKeepAlive();
+  errEl.style.color = "var(--accent)";
   errEl.textContent = "Verifying with Apple…";
   btn.disabled = true;
-  const res = await apiPost("/api/apple/2fa", { login_id: loginId, code });
-  btn.disabled = false;
-  if (!res.ok) {
-    errEl.textContent = res.error || "Invalid verification code.";
-    return;
+  try {
+    const res = await apiPost("/api/apple/2fa", { login_id: loginId, code });
+    btn.disabled = false;
+    if (!res.ok) {
+      errEl.style.color = "var(--red)";
+      errEl.textContent = res.error || "Invalid verification code.";
+      return;
+    }
+    APP.state.email = res.result.email;
+    APP.state.team_id = res.result.team_id;
+    APP.state.team_name = res.result.team_name;
+    APP.state.has_session = true;
+    closeModal();
+    if (isOnboarding) await completeOnboarding();
+    else renderOptions();
+  } catch (e) {
+    btn.disabled = false;
+    errEl.style.color = "var(--red)";
+    errEl.textContent = "Connection error while verifying 2FA: " + (e.message || e);
   }
-  APP.state.email = res.result.email;
-  APP.state.team_id = res.result.team_id;
-  APP.state.team_name = res.result.team_name;
-  APP.state.has_session = true;
-  closeModal();
-  if (isOnboarding) await completeOnboarding();
-  else renderOptions();
 }
 
 /* --- Pairing & Job Polling --- */
@@ -908,6 +938,20 @@ async function pollStatus() {
   try {
     const res = await apiGet("/api/status");
     if (!res.ok || !res.job) return;
+    if (res.login_step) {
+      const obBtn = document.getElementById("obLoginBtn");
+      const obErr = document.getElementById("obLoginErr");
+      if (obBtn && obBtn.disabled && obErr) {
+        obErr.style.color = "var(--accent)";
+        obErr.textContent = res.login_step;
+      }
+      const modBtn = document.getElementById("modLoginBtn");
+      const modErr = document.getElementById("modLoginErr");
+      if (modBtn && modBtn.disabled && modErr) {
+        modErr.style.color = "var(--accent)";
+        modErr.textContent = res.login_step;
+      }
+    }
     const job = res.job;
     APP.job = job;
     const banner = document.getElementById("jobBanner");

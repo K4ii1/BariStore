@@ -16,6 +16,7 @@
 
 import base64
 import binascii
+import concurrent.futures
 import gzip
 import hashlib
 import hmac
@@ -28,6 +29,7 @@ import secrets
 import socket
 import ssl
 import struct
+import threading
 import time
 import urllib.parse
 import uuid
@@ -146,7 +148,20 @@ if CA_BUNDLE_PATH:
     except Exception:
         pass
 
+_LOGIN_STEP_LOCK = threading.Lock()
+_LOGIN_STEP_TEXT = ""
 _APPLE_CTX = None
+
+
+def set_login_step(text):
+    global _LOGIN_STEP_TEXT
+    with _LOGIN_STEP_LOCK:
+        _LOGIN_STEP_TEXT = str(text or "")
+
+
+def get_login_step():
+    with _LOGIN_STEP_LOCK:
+        return _LOGIN_STEP_TEXT
 
 
 def is_apple_host(host):
@@ -173,8 +188,52 @@ def ssl_context_for(host):
     return SSL_CTX
 
 
-def http_request(method, url, headers=None, body=None, timeout=45, redirects=5):
-    """Perform an HTTP/HTTPS request preserving exact header casing."""
+def _connect_preferred_ipv4(host, port, timeout):
+    """Connect TCP socket preferring IPv4 first (avoids IPv6 blackholes on iOS/LocalDevVPN)."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except Exception as exc:
+        raise AppleAuthError("DNS lookup failed for %s: %s" % (host, exc))
+    if not infos:
+        raise AppleAuthError("No DNS records found for %s" % host)
+    # Sort AF_INET (IPv4) ahead of AF_INET6 so stalled IPv6 routes don't block for full timeout
+    infos.sort(key=lambda item: 0 if item[0] == socket.AF_INET else 1)
+    last_err = None
+    per_addr_timeout = min(float(timeout), 6.0) if len(infos) > 1 else float(timeout)
+    for family, socktype, proto, _canon, sockaddr in infos:
+        sock = None
+        try:
+            sock = socket.socket(family, socktype, proto)
+            sock.settimeout(per_addr_timeout)
+            sock.connect(sockaddr)
+            sock.settimeout(float(timeout))
+            return sock
+        except Exception as exc:
+            last_err = exc
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+    raise last_err or AppleAuthError("Could not connect to %s:%s" % (host, port))
+
+
+class _IPv4PreferredHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        raw = _connect_preferred_ipv4(self.host, self.port, self.timeout or 20)
+        if self._tunnel_host:
+            self.sock = raw
+            self._tunnel()
+        self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+
+
+class _IPv4PreferredHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = _connect_preferred_ipv4(self.host, self.port, self.timeout or 20)
+
+
+def http_request(method, url, headers=None, body=None, timeout=20, redirects=5):
+    """Perform an HTTP/HTTPS request preserving exact header casing and preferring IPv4."""
     parts = urllib.parse.urlsplit(url)
     host = parts.hostname
     if not host:
@@ -185,11 +244,11 @@ def http_request(method, url, headers=None, body=None, timeout=45, redirects=5):
         path += "?" + parts.query
 
     if parts.scheme == "https":
-        conn = http.client.HTTPSConnection(
+        conn = _IPv4PreferredHTTPSConnection(
             host, port, timeout=timeout, context=ssl_context_for(host)
         )
     else:
-        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        conn = _IPv4PreferredHTTPConnection(host, port, timeout=timeout)
 
     if isinstance(body, str):
         body = body.encode("utf-8")
@@ -342,18 +401,19 @@ class SrpClient:
 # --- Minimal RFC 6455 WebSocket for Anisette v3 Provisioning ----------------
 
 class _WebSocket:
-    def __init__(self, url, timeout=35):
+    def __init__(self, url, timeout=12):
         parts = urllib.parse.urlsplit(url)
         secure = parts.scheme == "wss"
         port = parts.port or (443 if secure else 80)
         path = (parts.path or "/") + ("?" + parts.query if parts.query else "")
 
-        raw = socket.create_connection((parts.hostname, port), timeout=timeout)
+        raw = _connect_preferred_ipv4(parts.hostname, port, timeout=timeout)
         self.sock = (
             ssl_context_for(parts.hostname).wrap_socket(raw, server_hostname=parts.hostname)
             if secure
             else raw
         )
+        self.sock.settimeout(float(timeout))
         nonce = base64.b64encode(secrets.token_bytes(16)).decode()
         handshake = (
             "GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -480,7 +540,7 @@ class AnisetteClient:
         return hashlib.sha256(self.identifier).hexdigest()
 
     def detect(self):
-        status, _, body = http_request("GET", self.url + "/v3/client_info", timeout=15)
+        status, _, body = http_request("GET", self.url + "/v3/client_info", timeout=6)
         if status == 200:
             try:
                 payload = json.loads(body)
@@ -496,7 +556,7 @@ class AnisetteClient:
                     self.user_agent = agent.strip()
                 return 3
 
-        status, _, body = http_request("GET", self.url + "/", timeout=15)
+        status, _, body = http_request("GET", self.url + "/", timeout=6)
         if status == 200:
             try:
                 payload = json.loads(body)
@@ -557,7 +617,7 @@ class AnisetteClient:
 
     def headers(self):
         if self.version == 1:
-            status, _, body = http_request("GET", self.url + "/", timeout=20)
+            status, _, body = http_request("GET", self.url + "/", timeout=10)
             if status != 200:
                 raise AppleAuthError("Anisette server returned HTTP %d." % status)
             payload = json.loads(body)
@@ -578,7 +638,7 @@ class AnisetteClient:
                     "adi_pb": base64.b64encode(self.adi_pb).decode(),
                 }
             ),
-            timeout=20,
+            timeout=10,
         )
         payload = json.loads(body) if body else {}
         if status != 200 or payload.get("result") != "Headers":
@@ -608,13 +668,27 @@ class AnisetteClient:
 
 # --- GrandSlam Service ------------------------------------------------------
 
+_CACHED_URL_BAG = None
+_CACHED_URL_BAG_AT = 0
+
+
+def _fetch_gsa_url_bag(headers):
+    global _CACHED_URL_BAG, _CACHED_URL_BAG_AT
+    now = time.time()
+    if _CACHED_URL_BAG and (now - _CACHED_URL_BAG_AT < 900):
+        return _CACHED_URL_BAG
+    status, _, body = http_request("GET", GSA_URL_BAG, headers=headers, timeout=12)
+    if status != 200:
+        raise AppleAuthError("Could not reach Apple's GrandSlam service (HTTP %d)." % status)
+    _CACHED_URL_BAG = plistlib.loads(body)["urls"]
+    _CACHED_URL_BAG_AT = now
+    return _CACHED_URL_BAG
+
+
 class GrandSlam:
     def __init__(self, anisette):
         self.anisette = anisette
-        status, _, body = http_request("GET", GSA_URL_BAG, headers=self.mac_headers(), timeout=25)
-        if status != 200:
-            raise AppleAuthError("Could not reach Apple's GrandSlam service (HTTP %d)." % status)
-        self.url_bag = plistlib.loads(body)["urls"]
+        self.url_bag = _fetch_gsa_url_bag(self.mac_headers())
 
     def base_headers(self, plist=True):
         headers = {}
@@ -695,16 +769,51 @@ def anisette_Order(preferred=""):
     return order[:8]
 
 
+def _fast_ordered_anisette(preferred=""):
+    """Probe candidate Anisette servers concurrently and return responsive ones fastest-first."""
+    candidates = anisette_Order(preferred)
+    if len(candidates) <= 1:
+        return candidates
+
+    def _probe(idx_url):
+        idx, url = idx_url
+        t0 = time.time()
+        try:
+            st, _, body = http_request("GET", url + "/v3/client_info", timeout=4)
+            if st == 200 and b"client_info" in (body or b""):
+                return (0 if idx == 0 and preferred else 1, time.time() - t0, url)
+        except Exception:
+            pass
+        try:
+            st, _, body = http_request("GET", url + "/", timeout=4)
+            if st == 200 and b"X-Apple-I-MD" in (body or b""):
+                return (0 if idx == 0 and preferred else 1, time.time() - t0, url)
+        except Exception:
+            pass
+        return (2, 999.0 + idx, url)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+            scored = list(pool.map(_probe, enumerate(candidates), timeout=5))
+        scored.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in scored]
+    except Exception:
+        return candidates
+
+
 def connect_anisette(preferred_url="", state_path=None):
     """Connect and provision an Anisette server, with automatic failover."""
     state_path = state_path or storage.ANISETTE_STATE_FILE
     tried = []
-    for url in anisette_Order(preferred_url):
+    for url in _fast_ordered_anisette(preferred_url):
+        host = urllib.parse.urlsplit(url).hostname or url
         try:
+            set_login_step("Connecting to Anisette (%s)…" % host)
             anisette = AnisetteClient(url, state_path)
             anisette.detect()
             gs = GrandSlam(anisette)
             if anisette.needs_provisioning():
+                set_login_step("Provisioning Anisette (%s)…" % host)
                 anisette.provision(gs)
             try:
                 anisette.headers()
@@ -712,11 +821,12 @@ def connect_anisette(preferred_url="", state_path=None):
                 if anisette.version != 3 or not anisette.adi_pb:
                     raise
                 anisette.forget_provisioning()
+                set_login_step("Re-provisioning Anisette (%s)…" % host)
                 anisette.provision(gs)
                 anisette.headers()
             return anisette, gs
         except Exception as exc:
-            tried.append("%s (%s)" % (url, exc))
+            tried.append("%s (%s)" % (host, exc))
     raise AppleAuthError("No Anisette server responded. Tried: " + "; ".join(tried[:4]))
 
 
@@ -1003,6 +1113,33 @@ def get_saved_session():
 _PENDING_LOGINS = {}
 
 
+_FATAL_AUTH_ERROR_CODES = (
+    "-22406",
+    "-20970",
+    "-20101",
+    "-20209",
+    "-22421",
+    "-20283",
+)
+_FATAL_AUTH_SUBSTRINGS = (
+    "correct password",
+    "entered incorrectly",
+    "account is locked",
+    "locked for security",
+    "not an apple id",
+    "invalid apple id",
+    "no developer team",
+    "additional sign-in action",
+)
+
+
+def _is_fatal_credential_error(msg):
+    low = str(msg or "").lower()
+    if any(code in low for code in _FATAL_AUTH_ERROR_CODES):
+        return True
+    return any(sub in low for sub in _FATAL_AUTH_SUBSTRINGS)
+
+
 def start_apple_login(email, password, preferred_anisette=""):
     """Begin Apple ID login.
 
@@ -1014,60 +1151,76 @@ def start_apple_login(email, password, preferred_anisette=""):
     if not email or not password:
         raise AppleAuthError("Apple ID and password are required.")
 
-    candidates = anisette_Order(preferred_anisette)
+    set_login_step("Finding fastest Anisette server…")
+    candidates = _fast_ordered_anisette(preferred_anisette)
     last_error = None
+    tried = []
 
-    for url in candidates:
-        try:
-            anisette = AnisetteClient(url, storage.ANISETTE_STATE_FILE)
-            anisette.detect()
-            gs = GrandSlam(anisette)
-            if anisette.needs_provisioning():
-                anisette.provision(gs)
+    try:
+        for idx, url in enumerate(candidates, 1):
+            host = urllib.parse.urlsplit(url).hostname or url
             try:
-                anisette.headers()
-            except AppleAuthError:
-                anisette.forget_provisioning()
-                anisette.provision(gs)
-                anisette.headers()
+                set_login_step("(%d/%d) Connecting to Anisette (%s)…" % (idx, len(candidates), host))
+                anisette = AnisetteClient(url, storage.ANISETTE_STATE_FILE)
+                anisette.detect()
+                set_login_step("(%d/%d) Contacting Apple GrandSlam via %s…" % (idx, len(candidates), host))
+                gs = GrandSlam(anisette)
+                if anisette.needs_provisioning():
+                    set_login_step("(%d/%d) Provisioning Anisette machine on %s…" % (idx, len(candidates), host))
+                    anisette.provision(gs)
+                try:
+                    set_login_step("(%d/%d) Minting Anisette headers from %s…" % (idx, len(candidates), host))
+                    anisette.headers()
+                except AppleAuthError:
+                    anisette.forget_provisioning()
+                    set_login_step("(%d/%d) Re-provisioning Anisette on %s…" % (idx, len(candidates), host))
+                    anisette.provision(gs)
+                    anisette.headers()
 
-            account = AppleAccount(email, gs, anisette)
-            step = account.login_step(password)
-            if step == "ok":
-                return _finalize_login(account, password)
+                set_login_step("Authenticating Apple ID (SRP-6a) via %s…" % host)
+                account = AppleAccount(email, gs, anisette)
+                step = account.login_step(password)
+                if step == "ok":
+                    set_login_step("Fetching Apple Developer team…")
+                    return _finalize_login(account, password)
 
-            account.request_2fa_code(step)
-            login_id = secrets.token_hex(16)
-            _PENDING_LOGINS[login_id] = {
-                "account": account,
-                "password": password,
-                "mode": step,
-                "created_at": time.time(),
-            }
-            return {
-                "status": "2fa_required",
-                "login_id": login_id,
-                "mode": step,
-                "message": (
-                    "Enter the 6-digit verification code sent via SMS."
-                    if step == "sms-2fa"
-                    else "Enter the 6-digit verification code shown on your trusted device."
-                ),
-            }
-        except Exception as exc:
-            last_error = exc
-            msg = str(exc)
-            if "-22406" in msg or "correct password" in msg.lower():
-                raise AppleAuthError("Incorrect Apple ID or password (-22406).")
-            try:
-                anisette.forget_provisioning()
-            except Exception:
-                pass
-            continue
+                set_login_step("Requesting 2FA verification code…")
+                account.request_2fa_code(step)
+                login_id = secrets.token_hex(16)
+                _PENDING_LOGINS[login_id] = {
+                    "account": account,
+                    "password": password,
+                    "mode": step,
+                    "created_at": time.time(),
+                }
+                return {
+                    "status": "2fa_required",
+                    "login_id": login_id,
+                    "mode": step,
+                    "message": (
+                        "Enter the 6-digit verification code sent via SMS."
+                        if step == "sms-2fa"
+                        else "Enter the 6-digit verification code shown on your trusted device."
+                    ),
+                }
+            except Exception as exc:
+                last_error = exc
+                msg = str(exc)
+                if _is_fatal_credential_error(msg):
+                    raise AppleAuthError(msg)
+                tried.append("%s: %s" % (host, msg))
+                try:
+                    anisette.forget_provisioning()
+                except Exception:
+                    pass
+                continue
 
-    raise AppleAuthError(
-        "Could not sign in with any Anisette server (last error: %s)." % last_error
-    )
+        raise AppleAuthError(
+            "Could not sign in with any Anisette server (%s)."
+            % ("; ".join(tried[:3]) if tried else str(last_error))
+        )
+    finally:
+        set_login_step("")
 
 
 def verify_apple_2fa(login_id, code):
