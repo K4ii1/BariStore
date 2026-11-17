@@ -4,7 +4,7 @@
 inside a-Shell ships its own CA list, which does **not** include Apple's root, so the TLS handshake to
 `gsa.apple.com` fails with `CERTIFICATE_VERIFY_FAILED`.
 
-It is used **only for `*.apple.com` hosts** (`signin._ctx_for`). Certificate verification is never
+It is used **only for `*.apple.com` hosts** (`baristore.apple.ssl_context_for`). Certificate verification is never
 disabled anywhere in this project.
 
 ## Provenance
@@ -28,9 +28,7 @@ openssl x509 -inform DER -in AppleIncRootCertificate.cer -noout -fingerprint -sh
 # expect: SHA256 Fingerprint=B0:B1:73:0E:CB:C7:FF:45:05:14:2C:49:F1:29:5E:6E:DA:6B:CA:ED:7E:2C:68:C5:BE:91:B5:A1:10:01:F0:24
 ```
 
-`poc/poc_login.py` also checks this automatically: check 6/6 refuses to trust the file unless a
-certificate in it hashes to the pinned fingerprint, and the pinned value is a constant in the script
-(`APPLE_ROOT_FINGERPRINTS`), so replacing the file with a different CA makes the check fail loudly.
+`baristore/apple.py` loads this certificate into an Apple-only `ssl.SSLContext` used for `*.apple.com` hosts.
 
 ## Note on the chain
 

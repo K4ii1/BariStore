@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Interop test: pure-Python TLS 1.2 PSK client vs OpenSSL (Python's ssl)."""
+import asyncio
 import os
 import socket
 import subprocess
@@ -7,14 +8,11 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "poc"))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
-import asyncio
+from baristore import tls_psk
 
-import tls_psk
-
-PSK = bytes.fromhex("00112233445566778899aabbccddeeff"
-                    "00112233445566778899aabbccddeeff")
+PSK = bytes.fromhex("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
 
 def free_port():
@@ -28,9 +26,16 @@ def free_port():
 def start_server(cipher):
     port = free_port()
     process = subprocess.Popen(
-        [sys.executable, os.path.join(HERE, "tls_psk_echo_server.py"),
-         str(port), PSK.hex(), cipher],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        [
+            sys.executable,
+            os.path.join(HERE, "tls_psk_echo_server.py"),
+            str(port),
+            PSK.hex(),
+            cipher,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     deadline = time.time() + 5
     while time.time() < deadline:
         try:

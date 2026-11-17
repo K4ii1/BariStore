@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "store_variants": [
+    {
+      "id": "sidestore-stable",
+      "name": "SideStore",
+      "subtitle": "Stable Release · Untethered App Store",
+      "channel": "stable",
+      "repo": "SideStore/SideStore",
+      "asset_pattern": "SideStore.ipa",
+      "bundle_id": "com.SideStore.SideStore",
+      "icon_url": "https://apps.sidestore.io/apps/sidestore/v0.1.1/icon.png",
+      "tint_color": "#A405FA",
+      "description": "Untethered community fork of AltStore that refreshes apps on-device over LocalDevVPN. BariStore automatically configures and injects its pairing file during installation."
+    },
+    {
+      "id": "sidestore-nightly",
+      "name": "SideStore Nightly",
+      "subtitle": "Nightly Build · Latest Features",
+      "channel": "nightly",
+      "repo": "SideStore/SideStore",
+      "asset_pattern": "SideStore.ipa",
+      "bundle_id": "com.SideStore.SideStore",
+      "icon_url": "https://apps.sidestore.io/apps/sidestore/v0.1.1/icon.png",
+      "tint_color": "#7B2CBF",
+      "warning": "Nightly pre-release build; may contain experimental changes.",
+      "description": "Rolling nightly build from SideStore's official pipeline. BariStore writes both ALTPairingFile.mobiledevicepairing and PairingFile_RemoteRP.plist plus preferences."
+    },
+    {
+      "id": "livecontainer-sidestore-stable",
+      "name": "LiveContainer + SideStore",
+      "subtitle": "Stable Combined Build · Unlimited Apps in 1 Slot",
+      "channel": "stable",
+      "repo": "LiveContainer/LiveContainer",
+      "asset_pattern": "LiveContainer+SideStore.ipa",
+      "bundle_id": "com.kdt.livecontainer",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tint_color": "#0A84FF",
+      "description": "Combined LiveContainer + built-in SideStore in a single app slot. Run multiple iOS apps inside LiveContainer without using extra free-account app slots."
+    },
+    {
+      "id": "livecontainer-sidestore-nightly",
+      "name": "LiveContainer + SideStore Nightly",
+      "subtitle": "Nightly Combined Build · iOS 27 Ready",
+      "channel": "nightly",
+      "repo": "LiveContainer/LiveContainer",
+      "asset_pattern": "LiveContainer+SideStore.ipa",
+      "bundle_id": "com.kdt.livecontainer",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tint_color": "#0066CC",
+      "warning": "Nightly pre-release build; recommended for latest iOS compatibility.",
+      "description": "Latest nightly build of LiveContainer with built-in SideStore and automatic pairing file placement."
+    },
+    {
+      "id": "livecontainer-stable",
+      "name": "LiveContainer",
+      "subtitle": "Standalone Stable · App Container",
+      "channel": "stable",
+      "repo": "LiveContainer/LiveContainer",
+      "asset_pattern": "LiveContainer.ipa",
+      "bundle_id": "com.kdt.livecontainer",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tint_color": "#30B0C7",
+      "description": "Standalone LiveContainer app launcher that runs iOS apps inside a single container without installing them individually."
+    },
+    {
+      "id": "livecontainer-nightly",
+      "name": "LiveContainer Nightly",
+      "subtitle": "Standalone Nightly · Latest Container Engine",
+      "channel": "nightly",
+      "repo": "LiveContainer/LiveContainer",
+      "asset_pattern": "LiveContainer.ipa",
+      "bundle_id": "com.kdt.livecontainer",
+      "icon_url": "https://raw.githubusercontent.com/LiveContainer/LiveContainer/main/LiveContainerSwiftUI/Images.xcassets/AppIcon.appiconset/AppIcon.png",
+      "tint_color": "#1E88E5",
+      "warning": "Nightly pre-release build.",
+      "description": "Rolling nightly standalone LiveContainer build from the official GitHub Actions pipeline."
+    },
+    {
+      "id": "altstore-classic-stable",
+      "name": "AltStore Classic",
+      "subtitle": "Stable Release · Official AltStore",
+      "channel": "stable",
+      "repo": "altstoreio/AltStore",
+      "asset_pattern": ".ipa",
+      "bundle_id": "com.rileytestut.AltStore",
+      "icon_url": "https://user-images.githubusercontent.com/705880/65270980-1eb96f80-dad1-11e9-9367-78ccd25ceb02.png",
+      "tint_color": "#018084",
+      "description": "Official AltStore Classic with Remote AltServer support and automatic ALTPairingFile.plist injection."
+    }
+  ],
+  "default_sources": [
+    {
+      "name": "AltStore Official",
+      "url": "https://cdn.altstore.io/file/altstore/apps.json"
+    },
+    {
+      "name": "SideStore Community Picks",
+      "url": "https://community-apps.sidestore.io/sidecommunity.json"
+    },
+    {
+      "name": "SideStore Official",
+      "url": "https://apps.sidestore.io"
+    },
+    {
+      "name": "StikDebug Official",
+      "url": "https://stikdebug.xyz/index.json"
+    },
+    {
+      "name": "Provenance Emulator",
+      "url": "https://provenance-emu.com/apps.json"
+    },
+    {
+      "name": "UTM Repository",
+      "url": "https://alt.getutm.app"
+    },
+    {
+      "name": "OatmealDome (DolphiniOS)",
+      "url": "https://altstore.oatmealdome.me"
+    },
+    {
+      "name": "Flycast Official",
+      "url": "https://flyinghead.github.io/flycast-builds/altstore.json"
+    },
+    {
+      "name": "PojavLauncher",
+      "url": "https://alt.crystall1ne.dev"
+    },
+    {
+      "name": "Yattee",
+      "url": "https://repos.yattee.stream/alt/apps.json"
+    }
+  ]
+}

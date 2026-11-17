@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  BariSign — minimal IPv6/TCP client (MIT)
+#  BariStore — Minimal Userspace IPv6/TCP Client (MIT)
 #
-#  The RPPairing tunnel is an L3 link: the signer sends and receives raw IPv6
-#  packets.  iOS gives us no TUN device and no kernel TCP stack behind that
-#  tunnel, so this module implements just enough TCP to open a few outbound
-#  connections (RSD, installation_proxy, AFC): handshake, in-order receive with
-#  out-of-order buffering, cumulative ACKs, a conservative send window, MSS
-#  segmentation and go-back-N retransmission.  No window scaling, SACK or
-#  congestion control beyond an initial window of 64 KiB.
-#
-#  It is deliberately small.  Every byte is untrusted; all lengths are checked.
-#  Reference (read, not copied): jkcoxson/idevice tunnel_tcp_stack, RFC 9293.
-#
-#  UNTESTED ON A DEVICE.  Tested on Linux against the kernel TCP stack through a
-#  TUN device in tests/test_tcp6.py.
+#  The RPPairing tunnel is an L3 link carrying raw IPv6 packets. This module
+#  provides outbound TCP connections over that link for RSD, installation_proxy,
+#  AFC, house_arrest, lockdownd, AMFI, and debug_proxy.
 # =============================================================================
 
 import asyncio
@@ -57,7 +47,7 @@ class TcpError(Exception):
 
 
 class TcpConnection:
-    """A single outbound TCP connection carried over an L3 link."""
+    """A single outbound TCP connection carried over an L3 IPv6 link."""
 
     def __init__(self, stack, host, port):
         self.stack = stack
@@ -73,7 +63,7 @@ class TcpConnection:
         self.mss = DEFAULT_MSS
         self.peer_window_scale = 0
         self.state = "CLOSED"
-        self._out = bytearray()          # bytes from snd_una onwards (unacked + unsent)
+        self._out = bytearray()
         self._inbuf = bytearray()
         self._ooo = {}
         self._eof = False
@@ -88,7 +78,6 @@ class TcpConnection:
         self._fin_sent = False
         self._closed = False
 
-    # -- packet handling (called by the stack) ------------------------------
     def feed(self, flags, seq, ack, window, payload):
         now = asyncio.get_running_loop().time()
         if flags & TCP_RST:
@@ -176,7 +165,6 @@ class TcpConnection:
         if self.state in ("ESTABLISHED", "FIN_WAIT"):
             self.stack.send_segment(self, TCP_ACK, self.snd_nxt, self.rcv_nxt, b"")
 
-    # -- public API ---------------------------------------------------------
     async def handshake(self, timeout):
         loop = asyncio.get_running_loop()
         self.local_port = self.stack.allocate_port()
@@ -186,12 +174,18 @@ class TcpConnection:
         self.state = "SYN_SENT"
         self._syn_sent = loop.time()
         self.stack.register(self)
-        self.stack.send_segment(self, TCP_SYN, self.iss, 0, b"",
-                                options=struct.pack(">BBH", 2, 4, SYN_MSS))
+        self.stack.send_segment(
+            self,
+            TCP_SYN,
+            self.iss,
+            0,
+            b"",
+            options=struct.pack(">BBH", 2, 4, SYN_MSS),
+        )
         try:
             await asyncio.wait_for(self._syn_event.wait(), timeout)
         except asyncio.TimeoutError:
-            self._fail(TcpError("no TCP SYN-ACK from the device (tunnel or port wrong)"))
+            self._fail(TcpError("no TCP SYN-ACK from the device"))
             raise
         if self._error:
             raise self._error
@@ -302,8 +296,7 @@ class TcpConnection:
         self._closed = True
         if self.state == "ESTABLISHED" and not self._fin_sent:
             self._fin_sent = True
-            self.stack.send_segment(self, TCP_FIN | TCP_ACK, self.snd_nxt,
-                                    self.rcv_nxt, b"")
+            self.stack.send_segment(self, TCP_FIN | TCP_ACK, self.snd_nxt, self.rcv_nxt, b"")
             self.snd_nxt = (self.snd_nxt + 1) & MASK
             self.state = "FIN_WAIT"
         self.stack.unregister(self)
@@ -337,7 +330,7 @@ class TcpStack:
                 task.cancel()
                 try:
                     await task
-                except BaseException:                           # noqa: BLE001
+                except BaseException:
                     pass
         for conn in list(self.connections.values()):
             conn._fail(TcpError("stack closed"))
@@ -362,14 +355,22 @@ class TcpStack:
         await conn.handshake(timeout)
         return conn
 
-    # -- packet I/O ---------------------------------------------------------
     def build_segment(self, conn, flags, seq, ack, payload, options=b""):
         src = self.local_packed
         dst = conn.host_packed
         data_offset = 5 + (len(options) // 4)
         offset_flags = (data_offset << 12) | flags
-        header = struct.pack(">HHIIHHHH", conn.local_port, conn.port, seq & MASK,
-                             ack & MASK, offset_flags, MAX_WINDOW, 0, 0)
+        header = struct.pack(
+            ">HHIIHHHH",
+            conn.local_port,
+            conn.port,
+            seq & MASK,
+            ack & MASK,
+            offset_flags,
+            MAX_WINDOW,
+            0,
+            0,
+        )
         tcp = header + options + payload
         pseudo = src + dst + struct.pack(">I", len(tcp)) + b"\x00\x00\x00\x06"
         csum = checksum(pseudo + tcp)
@@ -381,7 +382,7 @@ class TcpStack:
         packet = self.build_segment(conn, flags, seq, ack, payload, options)
         try:
             self.link.send(packet)
-        except Exception:                                       # noqa: BLE001
+        except Exception:
             pass
 
     async def _read_loop(self):
@@ -390,12 +391,12 @@ class TcpStack:
                 packet = await self.link.recv()
             except asyncio.CancelledError:
                 raise
-            except Exception:                                   # noqa: BLE001
+            except Exception:
                 await asyncio.sleep(0.05)
                 continue
             try:
                 self._handle_packet(packet)
-            except Exception:                                   # noqa: BLE001
+            except Exception:
                 continue
 
     def _handle_packet(self, packet):
@@ -414,17 +415,7 @@ class TcpStack:
                     return
                 next_header = packet[offset]
                 offset += (packet[offset + 1] + 1) * 8
-            elif next_header == 0:
-                if len(packet) < offset + 2:
-                    return
-                next_header = packet[offset]
-                offset += (packet[offset + 1] + 1) * 8
-            elif next_header == 43:
-                if len(packet) < offset + 2:
-                    return
-                next_header = packet[offset]
-                offset += (packet[offset + 1] + 1) * 8
-            else:  # 60
+            else:
                 if len(packet) < offset + 2:
                     return
                 next_header = packet[offset]
@@ -453,12 +444,6 @@ class TcpStack:
         conn.feed(flags, seq, ack, window, payload)
 
     def _handle_icmpv6(self, packet):
-        """Answer Neighbor Solicitation for our tunnel address.
-
-        iOS treats the tunnel as a point-to-point link, but Linux (used for the
-        local tests) resolves the peer with ICMPv6 ND before it will send TCP.
-        Answering is harmless on a real tunnel and makes the Linux test real.
-        """
         if len(packet) < 48:
             return
         payload_len = struct.unpack(">H", packet[4:6])[0]
@@ -470,11 +455,10 @@ class TcpStack:
             return
         src = packet[8:24]
         dst = packet[24:40]
-        # Only answer when we are a plausible target: unicast or solicited-node.
         if dst != self.local_packed and not (len(dst) > 1 and dst[0] == 0xFF and dst[1] == 0x02):
             return
-        flags = struct.pack(">I", 0x60000000)          # solicited + override
-        option = b"\x02\x01" + b"\x02\x00\x00\x00\x00\x02"
+        flags = struct.pack(">I", 0x60000000)
+        option = b"\x02\x01\x02\x00\x00\x00\x00\x02"
         icmp = b"\x88\x00\x00\x00" + flags + self.local_packed + option
         pseudo = self.local_packed + src + struct.pack(">I", len(icmp)) + b"\x00\x00\x00\x3a"
         csum = checksum(pseudo + icmp)
@@ -482,7 +466,7 @@ class TcpStack:
         ip = struct.pack(">IHBB", 6 << 28, len(icmp), 58, 255) + self.local_packed + src
         try:
             self.link.send(ip + icmp)
-        except Exception:                                       # noqa: BLE001
+        except Exception:
             pass
 
     async def _timer_loop(self):

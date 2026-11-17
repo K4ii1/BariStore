@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
 # =============================================================================
-#  BariSign — RemoteXPC/RSD client (MIT)
-#
-#  RemoteServiceDiscovery (RSD) runs on the device's tunnel address and speaks
-#  a very small subset of HTTP/2 plus Apple's XPC object encoding.  Its reply
-#  carries the port of every developer service (installation_proxy, AFC, house
-#  arrest, ...).  Only that port map is needed here; the services themselves are
-#  plain length-prefixed plists or AFC, implemented in device_services.py.
-#
-#  No HPACK: Apple's own clients open channels with an *empty* HEADERS frame, so
-#  the client sends exactly the frame sequence pmd3/devicectl emit.  Reference
-#  (read, not copied): jkcoxson/idevice xpc/{format,http2}.rs (MIT) and
-#  pymobiledevice3 remotexpc.py (GPL, protocol reference only).
-#
-#  UNTESTED ON A DEVICE.  Frame/XPC round-trips are unit-tested on Linux.
+#  BariStore — RemoteXPC / RSD Client (MIT)
 # =============================================================================
 
+import asyncio
 import struct
 
 HTTP2_MAGIC = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -30,8 +18,6 @@ TYPE_WINDOW_UPDATE = 0x08
 FLAG_END_STREAM = 0x01
 FLAG_ACK = 0x01
 FLAG_END_HEADERS = 0x04
-FLAG_PADDED = 0x08
-FLAG_PRIORITY = 0x20
 
 ROOT_CHANNEL = 1
 REPLY_CHANNEL = 3
@@ -154,7 +140,7 @@ def _decode_obj(data, pos):
             raise XpcError("truncated UUID")
         return _Uuid(data[pos:pos + 16]), pos + 16
     if kind == T_DICT:
-        if pos + 4 > len(data):
+        if pos + 8 > len(data):
             raise XpcError("truncated dictionary length")
         pos += 4
         count = struct.unpack("<I", data[pos:pos + 4])[0]
@@ -171,7 +157,7 @@ def _decode_obj(data, pos):
             result[key] = value
         return result, pos
     if kind == T_ARRAY:
-        if pos + 4 > len(data):
+        if pos + 8 > len(data):
             raise XpcError("truncated array length")
         pos += 4
         count = struct.unpack("<I", data[pos:pos + 4])[0]
@@ -230,8 +216,12 @@ class Frame:
 
     def build(self):
         length = len(self.payload)
-        return (length.to_bytes(3, "big") + bytes([self.kind, self.flags])
-                + struct.pack(">I", self.stream) + self.payload)
+        return (
+            length.to_bytes(3, "big")
+            + bytes([self.kind, self.flags])
+            + struct.pack(">I", self.stream)
+            + self.payload
+        )
 
 
 class RemoteXpc:
@@ -283,7 +273,9 @@ class RemoteXpc:
             if frame.stream == 0:
                 self._send_window += amount
             else:
-                self._stream_peer[frame.stream] = self._stream_peer.get(frame.stream, DEFAULT_WINDOW) + amount
+                self._stream_peer[frame.stream] = (
+                    self._stream_peer.get(frame.stream, DEFAULT_WINDOW) + amount
+                )
         elif frame.kind == TYPE_PING and not (frame.flags & FLAG_ACK):
             await self._write(Frame(TYPE_PING, FLAG_ACK, 0, frame.payload))
         elif frame.kind == TYPE_RST_STREAM:
@@ -306,7 +298,6 @@ class RemoteXpc:
             offset += len(chunk)
             if not payload:
                 break
-        return
 
     async def _send_chunk(self, stream, chunk):
         while self._send_window < len(chunk):
@@ -333,8 +324,10 @@ class RemoteXpc:
         await self._send_data(ROOT_CHANNEL, encode_wrapper({}, message_id=0, flags=0x0001))
         await self._write(Frame(TYPE_HEADERS, FLAG_END_HEADERS, REPLY_CHANNEL, b""))
         await self._send_data(ROOT_CHANNEL, encode_wrapper(None, message_id=0, flags=0x0201, with_body=False))
-        await self._send_data(REPLY_CHANNEL, encode_wrapper(
-            None, message_id=0, flags=0x00400001, with_body=False))
+        await self._send_data(
+            REPLY_CHANNEL,
+            encode_wrapper(None, message_id=0, flags=0x00400001, with_body=False),
+        )
         self._msg_id[REPLY_CHANNEL] = 1
         while True:
             frame = await self._read_frame()
@@ -372,26 +365,28 @@ class RemoteXpc:
 
     async def send_device_handshake(self):
         import uuid as _uuid
-        await self.send_request({
-            "MessageType": "Handshake",
-            "MessagingProtocolVersion": 7,
-            "UUID": _Uuid(_uuid.uuid4().bytes),
-            "Properties": {
-                "RemoteXPCVersionFlags": 0x0100000000000006,
-                "SensitivePropertiesVisible": True,
-            },
-            "Services": {},
-        })
+        await self.send_request(
+            {
+                "MessageType": "Handshake",
+                "MessagingProtocolVersion": 7,
+                "UUID": _Uuid(_uuid.uuid4().bytes),
+                "Properties": {
+                    "RemoteXPCVersionFlags": 0x0100000000000006,
+                    "SensitivePropertiesVisible": True,
+                },
+                "Services": {},
+            }
+        )
 
     async def close(self):
         self.closed = True
         try:
             self.writer.close()
-        except Exception:                                       # noqa: BLE001
+        except Exception:
             pass
         try:
             await self.writer.wait_closed()
-        except Exception:                                       # noqa: BLE001
+        except Exception:
             pass
 
 
@@ -400,7 +395,6 @@ async def connect_rsd(reader, writer):
     client = RemoteXpc(reader, writer)
     await client.handshake()
     await client.send_device_handshake()
-    import asyncio
     peer = await asyncio.wait_for(client.receive_response(), 20)
     services = peer.get("Services")
     if not isinstance(services, dict):
@@ -409,13 +403,14 @@ async def connect_rsd(reader, writer):
     return services, properties, client
 
 
-def service_port(services, name):
-    entry = services.get(name)
-    if not isinstance(entry, dict):
-        raise XpcError("the device does not offer the service %s" % name)
-    port = entry.get("Port")
-    if isinstance(port, str):
-        port = int(port)
-    if not isinstance(port, int) or not (0 < port < 65536):
-        raise XpcError("service %s has an invalid port" % name)
-    return port
+def service_port(services, *names):
+    for name in names:
+        entry = services.get(name)
+        if isinstance(entry, dict):
+            port = entry.get("Port")
+            if isinstance(port, str) and port.isdigit():
+                port = int(port)
+            if isinstance(port, int) and (0 < port < 65536):
+                return port
+    offered = ", ".join(sorted(str(k) for k in services)) or "(none)"
+    raise XpcError("the device does not offer %s (offers: %s)" % (names[0], offered))

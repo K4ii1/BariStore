@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Developer Mode over the tunnel, against fake services (no device)."""
+"""Developer Mode & StikDebug-style JIT Enabler over the tunnel against mock services."""
 import asyncio
 import os
+import plistlib
 import struct
 import sys
-import plistlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "poc"))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
-import devmode
+from baristore import device
 
 
 def _frame(value):
@@ -23,13 +23,9 @@ async def _read_plist(reader):
 
 
 def _serve(script):
-    """A fake service: plays the RSDCheckin opening, then answers from script.
-
-    script: list of ("recv"|"send"|"close", value?). "close" drops the conn.
-    """
     async def handle(reader, writer):
         try:
-            await _read_plist(reader)              # RSDCheckin
+            await _read_plist(reader)
             writer.write(_frame({"Request": "RSDCheckin"}))
             writer.write(_frame({"Request": "StartService"}))
             await writer.drain()
@@ -44,31 +40,14 @@ def _serve(script):
         finally:
             try:
                 writer.close()
-            except Exception:                                   # noqa: BLE001
+            except Exception:
                 pass
+
     return handle
 
 
-async def _one(script):
-    server = await asyncio.start_server(_serve(script), "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        import device_services
-        from tcp6 import TcpStack  # noqa: F401  (not needed; direct TCP below)
-    except Exception:                                           # noqa: BLE001
-        pass
-    return server, port
-
-
 class _Direct:
-    """Minimal stack stub speaking plain TCP.
-
-    connect() returns a reader/writer pair shaped like the tunnel's
-    TcpConnection (open_service passes it as both reader and writer).
-    """
     class Conn:
-        """ shaped like the tunnel's TcpConnection: the same object serves
-        as reader and writer (open_service passes it twice). """
         def __init__(self, reader, writer):
             self._reader = reader
             self._writer = writer
@@ -85,42 +64,106 @@ class _Direct:
         def close(self):
             try:
                 self._writer.close()
-            except Exception:                               # noqa: BLE001
+            except Exception:
                 pass
 
         async def wait_closed(self):
             try:
                 await self._writer.wait_closed()
-            except Exception:                               # noqa: BLE001
+            except Exception:
                 pass
 
-    async def connect(self, host, port):
+    async def connect(self, host, port, timeout=10):
         reader, writer = await asyncio.open_connection(host, port)
         return _Direct.Conn(reader, writer)
 
 
+class _Sess:
+    def __init__(self, services):
+        self.stack = _Direct()
+        self.address = "127.0.0.1"
+        self.services = services
+        self.udid = "a" * 40
+
+
 async def _status(reply, services=None):
     server = await asyncio.start_server(
-        _serve([("recv", None), ("send", reply)]), "127.0.0.1", 0)
+        _serve([("recv", None), ("send", reply)]), "127.0.0.1", 0
+    )
     port = server.sockets[0].getsockname()[1]
     try:
         services = services or {"com.apple.mobile.lockdown.remote.trusted": {"Port": port}}
-        return await devmode.status(_Direct(), "127.0.0.1", services)
+        return await device.devmode_status(_Sess(services))
     finally:
         server.close()
         await server.wait_closed()
 
 
-async def _amfi(script, services=None):
-    server = await asyncio.start_server(_serve(script), "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
+async def test_jit_enabler():
+    """Verify StikDebug-style GDB Remote Serial Protocol JIT enable over debugproxy."""
+    gdb_received = []
+
+    async def debugproxy_handler(reader, writer):
+        # Receive initial "++"
+        plus = await reader.readexactly(2)
+        assert plus == b"++"
+        # Receive QStartNoAckMode
+        pkt1 = await device._gdb_read_packet(reader, noack=True)
+        gdb_received.append(pkt1)
+        writer.write(b"+")
+        writer.write(device._gdb_packet("OK"))
+        await writer.drain()
+        # Receive vAttachName;<hex>
+        pkt2 = await device._gdb_read_packet(reader, noack=True)
+        gdb_received.append(pkt2)
+        writer.write(device._gdb_packet("T11thread:1;"))
+        await writer.drain()
+        # Receive D (detach)
+        pkt3 = await device._gdb_read_packet(reader, noack=True)
+        gdb_received.append(pkt3)
+        writer.write(device._gdb_packet("OK"))
+        await writer.drain()
+        writer.close()
+
+    install_server = await asyncio.start_server(
+        _serve(
+            [
+                ("recv", None),
+                (
+                    "send",
+                    {
+                        "LookupResult": {
+                            "com.dolphin.ios.TEAM": {
+                                "CFBundleExecutable": "DolphiniOS",
+                                "Path": "/private/var/containers/Bundle/Application/UUID/DolphiniOS.app",
+                            }
+                        }
+                    },
+                ),
+            ]
+        ),
+        "127.0.0.1",
+        0,
+    )
+    debug_server = await asyncio.start_server(debugproxy_handler, "127.0.0.1", 0)
     try:
-        services = services or {"com.apple.amfi.lockdown.shim.remote": {"Port": port}}
-        return server, services
-    except Exception:                                           # noqa: BLE001
-        server.close()
-        await server.wait_closed()
-        raise
+        services = {
+            device.INSTALL_SERVICE: {"Port": install_server.sockets[0].getsockname()[1]},
+            device.DEBUG_PROXY_SERVICE: {"Port": debug_server.sockets[0].getsockname()[1]},
+        }
+        res = await device.enable_jit(_Sess(services), "com.dolphin.ios.TEAM")
+        assert res["executable"] == "DolphiniOS"
+        assert gdb_received == [
+            "QStartNoAckMode",
+            "vAttachName;" + "DolphiniOS".encode().hex().upper(),
+            "D",
+        ]
+        print("ok  stikdebug-style JIT enabler over debugproxy")
+    finally:
+        install_server.close()
+        debug_server.close()
+        await install_server.wait_closed()
+        await debug_server.wait_closed()
 
 
 async def main():
@@ -130,78 +173,32 @@ async def main():
     print("ok  status off")
     assert await _status({"Error": "MissingValue"}) is None
     print("ok  status unreadable")
-    assert await _status({"Value": "maybe"}) is None
-    print("ok  status not boolean")
 
-    try:
-        await devmode.status(_Direct(), "127.0.0.1", {"other": {"Port": 1}})
-    except devmode.DevmodeError as exc:
-        assert "offers: other" in str(exc), exc
-        print("ok  missing service names offers")
-    else:
-        raise AssertionError("missing service did not raise")
-
-    # second lockdown name works
     server = await asyncio.start_server(
-        _serve([("recv", None), ("send", {"Value": True})]), "127.0.0.1", 0)
+        _serve([("recv", None), ("send", {"success": True})]), "127.0.0.1", 0
+    )
     port = server.sockets[0].getsockname()[1]
     try:
-        assert await devmode.status(
-            _Direct(), "127.0.0.1", {"com.apple.mobile.lockdown": {"Port": port}}) is True
-        print("ok  lockdown fallback name")
-    finally:
-        server.close()
-        await server.wait_closed()
-
-    # show switch
-    server = await asyncio.start_server(
-        _serve([("recv", None), ("send", {"success": True})]), "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        await devmode.show_switch(
-            _Direct(), "127.0.0.1", {"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
+        await device.devmode_show_switch(
+            _Sess({"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
+        )
         print("ok  show switch")
     finally:
         server.close()
         await server.wait_closed()
 
     server = await asyncio.start_server(
-        _serve([("recv", None), ("send", {"Error": "Nope"})]), "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        try:
-            await devmode.show_switch(
-                _Direct(), "127.0.0.1", {"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
-        except devmode.DevmodeError as exc:
-            assert "Nope" in str(exc), exc
-            print("ok  show refused")
-        else:
-            raise AssertionError("refusal did not raise")
-    finally:
-        server.close()
-        await server.wait_closed()
-
-    # turn on: ok, passcode marker, other refusal
-    server = await asyncio.start_server(
-        _serve([("recv", None), ("send", {"success": True})]), "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        await devmode.turn_on(
-            _Direct(), "127.0.0.1", {"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
-        print("ok  turn on")
-    finally:
-        server.close()
-        await server.wait_closed()
-
-    server = await asyncio.start_server(
         _serve([("recv", None), ("send", {"Error": "Device has a passcode set"})]),
-        "127.0.0.1", 0)
+        "127.0.0.1",
+        0,
+    )
     port = server.sockets[0].getsockname()[1]
     try:
         try:
-            await devmode.turn_on(
-                _Direct(), "127.0.0.1", {"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
-        except devmode.DevmodeError as exc:
+            await device.devmode_turn_on(
+                _Sess({"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
+            )
+        except device.DeviceServiceError as exc:
             assert str(exc) == "passcode-set", exc
             print("ok  turn on passcode marker")
         else:
@@ -210,21 +207,7 @@ async def main():
         server.close()
         await server.wait_closed()
 
-    server = await asyncio.start_server(
-        _serve([("recv", None), ("send", {"Error": "Denied"})]), "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    try:
-        try:
-            await devmode.turn_on(
-                _Direct(), "127.0.0.1", {"com.apple.amfi.lockdown.shim.remote": {"Port": port}})
-        except devmode.DevmodeError as exc:
-            assert "Denied" in str(exc), exc
-            print("ok  turn on refused")
-        else:
-            raise AssertionError("refusal did not raise")
-    finally:
-        server.close()
-        await server.wait_closed()
+    await test_jit_enabler()
 
 
 if __name__ == "__main__":

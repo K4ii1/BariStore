@@ -35,17 +35,7 @@ grep -c 'BEGIN CERTIFICATE' cacert.pem
 
 ## How it is used
 
-`poc/poc_login.py` prefers a bundle already present on the device (`certifi`) and falls back to this
-shipped file:
-
-```python
-try:
-    import certifi
-    bundle = certifi.where()
-except ImportError:
-    bundle = "<this file>"
-signin.set_ca_bundle(bundle)     # load_verify_locations, verification stays ON
-```
+`baristore/apple.py` loads `certifi` (when available) and this shipped `cacert.pem` bundle into `SSL_CTX` via `load_verify_locations`, keeping TLS certificate verification strictly enabled.
 
 Apple's own root is **not** in this bundle, so `third_party/apple-roots/apple-roots.pem` is loaded
 *in addition* for `*.apple.com` only.

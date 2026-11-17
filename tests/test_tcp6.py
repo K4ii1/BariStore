@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Linux-only TUN link used by the TCP-stack test.
-
-Creates (with sudo) a point-to-point IPv6 interface, then exchanges raw IPv6
-packets with the kernel.  This lets the pure-Python TCP client talk to a real
-Linux TCP server, which is the strongest local proof available without a device.
-"""
+"""Linux-only TUN link used by the TCP-stack test."""
 import asyncio
 import fcntl
 import os
 import struct
 import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
+
+from baristore import tcp6
 
 TUNSETIFF = 0x400454CA
 IFF_TUN = 0x0001
@@ -20,15 +21,28 @@ STACK_IP = "fd00::2"
 
 
 def _sudo(*args, check=True):
-    result = subprocess.run(["sudo", "-n"] + list(args),
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run(
+        ["sudo", "-n"] + list(args),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     if check and result.returncode:
         raise RuntimeError("sudo ip %s failed" % " ".join(args))
 
 
 def setup():
     _sudo("ip", "link", "del", DEVICE, check=False)
-    _sudo("ip", "tuntap", "add", "dev", DEVICE, "mode", "tun", "user", os.environ.get("USER", "codespace"))
+    _sudo(
+        "ip",
+        "tuntap",
+        "add",
+        "dev",
+        DEVICE,
+        "mode",
+        "tun",
+        "user",
+        os.environ.get("USER", "codespace"),
+    )
     fd = open_tun()
     _sudo("ip", "-6", "addr", "add", KERNEL_IP + "/128", "dev", DEVICE)
     _sudo("ip", "link", "set", DEVICE, "up")
@@ -58,9 +72,7 @@ class TunLink:
         while True:
             try:
                 packet = os.read(self.fd, 65536)
-            except BlockingIOError:
-                return
-            except OSError:
+            except (BlockingIOError, OSError):
                 return
             if not packet:
                 return
@@ -94,10 +106,6 @@ async def _check():
         writer.close()
 
     server = await asyncio.start_server(echo, KERNEL_IP, 9000)
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "poc"))
-    import tcp6
-
     stack = tcp6.TcpStack(link, STACK_IP)
     await stack.start()
     conn = await stack.connect(KERNEL_IP, 9000, timeout=10)

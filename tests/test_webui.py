@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
-"""Web UI server halves (no device, no flow run)."""
+"""Unit tests for the BariStore Web UI server and REST API endpoints."""
+import base64
 import json
 import os
+import plistlib
 import sys
+import tempfile
 import threading
-import time
 import urllib.request
+import zipfile
+from http.server import ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "poc"))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
-import webui
-from http.server import ThreadingHTTPServer
+from baristore import VERSION, storage, webui
 
 
 def _serve():
     server = ThreadingHTTPServer(("127.0.0.1", 0), webui._Handler)
     server.token = "t" * 32
     server.port = server.server_address[1]
+    with open(os.path.join(HERE, "..", "baristore.svg"), "rb") as handle:
+        server.icon = handle.read()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
@@ -30,249 +35,131 @@ def _get(server, path, host=None):
     try:
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.status, response.read()
-    except Exception as exc:                                    # noqa: BLE001
-        status = getattr(exc, "code", None)
-        return status, b""
+    except Exception as exc:
+        return getattr(exc, "code", None), b""
+
+
+def _post(server, path, body_dict):
+    data = json.dumps(body_dict).encode("utf-8")
+    request = urllib.request.Request(
+        "http://127.0.0.1:%d%s" % (server.port, path),
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Host": "127.0.0.1:%d" % server.port,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        try:
+            err_body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            err_body = {}
+        return code, err_body
 
 
 def main():
+    tmp_state = tempfile.mkdtemp(prefix="baristore-webui-test-")
+    storage.STATE_DIR = tmp_state
+    storage.STATE_FILE = os.path.join(tmp_state, "baristore.json")
+    storage.INSTALLED_FILE = os.path.join(tmp_state, "installed_apps.json")
+    storage.SOURCES_CACHE_FILE = os.path.join(tmp_state, "sources_cache.json")
+    storage.RECORD_PATH = os.path.join(tmp_state, "PairingFile_RemoteRP.plist")
+    storage.ALT_RECORD_PLIST = os.path.join(tmp_state, "ALTPairingFile.plist")
+    storage.ALT_RECORD_PAIRING = os.path.join(tmp_state, "ALTPairingFile.mobiledevicepairing")
+    storage.UPLOAD_DIR = os.path.join(tmp_state, "uploads")
+
     token = "t" * 32
     server = _serve()
     try:
         status, body = _get(server, "/%s/" % token)
-        assert status == 200 and b"BariSign" in body, (status, body[:60])
-        print("ok  page served")
+        assert status == 200 and b"BariStore" in body, status
+        assert b"Featured" in body and b"My Apps" in body and b"Options" in body
+        print("ok  store UI page served")
 
         status, _ = _get(server, "/wrongtoken/")
         assert status == 404, status
-        print("ok  wrong token 404")
+        print("ok  wrong token -> 404")
 
-        status, _ = _get(server, "/%s/api/state" % token, host="evil.example:80")
+        status, _ = _get(server, "/%s/api/status" % token, host="evil.example:80")
         assert status == 404, status
-        print("ok  host check")
+        print("ok  host header guard -> 404")
 
-        status, body = _get(server, "/%s/api/state" % token)
-        assert status == 200, status
-        snapshot = json.loads(body.decode())
-        assert set(snapshot) >= {"steps", "question", "pin", "log", "done"}, snapshot.keys()
-        print("ok  state snapshot")
+        status, icon_bytes = _get(server, "/%s/icon.svg" % token)
+        assert status == 200 and icon_bytes.lstrip().startswith(b"<svg")
+        print("ok  baristore.svg served")
 
-        # log sanitizing: ANSI stripped, PIN masked in log but captured
-        webui._WebLog().write("\r\x1b[2K  pairing code:  483920\n")
-        with webui._LOCK:
-            assert webui._STATE["pin"] == "483920", webui._STATE["pin"]
-            assert webui._STATE["log"][-1] == "pairing code:  ••••••", webui._STATE["log"][-1]
-        print("ok  pin capture + masking")
+        status, boot_raw = _get(server, "/%s/api/bootstrap" % token)
+        assert status == 200
+        boot = json.loads(boot_raw.decode("utf-8"))
+        assert boot["ok"] is True
+        assert boot["version"] == VERSION
+        assert len(boot["catalog"]["store_variants"]) >= 7
+        print("ok  /api/bootstrap returns store catalog & state")
+
+        # Test pairing file import & export
+        rec = {
+            "public_key": b"\x11" * 32,
+            "private_key": b"\x22" * 32,
+            "identifier": "TEST-HOST-ID",
+            "alt_irk": b"\x33" * 16,
+            "peer_udid": "a" * 40,
+        }
+        rec_b64 = base64.b64encode(plistlib.dumps(rec, fmt=plistlib.FMT_XML)).decode()
+        status, imp_res = _post(
+            server, "/%s/api/pair/import" % token, {"data_base64": rec_b64}
+        )
+        assert status == 200 and imp_res["ok"] is True
+        status, exp_bytes = _get(server, "/%s/api/pair/export" % token)
+        assert status == 200
+        exp_plist = plistlib.loads(exp_bytes)
+        assert exp_plist["identifier"] == "TEST-HOST-ID"
+        print("ok  /api/pair/import and /api/pair/export round-trip")
+
+        # Test custom IPA upload & inspection
+        ipa_buf = tempfile.NamedTemporaryFile(suffix=".ipa", delete=False)
+        ipa_buf.close()
+        with zipfile.ZipFile(ipa_buf.name, "w") as zf:
+            zf.writestr(
+                "Payload/TestApp.app/Info.plist",
+                plistlib.dumps(
+                    {
+                        "CFBundleIdentifier": "com.test.customapp",
+                        "CFBundleDisplayName": "Custom Test App",
+                        "CFBundleShortVersionString": "1.2.3",
+                    },
+                    fmt=plistlib.FMT_XML,
+                ),
+            )
+        raw_ipa = open(ipa_buf.name, "rb").read()
+        os.unlink(ipa_buf.name)
+        status, up_res = _post(
+            server,
+            "/%s/api/ipa/upload" % token,
+            {
+                "filename": "TestApp.ipa",
+                "data_base64": base64.b64encode(raw_ipa).decode(),
+            },
+        )
+        assert status == 200 and up_res["ok"] is True
+        assert up_res["ipa"]["bundle_id"] == "com.test.customapp"
+        assert up_res["ipa"]["name"] == "Custom Test App"
+        print("ok  /api/ipa/upload inspects custom IPA")
+
+        # Test settings update & onboarding completion
+        status, set_res = _post(
+            server, "/%s/api/settings" % token, {"theme": "dark"}
+        )
+        assert status == 200 and set_res["state"]["theme"] == "dark"
+        status, ob_res = _post(server, "/%s/api/onboarding/complete" % token, {})
+        assert status == 200 and ob_res["ok"] is True
+        print("ok  /api/settings and /api/onboarding/complete")
     finally:
         server.shutdown()
-
-    # question round-trip without a flow
-    with webui._LOCK:
-        webui._STATE["question"] = {"id": 7, "kind": "bool", "label": "Sure?",
-                                    "options": []}
-        webui._QUESTION["event"] = threading.Event()
-    answered = []
-    thread = threading.Thread(
-        target=lambda: answered.append(webui._ask_web("ignored", "text")))
-    thread.start()
-    time.sleep(0.2)
-    with webui._LOCK:
-        qid = webui._STATE["question"]["id"]
-    data = json.dumps({"id": qid, "value": "y"}).encode()
-    request = urllib.request.Request(
-        "http://127.0.0.1:%d/%s/api/answer" % (server.port, "t" * 32), data=data,
-        headers={"Content-Type": "application/json", "Host": "127.0.0.1:%d" % server.port})
-    server2 = _serve()
-    try:
-        with webui._LOCK:
-            webui._STATE["question"] = {"id": qid, "kind": "bool", "label": "Sure?",
-                                        "options": []}
-        # answer through the live server is covered by the handler path; here
-        # just check the waiter resolves when the event is set directly
-        webui._QUESTION["answer"] = "y"
-        webui._QUESTION["event"].set()
-        thread.join(timeout=5)
-        assert answered == ["y"], answered
-        print("ok  question wait resolves")
-    finally:
-        server2.shutdown()
-
-
-def _post(server, path, data, ctype):
-    request = urllib.request.Request(
-        "http://127.0.0.1:%d%s" % (server.port, path), data=data,
-        headers={"Content-Type": ctype, "Host": "127.0.0.1:%d" % server.port})
-    try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            return response.status, response.read()
-    except Exception as exc:                                    # noqa: BLE001
-        return getattr(exc, "code", None), b""
-
-
-def _forms():
-    import urllib.parse
-    server = _serve()
-    try:
-        with webui._LOCK:
-            webui._STATE["question"] = {"id": 11, "kind": "text",
-                                        "label": "Name?", "options": []}
-            webui._QUESTION["event"] = threading.Event()
-        status, _ = _post(server, "/%s/api/answer" % ("t" * 32),
-                           urllib.parse.urlencode({"id": "11", "value": "ada"}).encode(),
-                           "application/x-www-form-urlencoded")
-        assert status in (200, 303), status
-        assert webui._QUESTION["answer"] == "ada", webui._QUESTION["answer"]
-        print("ok  form answer posts")
-        with webui._LOCK:
-            webui._STATE["question"] = None
-        status, _ = _post(server, "/%s/api/audio" % ("t" * 32), b"{}",
-                           "application/json")
-        assert status == 200, status
-        print("ok  audio ping")
-        status, body = _get(server, "/%s/" % ("t" * 32))
-        assert status == 200 and b"<form" in body, (status, body[:60])
-        print("ok  page renders forms")
-    finally:
-        server.shutdown()
-
-
-def _icon():
-    server = _serve()
-    try:
-        with open(os.path.join(HERE, "..", "barisign.svg"), "rb") as handle:
-            server.icon = handle.read()
-    except OSError:
-        server.icon = b""
-        status, body = _get(server, "/%s/icon.svg" % ("t" * 32))
-        if os.path.isfile(os.path.join(HERE, "..", "barisign.svg")):
-            assert status == 200 and body.lstrip().startswith(b"<svg"), (status, body[:20])
-            print("ok  icon served")
-        else:
-            assert status == 404, status
-            print("ok  icon missing -> 404")
-    finally:
-        server.shutdown()
-
-
-def _panel_rev():
-    server = _serve()
-    try:
-        with webui._LOCK:
-            webui._STATE["started"] = True
-            webui._STATE["steps"] = [{"id": "x", "label": "X", "state": "active"}]
-            webui._STATE["question"] = {"id": 21, "kind": "choice",
-                                        "label": "Pick?", "options": ["a", "b"]}
-            webui._QUESTION["event"] = threading.Event()
-        status, body = _get(server, "/%s/api/panel" % ("t" * 32))
-        assert status == 200, status
-        panel = json.loads(body.decode())
-        assert panel["rev"] >= 0 and "Pick?" in panel["title"] and ">a<" in panel["body"], panel
-        print("ok  panel rev")
-        status, body = _get(server, "/%s/" % ("t" * 32))
-        assert status == 200 and b"Pick?" in body and b"step 1 of 1" not in body, status
-        print("ok  full render with question")
-        with webui._LOCK:
-            webui._STATE["question"] = None
-            webui._STATE["pin"] = "123456"
-        status, body = _get(server, "/%s/" % ("t" * 32))
-        assert status == 200 and b"123456" in body, status
-        print("ok  full render with pin")
-        with webui._LOCK:
-            webui._STATE["pin"] = None
-            webui._STATE["done"] = {"ok": True, "title": "Done", "lines": ["hi"]}
-        status, body = _get(server, "/%s/" % ("t" * 32))
-        assert status == 200 and b"Done" in body and b"stopbtn" not in body, status
-        print("ok  full render done")
-        with webui._LOCK:
-            webui._STATE["done"] = None
-            webui._STATE["steps"] = []
-            webui._STATE["started"] = False
-    finally:
-        server.shutdown()
-
-
-def _back_and_cancel():
-    import threading, time as _t
-    server = _serve()
-    try:
-        # back with nothing pending -> false
-        status, body = _post(server, "/%s/api/back" % ("t" * 32),
-                             b"{}", "application/json")
-        assert status == 200 and json.loads(body) == {"ok": False}, (status, body)
-        print("ok  back with no question")
-        # question + history -> true, and replay auto-answers the rest
-        with webui._LOCK:
-            webui._STATE["question"] = {"id": 31, "kind": "text",
-                                        "label": "Name?", "options": []}
-            webui._QUESTION["event"] = threading.Event()
-            webui._HISTORY.append({"label": "Earlier?", "kind": "text", "answer": "x"})
-        status, body = _post(server, "/%s/api/back" % ("t" * 32),
-                             b"{}", "application/json")
-        assert status == 200 and json.loads(body) == {"ok": True}, (status, body)
-        print("ok  back arms replay")
-        with webui._LOCK:
-            assert webui._REPLAY["active"] is True
-            webui._REPLAY["active"] = False
-            webui._QUESTION["event"] = None
-            webui._STATE["question"] = None
-            webui._HISTORY.clear()
-    finally:
-        server.shutdown()
-
-
-def _settings_and_export():
-    server = _serve()
-    try:
-        status, body = _get(server, "/%s/" % ("t" * 32))
-        assert status == 200, status
-        text = body.decode()
-        for needle in ("Settings", "Forget saved state", "Export pairing file",
-                       "Check for updates"):
-            assert needle in text, needle
-        print("ok  settings rendered")
-        home_docs = os.path.join(os.path.expanduser("~"), "Documents")
-        copied = os.path.join(home_docs, "BariSign-Pairing.plist")
-        had_copy = os.path.isfile(copied)
-        status, body = _post(server, "/%s/api/export" % ("t" * 32), b"{}",
-                              "application/json")
-        assert status == 200 and json.loads(body) == {"ok": True}, (status, body)
-        if os.path.isfile(copied) and not had_copy:
-            os.remove(copied)
-        print("ok  export endpoint")
-    finally:
-        server.shutdown()
-
-
-def _cancel():
-    import asyncio as _a
-    import threading
-    started = threading.Event()
-    async def _waiter():
-        started.set()
-        await _a.sleep(30)
-        return "late"
-    holder = {}
-    def _target():
-        try:
-            holder["r"] = webui.run_coro(_waiter())
-        except Exception as exc:                              # noqa: BLE001
-            holder["e"] = type(exc).__name__
-    thread = threading.Thread(target=_target, daemon=True)
-    thread.start()
-    assert started.wait(timeout=5), "loopback coro never started"
-    import time as _t
-    _t.sleep(0.5)
-    webui._stop_async()
-    thread.join(timeout=10)
-    assert holder.get("e") == "FlowStop", holder
-    print("ok  stop cancels in-flight wait")
 
 
 if __name__ == "__main__":
-    _forms()
-    _icon()
-    _panel_rev()
-    _back_and_cancel()
-    _settings_and_export()
-    _cancel()
     main()

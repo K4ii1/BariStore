@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
-"""RSD + AFC + installation_proxy over the pure TCP stack, against mock
-services running on the Linux kernel through a TUN link.
-
-This is the closest local proof of the device path: raw IPv6, our TCP stack,
-our RemoteXPC handshake and the real service framing, with 300 KiB uploaded.
-"""
+"""RSD + AFC + installation_proxy over the pure TCP stack through Linux TUN."""
 import asyncio
+import datetime
 import os
 import plistlib
 import struct
 import sys
 import tempfile
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "..", "poc"))
+sys.path.insert(0, os.path.join(HERE, ".."))
 
-import remote_xpc
-import tcp6
 import test_tcp6 as tun
-import device_services
+from baristore import device, remote_xpc, tcp6
 
 
 async def read_plist(reader):
@@ -33,14 +28,20 @@ async def send_plist(writer, value):
     await writer.drain()
 
 
+AFC_PORT = [0]
+INSTALL_PORT = [0]
+UPLOADED = []
+COMMAND = []
+
+
 async def rsd_handler(reader, writer):
     assert await reader.readexactly(len(remote_xpc.HTTP2_MAGIC)) == remote_xpc.HTTP2_MAGIC
     for _ in range(7):
         header = await reader.readexactly(9)
         length = int.from_bytes(header[:3], "big")
-        await reader.readexactly(length) if length else b""
+        if length:
+            await reader.readexactly(length)
     writer.write(remote_xpc.Frame(remote_xpc.TYPE_SETTINGS, 0, 0, b"").build())
-    # the device handshake request
     header = await reader.readexactly(9)
     length = int.from_bytes(header[:3], "big")
     await reader.readexactly(length)
@@ -49,19 +50,15 @@ async def rsd_handler(reader, writer):
         "com.apple.mobile.installation_proxy.shim.remote": {"Port": str(INSTALL_PORT[0])},
         "com.apple.mobile.house_arrest.shim.remote": {"Port": str(AFC_PORT[0])},
     }
-    peer = {"Services": services,
-            "Properties": {"UniqueDeviceID": "d" * 40, "ProductType": "iPhone17,1"}}
+    peer = {
+        "Services": services,
+        "Properties": {"UniqueDeviceID": "d" * 40, "ProductType": "iPhone17,1"},
+    }
     payload = remote_xpc.encode_wrapper(peer, message_id=1, flags=0x0001)
     writer.write(remote_xpc.Frame(remote_xpc.TYPE_DATA, 0, 1, payload).build())
     await writer.drain()
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
     writer.close()
-
-
-AFC_PORT = [0]
-INSTALL_PORT = [0]
-UPLOADED = []
-COMMAND = []
 
 
 async def afc_handler(reader, writer):
@@ -77,19 +74,22 @@ async def afc_handler(reader, writer):
         entire = struct.unpack("<Q", header[8:16])[0]
         op = struct.unpack("<Q", header[32:40])[0]
         body = await reader.readexactly(entire - 40) if entire > 40 else b""
-        if op == device_services.OP_FILE_OPEN:
+        if op == device.OP_FILE_OPEN:
             body_out = struct.pack("<Q", 5)
-        elif op == device_services.OP_WRITE:
+        elif op == device.OP_WRITE:
             data += body[8:]
             body_out = b""
         else:
             body_out = b""
-        writer.write(device_services.AFC_MAGIC
-                     + struct.pack("<QQQQ", 40 + len(body_out), 40 + len(body_out), 0,
-                                   device_services.OP_DATA)
-                     + body_out)
+        writer.write(
+            device.AFC_MAGIC
+            + struct.pack(
+                "<QQQQ", 40 + len(body_out), 40 + len(body_out), 0, device.OP_DATA
+            )
+            + body_out
+        )
         await writer.drain()
-        if op == device_services.OP_FILE_CLOSE:
+        if op == device.OP_FILE_CLOSE:
             UPLOADED.append(bytes(data))
             data = bytearray()
 
@@ -103,6 +103,14 @@ async def install_handler(reader, writer):
     await send_plist(writer, {"Status": "CreatingStagingDirectory", "PercentComplete": 10})
     await send_plist(writer, {"Status": "Installing", "PercentComplete": 90})
     await send_plist(writer, {"Status": "Complete"})
+
+
+class _Sess:
+    def __init__(self, stack, address, services, udid):
+        self.stack = stack
+        self.address = address
+        self.services = services
+        self.udid = udid
 
 
 async def main():
@@ -121,27 +129,39 @@ async def main():
     connection = await stack.connect(tun.KERNEL_IP, rsd_port)
     services, properties, client = await remote_xpc.connect_rsd(connection, connection)
     assert properties["UniqueDeviceID"] == "d" * 40
-    assert remote_xpc.service_port(services, device_services.AFC_SERVICE) == AFC_PORT[0]
+    assert remote_xpc.service_port(services, device.AFC_SERVICE) == AFC_PORT[0]
 
-    payload = bytes(range(256)) * 1172          # 300032 bytes
+    now = datetime.datetime.now(datetime.timezone.utc)
+    profile_blob = plistlib.dumps(
+        {
+            "ExpirationDate": now + datetime.timedelta(days=7),
+            "ProvisionedDevices": ["d" * 40],
+        },
+        fmt=plistlib.FMT_XML,
+    )
     with tempfile.NamedTemporaryFile(suffix=".ipa", delete=False) as handle:
-        handle.write(payload)
         path = handle.name
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(
+            "Payload/App.app/Info.plist",
+            plistlib.dumps({"CFBundleIdentifier": "com.example.App"}, fmt=plistlib.FMT_XML),
+        )
+        zf.writestr("Payload/App.app/embedded.mobileprovision", profile_blob)
+        zf.writestr("Payload/App.app/data.bin", bytes(range(256)) * 1100)
+
+    expected_bytes = open(path, "rb").read()
     try:
-        await device_services.install_ipa(
-            stack, tun.KERNEL_IP,
-            remote_xpc.service_port(services, device_services.INSTALL_SERVICE),
-            remote_xpc.service_port(services, device_services.AFC_SERVICE),
-            path, log=lambda text: None)
+        sess = _Sess(stack, tun.KERNEL_IP, services, "d" * 40)
+        await device.install_ipa(sess, path, auto_inject_pairing=False)
     finally:
         os.unlink(path)
-    assert UPLOADED and UPLOADED[0] == payload, "uploaded bytes differ"
+    assert UPLOADED and UPLOADED[0] == expected_bytes, "uploaded bytes differ"
     assert COMMAND[0]["ClientOptions"] == {"PackageType": "Developer"}
     await client.close()
     await stack.close()
-    for server in (rsd, afc, install):
-        server.close()
-    await asyncio.gather(*(server.wait_closed() for server in (rsd, afc, install)))
+    for srv in (rsd, afc, install):
+        srv.close()
+    await asyncio.gather(*(srv.wait_closed() for srv in (rsd, afc, install)))
     os.close(fd)
 
 

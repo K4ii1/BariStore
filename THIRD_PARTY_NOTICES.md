@@ -1,105 +1,24 @@
-# Third-party notices
+# Third-Party Notices
 
-BariSign reuses open-source code. This file records what, where, and under which licence.
+BariStore is 100% **MIT Licensed** (`LICENSE`). All protocol layers (RPPairing, TLS 1.2 PSK, userspace IPv6/TCP, RemoteXPC/RSD, AFC, `house_arrest`, `installation_proxy`, `lockdownd`/`amfi`, `debug_proxy`, Mach-O/CMS code signing, Anisette v1/v3, Apple GrandSlam SRP-6a, and Developer Portal client) are clean-room MIT implementations built on Python's standard library and a-Shell's built-in `cryptography` package.
 
-## Code copied into this repository
+## Public Trust Anchors & Certificates
 
-### SideInstaller by FrizzleM — `third_party/sideinstaller/`
-
-- Upstream: https://github.com/FrizzleM/SideInstaller — file `ish/sideinstaller.py`
-- Copyright (c) 2026 FrizzleM
-- **Licence: custom, NOT MIT.** Full text: `third_party/sideinstaller/LICENSE.md`.
-- Required credit (§4): *SideInstaller by FrizzleM*, linked above.
-- Files: `third_party/sideinstaller/signin.py` (the ported sign-in stack),
-  `third_party/sideinstaller/portal.py` (the ported developer portal) and
-  `third_party/sideinstaller/README.md` (what was taken and what we changed).
-
-**Consequence for this repository:** it contains non-commercial-licensed parts, so **the repository
-as a whole may not be used commercially**, and those files cannot be relicensed MIT.
-
-### Key conditions we are relying on (quoted from that licence)
-
-> **§2 Grant of Rights** … permission is hereby granted … to: Use, run, and study the Software for
-> personal, educational, and non-commercial purposes; Copy and modify the Software; Incorporate the
-> Software, in whole or in part, into their own projects; Distribute the Software or derivative
-> works **in source code form**, provided this license and the copyright notice above are included
-> and the changes made are clearly indicated.
-
-> **§3 Restrictions** … prohibited without prior written authorization … **1. Commercial Use /
-> Monetization.** Any Commercial Use of the Software, of derivative works, or of Official Releases.
-> **2. Redistribution of Official Releases.** Rehosting, mirroring, repackaging, re-signing, or
-> otherwise redistributing Official Releases (including IPA files) …
-
-> **§4 Attribution** Projects that incorporate the Software must credit "SideInstaller by FrizzleM"
-> and link to the official repository in their documentation or about section.
-
-How BariSign complies: the code sits only in `third_party/sideinstaller/`, the licence text and the
-copyright notice travel with it, the changes we made are listed both in that folder's README and in
-the file header, we credit "SideInstaller by FrizzleM" with a link, and **we redistribute no
-SideInstaller binaries or IPAs** (we don't host any IPAs at all).
-
-## Certificates
-
-### Mozilla CA bundle — `third_party/ca-bundle/cacert.pem`
-
-- Source: `https://curl.se/ca/cacert.pem` (curl project's build of Mozilla's CA list)
-- Licence: public domain (stated in the file header)
-- SHA-256: `a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505`
-- Used for: all hosts, because a-Shell's Python ships an empty trust store.
+### Mozilla CA Bundle — `third_party/ca-bundle/cacert.pem`
+- Source: `https://curl.se/ca/cacert.pem` (Mozilla CA certificate store distributed by the curl project)
+- License: MPL 2.0 / Public Domain
+- Purpose: Provides TLS root certificates because a-Shell's Python environment ships with an empty default OpenSSL trust store.
 
 ### Apple Root CA — `third_party/apple-roots/`
-
-- Source: `https://www.apple.com/appleca/AppleIncRootCertificate.cer` (Apple PKI page)
+- Source: `https://www.apple.com/appleca/AppleIncRootCertificate.cer`
 - SHA-256: `B0:B1:73:0E:CB:C7:FF:45:05:14:2C:49:F1:29:5E:6E:DA:6B:CA:ED:7E:2C:68:C5:BE:91:B5:A1:10:01:F0:24`
-- Apple publishes this fingerprint at <https://support.apple.com/en-us/121672>; it was verified to
-  match. Public trust anchor, redistributable. Used only for `*.apple.com` hosts.
+- Purpose: Public Apple trust anchor used exclusively for verifying `*.apple.com` TLS connections.
 
-## Referenced projects (not copied)
+## Protocol References (No Code Copied)
 
-Used for protocol research, verification, or as runtime dependencies. Their releases are consumed
-as-is; no code is copied from them here.
-
-| Project | Licence | Use |
+| Project | License | Role |
 |---|---|---|
-| SideStore (`SideStore/SideStore`) | AGPL-3.0 | released IPAs for variants 1–2 |
-| LiveContainer (`LiveContainer/LiveContainer`) | AGPL-3.0 | released IPA for variants 3–4 |
-| isideload (`nab138/isideload`) | MIT | protocol reference; **preferred source** for reimplementation |
-| idevice (`jkcoxson/idevice`) | MIT | protocol reference; **preferred source** for reimplementation |
-| zsign (`zhlynn/zsign`) | MIT | reference for the Apple CMS layout |
-| pymobiledevice3 (`doronz88/pymobiledevice3`) | GPL-3.0 | protocol reference only for the pure engine; **not installed at run time**, not vendored and not redistributed. No code is copied into this repository. |
-| a-Shell (`holzschu/a-Shell`) | BSD-3-Clause | the on-device runtime (user installs it) |
-| siboot (`FrizzleM/siboot`) | MIT | protocol reference for the devmode toggle + page model; no code copied |
-| LocalDevVPN / StosVPN | see upstream | runtime dependency (user installs it) |
-| anisette servers | see upstream | network service at runtime |
-
-## The pure pairing engine
-
-`poc/tls_psk.py`, `tcp6.py`, `remote_xpc.py`, `device_services.py`, `pairing.py`, `rpp_tunnel.py` and
-`mdns.py` are original MIT implementations written from the **MIT** `jkcoxson/idevice` protocol
-sources (`remote_pairing/`, `xpc/`, `services/`) and Apple's publicly documented wire formats. They
-contain no code from `pymobiledevice3` (GPL-3.0) or `third_party/sideinstaller/` (non-commercial).
-
-## The Developer Mode + web UI code (new, MIT)
-
-`poc/devmode.py` (lockdownd GetValue + AMFI `{"action": N}` over the tunnel) and `poc/webui.py`
-(loopback page, per-run token, Host check) are original MIT implementations written from the
-**MIT** `jkcoxson/idevice` sources (`services/lockdown.rs`, `services/amfi.rs`) and the **MIT**
-`FrizzleM/siboot` flow documentation (`minis/src/devmode.rs`, `minis/src/web.rs`, `rootshell/`
-keepalive notes). Protocol facts only (service names, action numbers, the token-path page model);
-no copied code.
-
-## Why the sign-in + portal still uses the vendored copy
-
-`third_party/sideinstaller/signin.py` (Apple GSA/SRP/anisette/GrandSlam) and `portal.py`
-(developerservices2: teams, devices, certificates, App IDs, groups, profiles) are still the
-ported SideInstaller files. A clean-room rewrite from MIT sources (isideload/idevice) is the
-same multi-thousand-line job with live-Apple regression risk on every step, and the account
-flow is exactly what must not break while the device gates are being tested. So the rewrite
-stays future work: the copy stays isolated under its own licence, is never imported into MIT
-files, and shrinks only by deliberate, tested replacement — not by bulk.
-
-## Licence policy for future work
-
-Where an **MIT** project (`isideload`, `idevice`) provides the same logic as the copied SideInstaller
-code, reimplement from the MIT source and delete the copied version, so
-`third_party/sideinstaller/` shrinks over time.
+| `jkcoxson/idevice` | MIT | Protocol reference for RPPairing, TLS-PSK, CDTunnel, RSD, AFC, `installation_proxy`, `amfi`, and `debug_proxy` |
+| `nab138/isideload` | MIT | Protocol reference for Apple GSA SRP-6a, Anisette v3, Developer Portal, and App Groups |
+| `zhlynn/zsign` | MIT | Format reference for Apple Mach-O CodeDirectory and CMS attributes |
+| `FrizzleM/siboot` | MIT | Protocol reference for AMFI Developer Mode actions (`0` / `1`) |

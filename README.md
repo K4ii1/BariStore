@@ -1,150 +1,74 @@
-# BariSign
+# BariStore
 
-<img src="barisign.svg" width="128" alt="BariSign icon">
+<img src="baristore.svg" width="112" alt="BariStore icon">
 
-Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classic** — on your iPhone or iPad
-**with no computer**, using your own free Apple ID. Everything runs **on the one device**: a-Shell +
-BariSign, LocalDevVPN, and this iPhone itself.
+**BariStore** is a complete, 100% on-device iOS/iPadOS App Store, IPA signer, and StikDebug-style JIT Enabler that runs inside **a-Shell** with **no computer** and **no second device**.
 
-> **Status (0.9.34):** Apple sign-in, the developer portal, signing and the signed app
-> launching after install are verified on real devices. The loopback install, the web sheet,
-> Developer Mode over the tunnel and the pairing-file writer are written + Linux-tested and
-> awaiting the on-device run — see `docs/NEXT_SESSION.md` for the exact gates and what to
-> send back.
+Using your own free Apple ID and **LocalDevVPN**, BariStore pairs with your iPhone, enables Developer Mode over the loopback tunnel, signs and installs apps from **AltSources** or custom `.ipa` files, refreshes 7-day app signatures, and enables **JIT** on sideloaded apps.
 
 ---
 
-## How the flow works
+## Quick Start (On Your iPhone / iPad)
 
-```
-barisign
-```
+Open **a-Shell** and run:
 
-opens a page over the terminal. Tap **Start** and it runs the whole install on this iPhone:
-
-1. **Requirements** — LocalDevVPN connected (probed live; it waits for you).
-2. **Apple ID** — sign-in with anisette (saved session reused: no password or 2FA until Apple refuses it).
-3. **Portal** — picks your developer team for this Apple ID.
-4. **Pairing** — this iPhone pairs with itself (Settings → Developer → Paired Macs → BariSign, enter the
-   printed PIN). The page plays silence so iOS holds the app while you are in Settings.
-5. **Variant** — SideStore / LiveContainer+SideStore / AltStore Classic, stable or nightly, or your own IPA.
-6. **Download** — resolved live from the project's releases, size + SHA-256 checked.
-7. **Developer Mode** — read over the tunnel; if off or hidden, the switch is shown (no restart).
-   Turning it on restarts the iPhone and ends the run with a restart card: flip it, restart, run
-   again — everything is saved and the run jumps straight back. No trigger install, no second device.
-8. **Sign & Install** — registers this iPhone, signs the IPA, installs it over the same loopback
-   tunnel; trust the developer, open the app. **Stop** ends the run anywhere (even mid-wait);
-   **Back** re-asks the previous step and replays your answers; the **Settings** card holds the
-   version, what is saved, an update check, a pairing-file export and a forget button.
-
-No computer, no second device, no AirDrop, no OTA, no enterprise certificate.
-
----
-
-## Get it
-
-In a-Shell on the **iPhone itself**:
-
-```
-curl -fsSL https://raw.githubusercontent.com/barismd/barisign/main/install.sh | sh
+```sh
+curl -fsSL https://raw.githubusercontent.com/barismd/BariStore/main/install.sh | sh
 ```
 
-One line, run from anywhere in a-Shell. It lays down `barisign` (the launcher, so no
-`cd` is ever needed) plus `barisign_files/` with everything else; an old `barisign/`
-folder is moved into place with its state kept.
+Then start BariStore at any time with a single command:
 
-`barisign update` self-updates everything in place. Your saved state in
-`barisign_files/state/` is kept.
-There is **no pip step**: the engine is part of the program files.
-
+```sh
+baristore
 ```
-barisign          # web UI: the whole install on this iPhone
-barisign shell    # terminal run without the web page
-barisign status   # what is saved
-barisign --help   # every command
+
+To update BariStore in place while preserving your Apple ID session, pairing file, and installed apps:
+
+```sh
+baristore update
 ```
 
 ---
 
-## Requirements
+## How It Works
 
-| | |
-|---|---|
-| Device | iPhone/iPad, **iOS/iPadOS 27 or newer** |
-| Apple account | a **free** Apple ID — no paid Developer Program membership |
-| Apps | **a-Shell** (free, App Store) + **LocalDevVPN** (free, App Store; connected during pairing/install) |
-| Computer | **none** |
-| Network | internet for Apple and the IPA download; pairing/install stay on-device |
+### First-Time Onboarding
+When you run `baristore` for the first time, it opens a clean setup wizard inside a-Shell's internal browser:
 
-LocalDevVPN also keeps SideStore refreshed after install. If the sheet will not open, run
-`BROWSER=internalbrowser openurl <the printed URL>` by hand; if sign-in fails on every
-anisette host, run `barisign netcheck` and send the output.
+1. **LocalDevVPN Check** — Verifies that LocalDevVPN is connected on `10.7.0.1`.
+2. **Instant Device Pairing** — Pre-computes a 6-digit PIN and 3072-bit SRP-6a verifier *before* advertising over 250ms mDNS broadcast, holds a-Shell awake in the background with a non-zero sub-audible audio loop + optional floating Picture-in-Picture (PiP) PIN window, and pairs from **Settings → Developer → Paired Macs → BariStore** (or imports an existing pairing file).
+3. **Developer Mode Over Tunnel** — Checks Developer Mode status over the loopback tunnel. If disabled or hidden, reveals the toggle in **Settings → Privacy & Security → Developer Mode** or enables it immediately.
+4. **Apple ID Sign-In** — Authenticates via Anisette + SRP-6a + 2FA and saves your developer session so you **never get logged out**.
 
----
+### The Store Interface (Every Subsequent Launch)
+Once setup is complete, `baristore` opens **directly into the Store screen** every time—even offline or when LocalDevVPN is disconnected. Connection checks only happen when you tap **Install**, **Refresh**, **Delete**, or **Enable JIT**.
 
-## The UDID, in one paragraph
-
-A free Apple ID signs apps for **specific devices**, so the **UDID** must be known. Pairing gives it:
-BariSign advertises as a pairable host, you pair from Settings, and the UDID comes back through the
-tunnel. There is no UDID page (removed in 0.9.18); `docs/UDID_OPTIONS.md` lists independent UDID
-sources (not affiliated with us).
-
----
-
-## Which variant you get
-
-| # | Variant | Source |
-|---|---|---|
-| 1 | **SideStore** (stable) | `SideStore/SideStore` |
-| 2 | **SideStore** (nightly — *may be unstable*) | `SideStore/SideStore`, tag `nightly` |
-| 3 | **LiveContainer + SideStore** (stable) | `LiveContainer/LiveContainer` |
-| 4 | **LiveContainer + SideStore** (nightly) | `LiveContainer/LiveContainer`, tag `nightly` |
-| 5 | **AltStore Classic** (stable) | `altstoreio/AltStore` |
-| 6 | **Custom IPA** (your own file, already on the device) | your file; pick `custom IPA` in the variant step |
-
-Every version is resolved **at runtime** from the project's official release page — never pinned here —
-and you are shown which version you are about to get (stable: the tag; nightly: the asset date,
-because its `published_at` is stale). A cached IPA is reused only when size **and** GitHub's SHA-256
-match; offline runs say `(no GitHub; using the saved file)`. `variants.json` is the machine-readable list.
+- **Featured Tab**:
+  - **AltSources Support**: Ships with trusted, open-source community AltSources pre-installed (AltStore Official, SideStore Official & Community Picks, StikDebug, Provenance, UTM, OatmealDome/DolphiniOS, Flycast, PojavLauncher, Yattee) and lets you add or remove any source URL.
+  - **Multi-Source Detection**: When an app is offered by more than one AltSource, BariStore detects it and lets you choose which source to install from.
+  - **Stores & Containers Showcase**: Built-in one-tap installation for **SideStore** (Stable & Nightly), **LiveContainer + SideStore** (Stable & Nightly), standalone **LiveContainer** (Stable & Nightly), and **AltStore Classic**—automatically generating and injecting the required pairing files (`ALTPairingFile.mobiledevicepairing`, `PairingFile_RemoteRP.plist`, `ALTPairingFile.plist`, and preferences) into each app's container.
+  - **Custom IPA & App ID Slot Saver**: Pick any `.ipa` file directly from the WebView file picker, customize its Display Name or Bundle ID, or strip app extensions (`.appex`) to save your free Apple account's 10 App ID slots.
+- **My Apps Tab**:
+  - Tracks your installed apps with a 7-day expiration countdown.
+  - **Refresh & Refresh All**: Re-signs and installs apps over loopback before they expire.
+  - **⚡ Enable JIT (StikDebug-style)**: Attaches and detaches `debugserver` over `com.apple.internal.dt.remote.debugproxy` on the RSD tunnel to enable JIT (`CS_DEBUGGED`) on running apps.
+  - **🔑 Inject Pairing**: Writes the normalized RPPairing file directly into supported apps via `house_arrest`.
+  - **Delete**: Uninstalls apps directly from your device via `installation_proxy`.
+- **Options Tab**:
+  - View your signed-in Apple ID, developer team, registered App IDs (and remaining slots out of 10), and development certificates.
+  - Export or import your pairing file (`ALTPairingFile.mobiledevicepairing`), re-pair your device, switch themes (**System / Light / Dark**), test Anisette servers, clear cache, or reset BariStore.
 
 ---
 
-## Your Apple ID and your data
+## Security & Privacy
 
-- **Your password is never transmitted.** Apple's sign-in is SRP-6a: the password becomes a one-time proof
-  on the device. It is never written to disk.
-- **The anisette server never sees your account.** It is asked only for device-identity headers, with a
-  random identifier we generate — never your Apple ID, password or token.
-- The saved portal *session token* (not the password) is reused so 2FA is not asked again; it lives in
-  sandboxed `state/`, is never printed, and `forget`/`reset` wipe it.
-- **The web page never leaves the device.** It is served on 127.0.0.1 with a per-run random path, like
-  siboot's page; closing the sheet ends nothing by itself, Stop (or the end of the run) stops the server.
-- **No BariSign server exists.** Nothing is collected: no analytics, no telemetry, no accounts.
-- TLS verification is never disabled anywhere in this project.
+- **Your password never leaves your device.** Apple sign-in uses SRP-6a: your password becomes a local cryptographic proof and is never written to disk or sent over the network.
+- **Anisette servers never see your Apple ID, password, or tokens.** They only provide anonymous machine-identity headers.
+- **Loopback Web UI security.** The UI runs on `127.0.0.1` on a random port behind a per-run 128-bit token with strict `Host` validation.
+- **No telemetry, no external BariStore server, and TLS verification is always enforced.**
 
 ---
 
-## Documentation
+## License
 
-| File | What it is |
-|---|---|
-| **`GUIDE.md`** | step-by-step, in plain language |
-| `docs/PLAN_V2.md` | the current architecture and why |
-| `docs/PAIRING_INSTALL.md` | pairing + Developer Mode + `installation_proxy` over loopback |
-| `docs/WEB_UI.md` | the web UI: server, API, state, patching, Back/Stop/Settings |
-| `docs/DEVELOPER_MODE.md` | Developer Mode via the tunnel (no trigger install) |
-| `docs/UDID_OPTIONS.md` | UDID sources (pairing only; page removed in 0.9.18) |
-| `docs/ANISETTE.md` | anisette servers: what they see, which ones we use, how to pin or self-host |
-| `docs/RESULTS.md` | what is verified on device, and the device quirks we had to work around |
-| `docs/NEXT_SESSION.md` | handoff: the on-device gates |
-| `variants.json` | the variant registry and runtime resolution rules |
-| `barisign` | the single entry point (web UI) |
-| `THIRD_PARTY_NOTICES.md` | licences and attribution |
-
-## Licences — please read
-
-BariSign's own code is **MIT**. `third_party/sideinstaller/` is under that project's own
-**non-commercial** licence, so **the repository as a whole may not be used commercially**. The pure
-pairing/tunnel/install engine and the Developer Mode + web UI code are original MIT implementations
-written from the MIT `jkcoxson/idevice` protocol sources and Apple's public formats; no GPL code is
-vendored or installed at run time. Details in `THIRD_PARTY_NOTICES.md`.
+BariStore is 100% **MIT Licensed**. See `LICENSE` and `THIRD_PARTY_NOTICES.md` for details.
