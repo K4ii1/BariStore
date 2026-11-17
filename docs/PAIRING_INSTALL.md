@@ -1,6 +1,6 @@
 # Pairing + Developer Mode + `installation_proxy` — over loopback
 
-Single-device build (0.9.23): everything below runs against `10.7.0.1` (LocalDevVPN)
+Single-device build (current: same flow as `barisign`): everything below runs against `10.7.0.1` (LocalDevVPN)
 instead of a second device's Wi-Fi address. The protocol is unchanged; only the
 transport's far end moved onto this iPhone.
 

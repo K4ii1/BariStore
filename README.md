@@ -6,11 +6,11 @@ Install **SideStore** — or **LiveContainer + SideStore**, or **AltStore Classi
 **with no computer**, using your own free Apple ID. Everything runs **on the one device**: a-Shell +
 BariSign, LocalDevVPN, and this iPhone itself.
 
-> **Status (0.9.23):** Apple sign-in, the developer portal, pairing over loopback (M1–M6), signing and
-> the tunnel/install engine run from Linux tests plus on-device runs. New in this revision: a web page
-> UI in a-Shell's internal browser (no terminal typing), Developer Mode via the tunnel (no second
-> device, no trigger install), and single-device-first docs. The loopback install and the sheet UI
-> are **UNVERIFIED ON A DEVICE** — run it and report back.
+> **Status (0.9.34):** Apple sign-in, the developer portal, signing and the signed app
+> launching after install are verified on real devices. The loopback install, the web sheet,
+> Developer Mode over the tunnel and the pairing-file writer are written + Linux-tested and
+> awaiting the on-device run — see `docs/NEXT_SESSION.md` for the exact gates and what to
+> send back.
 
 ---
 
@@ -76,7 +76,9 @@ barisign --help   # every command
 | Computer | **none** |
 | Network | internet for Apple and the IPA download; pairing/install stay on-device |
 
-On the target: LocalDevVPN for SideStore to refresh apps after install.
+LocalDevVPN also keeps SideStore refreshed after install. If the sheet will not open, run
+`BROWSER=internalbrowser openurl <the printed URL>` by hand; if sign-in fails on every
+anisette host, run `barisign netcheck` and send the output.
 
 ---
 
@@ -129,6 +131,7 @@ match; offline runs say `(no GitHub; using the saved file)`. `variants.json` is 
 | **`GUIDE.md`** | step-by-step, in plain language |
 | `docs/PLAN_V2.md` | the current architecture and why |
 | `docs/PAIRING_INSTALL.md` | pairing + Developer Mode + `installation_proxy` over loopback |
+| `docs/WEB_UI.md` | the web UI: server, API, state, patching, Back/Stop/Settings |
 | `docs/DEVELOPER_MODE.md` | Developer Mode via the tunnel (no trigger install) |
 | `docs/UDID_OPTIONS.md` | UDID sources (pairing only; page removed in 0.9.18) |
 | `docs/ANISETTE.md` | anisette servers: what they see, which ones we use, how to pin or self-host |

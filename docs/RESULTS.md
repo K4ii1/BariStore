@@ -1,6 +1,6 @@
 # What is verified — and what we learned the hard way
 
-Replaces the old phase-0 report. The current plan is the two-role flow in `AGENTS.md` and
+Replaces the old phase-0 report. The current plan is the single-device flow in `AGENTS.md` and
 `PLAN_V2.md`; everything here was confirmed on a real device running **iOS 27** unless marked otherwise.
 
 ## Verified on device
@@ -30,17 +30,19 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
   `NSBonjourServices`), and raw multicast send fails (`ENETUNREACH`, no multicast entitlement).
   `poc/raw_mdns.py` sends both plus subnet broadcast; broadcast is device-proven (the target lists
   BariSign, full M1–M6, UDID saved). `pair` uses it automatically on a-Shell.
- obsolete 2026-11-19 by the single-device rewrite (loopback pairing + devmode over the
-  tunnel + web sheet).
+  The single-device rewrite keeps the same broadcast, now aimed at this iPhone itself
+  over the LocalDevVPN loopback; that leg is written + Linux-tested, on-device run pending.
 - **Version freshness at every signing (0.9.17):** `resolve()` lists GitHub releases live, prints
   the version before downloading, and a cached IPA is reused only on size + SHA-256 match.
 
 ## Written but **never tested on a device**
 
-- The **loopback pairing install**, the **web sheet UI** (open + audio keep-alive + PIN hop),
-  the **Developer Mode toggle** and the **pairing-file writer**. The engine and its Linux tests
-  are in `poc/` and `tests/`; the device run is the remaining gate. Mark it **untested** until
-  the user confirms.
+- The **loopback pairing install** (does this iPhone list BariSign in its own Paired Macs?),
+  the **web sheet UI** (open + audio keep-alive + PIN hop + Back + Stop + settings), the
+  **Developer Mode toggle** and the **pairing-file writer**. The engine and its Linux tests
+  are in `poc/` and `tests/`; the device run is the remaining gate. Mark it **untested**
+  until the user confirms. If anything stalls, send the exact page/terminal text plus
+  `state/pair_debug.log` (and `barisign netcheck` output for sign-in failures).
 
 ## Not built
 
@@ -59,7 +61,7 @@ userspace IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and `i
 | only `~/Documents` is writable | state, CA and profiles all live inside the install folder |
 | Python's TLS trust store is **empty** | Apple's root and a CA bundle ship in `third_party/` and are loaded explicitly |
 | `raw.githubusercontent.com` serves stale files after a push | the installer fetches through the GitHub API, with the web URL only as a fallback |
-| the `+x` bit does not survive git on device | always run `sh ...` (root wrappers) |
+| the `+x` bit does not survive git on device | always run `barisign ...` (root launcher, no `cd` needed) |
 
 ## Dead ends — do not retry without new information
 

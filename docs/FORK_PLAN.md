@@ -1,7 +1,7 @@
 # Fork plan — pairing module inside SideStore, LiveContainer+SideStore, AltStore Classic
 
 **Decision (2026-10-29, user): fork the three apps** instead of shipping a helper app. This file records
-what that means, so nobody re-discovers it later. **Status (0.9.17): not built** — the signer-side
+what that means, so nobody re-discovers it later. **Status: not built** (unchanged — the pairing-file writer already places the records where these apps read them, so installs refresh without any fork) — the signer-side
 pairing-file writer (`pair_install.py`) already places the records where these apps read them
 (AltStore `ALTPairingFile.plist`; SideStore `.mobiledevicepairing` + `PairingFile_RemoteRP.plist`;
 LiveContainer's built-in SideStore the same two names under `SideStore/Documents/`), so the fork

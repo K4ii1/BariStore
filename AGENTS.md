@@ -52,8 +52,10 @@ BariSign + LocalDevVPN + Settings. iOS/iPadOS 27+.
 - Sign-in requires **Mac-emulating anisette** and the server's own client_info (Apple's Oct 2026
   -80045/-80046/503 rules). `mac-ani.jkcoxson.com` and `ani.jkcoxson.com` come first. Details:
   `docs/ANISETTE.md`, `docs/RESULTS.md`.
-- The UI is deliberately terse: one `== STAGE ==` header per screen, one moving line `(2/5) label ....`,
-  `ESC[2J ESC[3J` on stage change, `ESC[2K` for the moving line. No long narration.
+- The web UI is the primary interface: steps with a live progress line, questions as
+  fields and buttons, the pairing PIN in large digits, a collapsible log, Back/Stop buttons
+  and a Settings card. The terminal fallback (`barisign shell`) keeps the old terse style:
+  one `== STAGE ==` header per screen, one moving line, `ESC[2J ESC[3J` on stage change.
 - Terminal: never change modes more than the password prompt needs (ECHO only, restored and verified);
   the 2FA code is read with our own visible echo so it works even when echo is off.
 - Never use GitHub `releases/latest` for SideStore (it returns `0.7.0-alpha`); list releases and

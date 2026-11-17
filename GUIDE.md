@@ -3,7 +3,7 @@
 Everything happens on the **same iPhone**: a-Shell + BariSign, LocalDevVPN, Settings, Safari.
 No computer, no second device, no AirDrop, no OTA.
 
-**Status (0.9.23):** the web UI, the loopback install and the Developer Mode toggle are written
+**Status (0.9.34):** the web UI, the loopback install and the Developer Mode toggle are written
 and Linux-tested but **UNVERIFIED ON A DEVICE**. Run them and report back: what you saw, plus
 `state/pair_debug.log` after any pairing run.
 
@@ -31,31 +31,31 @@ A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
 2. **Apple ID** — email, then password (dots), then the 2FA code (6 boxes, sends itself). A saved
    session skips password + 2FA until Apple refuses it.
 3. **Portal** — picks your developer team (saved next time, no question).
-3. **Pairing** — this iPhone pairs with itself (skipped when a live pairing already
+4. **Pairing** — this iPhone pairs with itself (skipped when a live pairing already
    exists). Settings → Developer → Paired Macs → BariSign, big PIN on the page (if Paired Macs
    is missing, look for a new Developer Mode section — pairing itself can reveal it).
-4. **Variant** — tap the app you want, or your own `.ipa` (drop it into Files → a-Shell →
+5. **Variant** — tap the app you want, or your own `.ipa` (drop it into Files → a-Shell →
    Custom IPAs first; the picker rescans when the folder was empty).
-5. **Download** — the current IPA, with size + SHA-256 checked. Reused when still current.
-6. **Developer Mode** — read over the tunnel. If off or hidden: the switch is shown (no restart).
+6. **Download** — the current IPA, with size + SHA-256 checked. Reused when still current.
+7. **Developer Mode** — read over the tunnel. If off or hidden: the switch is shown (no restart).
    Turning it on always restarts the iPhone, which ends the run with a restart card: flip it
    (or tap **Turn on now**), let it restart, then open BariSign and tap Start again — everything
    is saved and the run jumps straight back here to verify. With a passcode set, iOS refuses
    the instant path: flip it by hand.
-7. **Sign & Install** — registers this iPhone, issues the certificate, downloads the profile
+8. **Sign & Install** — registers this iPhone, issues the certificate, downloads the profile
    (with the App Group so SideStore/LiveContainer open their container), signs and verifies
    the IPA, then uploads and installs over loopback. Then: Settings → General → VPN & Device
    Management → trust the developer → open the app.
 
 The page has **Stop** (ends the run anywhere, even mid-upload), **Back** (re-asks the previous
 question and replays your answers up to it) and a **Settings** card (version, what is saved,
-forget it, update check). If the page ever stops moving, tap Stop and start again — nothing
-is half-installed.
+forget it, update check, pairing-file export). If the page ever stops moving, tap Stop and
+start again — nothing is half-installed.
 
 `Stop` (or Ctrl-C in the terminal) ends the run any time. Nothing is half-installed.
 
 Prefer the terminal? `barisign shell` runs the same pipeline without the page (same order,
-same loopback, speech instead of page audio for keep-alive).
+same loopback; the terminal keeps the speech keep-alive, the page stays silent).
 
 ---
 
@@ -64,6 +64,8 @@ same loopback, speech instead of page audio for keep-alive).
 ```
 barisign status              # what is saved (UDID, variant, release, session)
 barisign check               # diagnostics only
+barisign netcheck            # DNS/TLS/HTTP per host (for sign-in failures)
+barisign update              # self-update in place
 barisign login               # Apple sign-in alone
 barisign portal              # device + certificate + profile alone
 barisign sign                # download + sign alone

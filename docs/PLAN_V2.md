@@ -9,15 +9,19 @@ iPhone that signs for itself**:
 THIS IPHONE (a-Shell + BariSign + LocalDevVPN)
   0. requirements  LocalDevVPN answers on 10.7.0.1 (wait loop)
   1. Apple ID      anisette + SRP-6a + 2FA (saved session reused while Apple accepts it)
-  2. variant       SideStore / LC+SideStore / AltStore / custom IPA
-  3. download      live-resolved IPA, size + SHA-256
-  4. pair          RPPairing host over broadcast; Settings > Developer > Paired Macs
-                   on the SAME iPhone; UDID from M5; pairing file saved
-  5. devmode       lockdownd GetValue; show switch (action 0) or turn on (action 1)
-  6. portal        device + App ID (+ App Group) + certificate + profile
-  7. sign          sign + verify the IPA
-  8. install       installation_proxy over the loopback tunnel
-                   (Trust Developer, open the app)
+  2. portal        pick the developer team (saved next time, no question)
+  3. pair          RPPairing host over broadcast; Settings > Developer > Paired Macs
+                   on the SAME iPhone; UDID from M5; pairing file saved.
+                   Skipped when this run just paired (one PIN per run);
+                   retry loop with a live timer if the target never shows.
+  4. variant       SideStore / LC+SideStore / AltStore / custom IPA (tap to choose)
+  5. download      live-resolved IPA, size + SHA-256
+  6. devmode       lockdownd GetValue; show switch (action 0) or turn on (action 1).
+                   Turning it on restarts the iPhone: the run ends with a restart
+                   card and the rerun jumps straight back here to verify.
+  7. sign & install  register device, App ID (+ App Group), certificate, profile;
+                     sign + verify; installation_proxy over the loopback tunnel
+                     (Trust Developer, open the app)
 ```
 
 `barisign` runs it as a web page (a-Shell internal browser sheet over the terminal);
@@ -53,9 +57,15 @@ a-Shell's `openurl` with `BROWSER=internalbrowser` shows a WKWebView sheet over 
 the app stays foreground, so iOS never pauses the run. The page is served from this iPhone's
 loopback only, every path starts with 128 random bits that die with the run, and the Host
 header must name the loopback. Pairing still hops to Settings for the PIN; the page plays
-silence through WebAudio meanwhile (a-Shell has background audio), with the speech loop as
-fallback. Terminal line-strain is gone by construction: the flow's stdout goes to the page
-log, and only prompts arrive as questions.
+silence through WebAudio meanwhile (a-Shell has background audio). There is intentionally
+no speech fallback in the web flow: the terminal `shell` fallback keeps its own
+`--keep-awake` speech loop, the page stays silent. A Wake Lock request keeps the
+screen awake during pairing/install. Terminal line-strain is gone by construction:
+the flow's stdout goes to the page log, questions arrive as form fields and buttons,
+a revision counter re-renders the main card only when the question changes, and a
+collapsible log never reloads under typing hands. Update and export buttons live in
+the Settings card (`/api/update` runs `barisign update` in a thread and reports back;
+`/api/export` copies the pairing file to `~/Documents/BariSign-Pairing.plist`).
 
 ## Pairing file
 

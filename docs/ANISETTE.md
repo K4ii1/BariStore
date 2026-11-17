@@ -55,6 +55,10 @@ To run your own, the SideStore docs walk through deploying `omnisette-server` (D
 `ghcr.io/sidestore/omnisette-server`, or a Render free instance) — it needs the platform's ADI libraries.
 Then pin it with `--server`. Nothing in BariSign requires a specific server.
 
+If sign-in dies on *every* server with EOF/handshake errors, run `barisign netcheck`
+first: it probes DNS → TCP → TLS → HTTP per host and names the failing stage, which
+tells a network/path problem apart from a dead server.
+
 Order tried by BariSign (Mac-emulating first, per the October 2026 Apple rules in
 `docs/RESULTS.md`): `mac-ani.jkcoxson.com`, then `ani.jkcoxson.com`. Failover on
 -80045 / -80046 / 503 mints a fresh identity on the next server.

@@ -1,16 +1,15 @@
 # Reading your UDID — pairing only (0.9.18)
 
-BariSign needs your **target's UDID** because a free Apple ID can only sign apps for devices that are
+BariSign needs **this iPhone's UDID** because a free Apple ID can only sign apps for devices that are
 registered on it. There is nothing secret about a UDID: it is a hardware identifier developers paste into
 portals every day. It is **not** a credential, and no Apple ID or password is involved in getting it.
 
 The **only** route is pairing: the run pairs this iPhone with itself and
 reads the UDID from the pairing, then saves it.
 
-> The signer-hosted UDID page is **removed** (0.9.18): `median.co/udid` link, submit box and
-> `--manual`/`--page` are gone, with the HTTP server code. If Developer Mode cannot be opened
-> with a plain unsigned IPA — i.e. pairing stays unreachable and there is no UDID to sign
-> with — the page comes back.
+> There is no UDID page and no paste box in BariSign (removed 0.9.18): pairing is
+> the only route. If pairing itself stays unreachable, that is a bug — send the exact
+> screen text plus `state/pair_debug.log` instead of hunting for a workaround.
 
 iOS only hands the UDID over through a **Profile Service** profile from **HTTPS with a certificate
 it trusts**. If you ever need a UDID without BariSign's pairing, these independent options still

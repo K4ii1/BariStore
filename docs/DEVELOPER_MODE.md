@@ -19,8 +19,12 @@ Mechanics (MIT sources, clean-room code in `poc/devmode.py`):
   `success` or `Error`; iOS closes AMFI after one request.
 - With a passcode set, turn-on is refused (`Device has a passcode set`): show the
   switch and flip it by hand. Without one, the iPhone restarts — the tunnel dies
-  with it, so the flow re-opens and re-checks after you come back.
+  with it, so there is nothing to re-check in the same run.
 
 It only helps while the iPhone still answers on its pairing port with this pairing:
 pair first, then devmode, then the rest. If the service names are missing from the
 RSD map, the error lists what the device offers — send that back.
+
+Because turning it on restarts the iPhone, the web flow does not wait around: it shows
+a restart card and stops, and the rerun jumps straight back to the devmode check (UDID,
+pairing, download and portal data are all saved, so nothing repeats).
