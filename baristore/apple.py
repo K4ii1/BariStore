@@ -191,10 +191,49 @@ def ssl_context_for(host):
     return SSL_CTX
 
 
+def _getaddrinfo_bounded(host, port, timeout=8):
+    """getaddrinfo with a hard timeout (system DNS can stall under LocalDevVPN).
+
+    Queries IPv4 and IPv6 in parallel and prefers IPv4 results; falls back to
+    IPv6 when only AAAA records resolve. Raises the lookup error on failure.
+    """
+    outcomes = {}
+
+    def _query(family):
+        try:
+            outcomes[family] = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+        except Exception as exc:
+            outcomes[family] = exc
+
+    workers = []
+    for family in (socket.AF_INET, socket.AF_INET6):
+        worker = threading.Thread(target=_query, args=(family,), daemon=True)
+        worker.start()
+        workers.append(worker)
+    deadline = time.time() + max(1.0, float(timeout))
+    for worker in workers:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        worker.join(remaining)
+
+    for family in (socket.AF_INET, socket.AF_INET6):
+        result = outcomes.get(family)
+        if isinstance(result, list) and result:
+            others = outcomes.get(
+                socket.AF_INET6 if family == socket.AF_INET else socket.AF_INET
+            )
+            if isinstance(others, list) and others:
+                return result + others
+            return result
+    errors = [v for v in outcomes.values() if isinstance(v, Exception)]
+    raise errors[0] if errors else socket.gaierror("DNS lookup timed out for %s" % host)
+
+
 def _connect_preferred_ipv4(host, port, timeout):
     """Connect TCP socket preferring IPv4 first (avoids IPv6 blackholes on iOS/LocalDevVPN)."""
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        infos = _getaddrinfo_bounded(host, port)
     except Exception as exc:
         raise AppleAuthError("DNS lookup failed for %s: %s" % (host, exc))
     if not infos:
@@ -1109,7 +1148,12 @@ def get_saved_session():
     try:
         anisette, gs = connect_anisette()
         session = DeveloperSession(AppleAccount(email, gs, anisette), token, adsid)
-        teams = session.call("listTeams", key="teams", device_type="")
+        try:
+            teams = session.call("listTeams", key="teams", device_type="")
+        except Exception:
+            # Transient network blip? One immediate retry before declaring expiry.
+            time.sleep(1)
+            teams = session.call("listTeams", key="teams", device_type="")
         if teams and not state.get("team_id"):
             storage.update_state(
                 team_id=teams[0].get("teamId", ""),
@@ -1658,16 +1702,21 @@ def provision_for_signing(
     team_id="",
     revoke_serial=None,
     reuse_full_bundle_id="",
+    progress=None,
 ):
     """Register device, obtain key+cert, register App ID (+ group), and download profile."""
+    _report = progress or (lambda _msg: None)
     if not team_id:
+        _report("Reading Apple Developer teams…")
         teams = session.call("listTeams", key="teams", device_type="") or []
         if not teams:
             raise AppleAuthError("No developer team found on this Apple ID.")
         team_id = teams[0]["teamId"]
 
+    _report("Registering device with Apple Developer Portal…")
     ensure_device(session, team_id, udid, "BariStore Device")
     key_path = ensure_private_key(email)
+    _report("Preparing development certificate…")
     cert_path, cert_reused = obtain_certificate(
         session, team_id, key_path, storage.STATE_DIR, revoke_serial=revoke_serial
     )
@@ -1682,11 +1731,14 @@ def provision_for_signing(
             else (base_bundle_id + suffix)
         )
 
+    _report("Registering App ID %s…" % full_bundle_id)
     app_id = ensure_app_id(session, team_id, full_bundle_id, app_name)
     group_id = group_identifier_for(team_id, full_bundle_id, base_bundle_id)
     if group_id:
+        _report("Configuring App Group…")
         ensure_app_group(session, team_id, app_id, group_id, app_name)
 
+    _report("Downloading provisioning profile…")
     profile_bytes = download_profile(session, team_id, app_id)
     profile_path = os.path.join(
         storage.STATE_DIR, "profile-%s.mobileprovision" % full_bundle_id

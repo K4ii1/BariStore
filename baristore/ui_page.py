@@ -712,12 +712,13 @@ function renderOnboardingStep() {
   } else if (APP.obStep === 2) {
     box.innerHTML = `
       <h3 style="margin:0 0 0.35rem">Step 2: Pair This iPhone</h3>
-      <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b>. BariStore shows a 6-digit PIN here and keeps a-Shell alive in the background. Then open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>). If BariStore is not listed, come back here once and go to Settings again so the list refreshes. Tap <b>BariStore</b>, enter the PIN, then return here — setup continues automatically.</p>
+      <p class="sub" style="margin-bottom:0.85rem">Tap <b>Start Pairing</b>. BariStore instantly generates a 6-digit PIN and keeps advertising while you switch apps. Then open <b>Settings &gt; Privacy &amp; Security &gt; Developer Mode &gt; Paired Macs</b> (or <b>Settings &gt; Developer &gt; Paired Macs</b>). If BariStore is not listed, come back here once and go to Settings again so the list refreshes. Tap <b>BariStore</b> and type the PIN into the <b>Settings pop-up</b> (not here). Then return here — setup continues automatically.</p>
       <div id="obPinWrap" class="hidden">
         <div class="pin-box" id="obPin">------</div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.65rem">
-          <button class="secondary full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
+          <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
         </div>
+        <div id="obPairStatus" class="sub" style="margin-bottom:0.65rem;color:var(--accent);font-weight:600"></div>
       </div>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
         <button class="full" onclick="startPairing(false)">Start Pairing</button>
@@ -728,6 +729,8 @@ function renderOnboardingStep() {
       box.querySelector("#obPinWrap")?.classList.remove("hidden");
       const obPin = box.querySelector("#obPin");
       if (obPin) obPin.textContent = APP.job.pin;
+      const obSt = box.querySelector("#obPairStatus");
+      if (obSt && APP.job.step) obSt.textContent = APP.job.step;
     }
   } else if (APP.obStep === 3) {
     box.innerHTML = `
@@ -942,6 +945,7 @@ async function submit2FA(loginId, isOnboarding) {
 /* --- Pairing & Job Polling --- */
 async function startPairing(fresh) {
   startKeepAlive();
+  APP._pinBuzzed = false;
   const res = await apiPost("/api/pair/start", { fresh: Boolean(fresh) });
   if (!res.ok) {
     await showAlert(res.error || "Could not start pairing.");
@@ -1013,6 +1017,7 @@ async function pollStatus() {
         pinWrap.classList.remove("hidden");
         document.getElementById("jobPin").textContent = job.pin;
         drawPiPFrame(job.pin);
+        try { if (navigator.vibrate && !APP._pinBuzzed) { APP._pinBuzzed = true; navigator.vibrate(60); } } catch (e) {}
         const obPinWrap = document.getElementById("obPinWrap");
         if (obPinWrap) {
           obPinWrap.classList.remove("hidden");
@@ -1020,6 +1025,12 @@ async function pollStatus() {
         }
       } else {
         pinWrap.classList.add("hidden");
+      }
+      if (job.kind === "pair" || (APP.job && APP.job.kind === "pair")) {
+        const obSt = document.getElementById("obPairStatus");
+        if (obSt && job.step) obSt.textContent = job.step;
+      } else if (!job.active) {
+        APP._pinBuzzed = false;
       }
       const bar = document.getElementById("jobBar");
       if (typeof job.progress === "number") {

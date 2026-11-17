@@ -21,6 +21,7 @@ from . import VERSION, apple, device, pairing, signer, sources, storage, tunnel,
 
 _LOCK = threading.RLock()
 _STOP = threading.Event()
+_CANCEL = threading.Event()
 
 _JOB = {
     "id": 0,
@@ -48,6 +49,7 @@ def _log(msg):
 
 
 def _start_job(kind, title, step="Starting…"):
+    _CANCEL.clear()
     with _LOCK:
         _JOB["id"] += 1
         _JOB["active"] = True
@@ -74,8 +76,12 @@ def _update_job(step=None, progress=None, pin=None):
             _JOB["pin"] = pin
 
 
-def _finish_job(result=None, error=None, prompt=None):
+def _finish_job(result=None, error=None, prompt=None, job_id=None):
     with _LOCK:
+        # Stale workers (cancelled, or superseded by a newer job) must not
+        # overwrite the current job state.
+        if job_id is not None and (_JOB["id"] != job_id or not _JOB["active"]):
+            return
         _JOB["active"] = False
         _JOB["pin"] = None
         if error is not None:
@@ -87,7 +93,13 @@ def _finish_job(result=None, error=None, prompt=None):
             _JOB["result"] = result
 
 
+def _throw_if_cancelled():
+    if _CANCEL.is_set():
+        raise asyncio.CancelledError()
+
+
 def cancel_active_job():
+    _CANCEL.set()
     with _LOCK:
         loop = _ASYNC_TASK["loop"]
         task = _ASYNC_TASK["task"]
@@ -162,17 +174,19 @@ def start_pairing_worker(fresh_identity=False):
     with _LOCK:
         if _JOB["active"]:
             raise RuntimeError("Another operation is currently running.")
-    _start_job("pair", "Device Pairing", "Preparing 3072-bit SRP & PIN…")
+    my_id = _start_job("pair", "Device Pairing", "Preparing 3072-bit SRP & PIN…")
 
     def _worker():
         try:
             def on_pin(code):
+                _throw_if_cancelled()
                 _update_job(
                     step="Open Settings > Developer > Paired Macs > BariStore and enter PIN",
                     pin=code,
                 )
 
             def on_status(msg):
+                _throw_if_cancelled()
                 _update_job(step=msg)
 
             _rec, udid, info = _run_coro(
@@ -218,12 +232,13 @@ def start_pairing_worker(fresh_identity=False):
                     "name": info.get("name") or "iPhone",
                     "model": info.get("model") or "",
                     "devmode_on": dm_status,
-                }
+                },
+                job_id=my_id,
             )
         except asyncio.CancelledError:
-            _finish_job(error="Pairing cancelled.")
+            _finish_job(error="Pairing cancelled.", job_id=my_id)
         except Exception as exc:
-            _finish_job(error=str(exc))
+            _finish_job(error=str(exc), job_id=my_id)
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -297,10 +312,11 @@ def start_install_worker(params):
         raise RuntimeError("Not signed in to an Apple ID. Go to Options > Apple ID to sign in.")
 
     app_title = params.get("custom_name") or params.get("name") or "App"
-    _start_job("install", "Installing %s" % app_title, "Checking requirements…")
+    my_id = _start_job("install", "Installing %s" % app_title, "Checking requirements…")
 
     def _worker():
         try:
+            _throw_if_cancelled()
             kind = params.get("kind") or "altsource"
             local_ipa = params.get("local_ipa") or ""
             download_url = params.get("download_url") or ""
@@ -345,6 +361,8 @@ def start_install_worker(params):
                 _update_job(step="Downloading %s (%s)…" % (app_title, version), progress=0)
 
                 def _dl_prog(done, total):
+                    if _CANCEL.is_set():
+                        raise asyncio.CancelledError()
                     if total > 0:
                         _update_job(progress=int(done * 45 / total))
 
@@ -360,6 +378,7 @@ def start_install_worker(params):
                 raise RuntimeError("No download URL or local IPA file provided.")
 
             # 3. Inspect IPA
+            _throw_if_cancelled()
             _update_job(step="Inspecting IPA package…", progress=48)
             inspected = signer.inspect_ipa(ipa_path)
             orig_bundle_id = inspected["bundle_id"]
@@ -371,6 +390,7 @@ def start_install_worker(params):
                 app_title_resolved = app_title
 
             # 4. Authenticate Developer Portal session
+            _throw_if_cancelled()
             _update_job(step="Connecting to Apple Developer Portal…", progress=52)
             session = apple.get_saved_session()
             if session is None:
@@ -395,6 +415,7 @@ def start_install_worker(params):
                     raise RuntimeError("Could not read device UDID over the tunnel.")
 
             # 5. Provision App ID, Certificate & Profile
+            _throw_if_cancelled()
             _update_job(step="Provisioning App ID & profile with Apple…", progress=60)
             try:
                 prov = apple.provision_for_signing(
@@ -406,6 +427,7 @@ def start_install_worker(params):
                     team_id=state.get("team_id") or "",
                     revoke_serial=revoke_serial,
                     reuse_full_bundle_id=reuse_full_bundle_id,
+                    progress=lambda msg: (_throw_if_cancelled(), _update_job(step=msg)),
                 )
             except apple.AppIdLimitReachedError as exc:
                 _finish_job(
@@ -422,7 +444,8 @@ def start_install_worker(params):
                             if a.get("identifier")
                         ],
                         "retry_params": dict(params, local_ipa=ipa_path),
-                    }
+                    },
+                    job_id=my_id,
                 )
                 return
             except apple.CertLimitReachedError as exc:
@@ -432,11 +455,13 @@ def start_install_worker(params):
                         "message": str(exc),
                         "certs": exc.certs,
                         "retry_params": dict(params, local_ipa=ipa_path),
-                    }
+                    },
+                    job_id=my_id,
                 )
                 return
 
             # 6. Sign the IPA
+            _throw_if_cancelled()
             _update_job(step="Signing %s on device…" % app_title_resolved, progress=70)
             signed_out = os.path.join(
                 storage.SIGNED_DIR, "%s-signed.ipa" % prov["bundle_id"]
@@ -455,11 +480,14 @@ def start_install_worker(params):
             )
 
             # 7. Upload & Install over Loopback Tunnel
+            _throw_if_cancelled()
             _update_job(step="Opening loopback tunnel to install…", progress=80)
 
             async def _do_install():
                 async with await tunnel.open_session() as sess:
                     def _up_prog(sent, total):
+                        if _CANCEL.is_set():
+                            raise asyncio.CancelledError()
                         if total > 0:
                             _update_job(
                                 step="Uploading signed IPA (%d%%)…" % int(sent * 100 / total),
@@ -498,11 +526,11 @@ def start_install_worker(params):
             }
             storage.record_installed_app(app_record)
             _update_job(step="Installed %s!" % app_record["name"], progress=100)
-            _finish_job(result={"installed": app_record})
+            _finish_job(result={"installed": app_record}, job_id=my_id)
         except asyncio.CancelledError:
-            _finish_job(error="Installation cancelled.")
+            _finish_job(error="Installation cancelled.", job_id=my_id)
         except Exception as exc:
-            _finish_job(error=str(exc))
+            _finish_job(error=str(exc), job_id=my_id)
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -525,10 +553,11 @@ def start_refresh_all_worker():
     if not email:
         raise RuntimeError("Please sign in to your Apple ID first.")
 
-    _start_job("refresh-all", "Refreshing %d Apps" % len(apps), "Connecting to Apple…")
+    my_id = _start_job("refresh-all", "Refreshing %d Apps" % len(apps), "Connecting to Apple…")
 
     def _worker():
         try:
+            _throw_if_cancelled()
             session = apple.get_saved_session()
             if session is None:
                 raise RuntimeError("Your Apple ID session is missing or expired. Sign in again in Options > Apple ID.")
@@ -536,6 +565,7 @@ def start_refresh_all_worker():
             refreshed = []
             total_apps = len(apps)
             for idx, app in enumerate(apps, 1):
+                _throw_if_cancelled()
                 name = app.get("name") or app.get("bundle_id")
                 base_pct = int((idx - 1) * 100 / total_apps)
                 _update_job(
@@ -587,18 +617,22 @@ def start_refresh_all_worker():
                 refreshed.append(name)
 
             _update_job(step="Refreshed %d app(s)!" % len(refreshed), progress=100)
-            _finish_job(result={"refreshed": refreshed})
+            _finish_job(result={"refreshed": refreshed}, job_id=my_id)
+        except asyncio.CancelledError:
+            _finish_job(error="Refresh cancelled.", job_id=my_id)
         except Exception as exc:
-            _finish_job(error=str(exc))
+            _finish_job(error=str(exc), job_id=my_id)
 
     threading.Thread(target=_worker, daemon=True).start()
 
 
 # --- Self-Update Helper -----------------------------------------------------
 
-def run_self_update():
+def run_self_update(progress=None):
     import re as _re
+    _report = progress or (lambda _pct, _msg: None)
     repo = "barismd/BariStore"
+    _report(8, "Checking latest BariStore commit on GitHub…")
     status, _h, body = apple.http_request(
         "GET",
         "https://github.com/%s/commits/main.atom" % repo,
@@ -612,6 +646,7 @@ def run_self_update():
         if match
         else "https://raw.githubusercontent.com/%s/main" % repo
     )
+    _report(30, "Downloading update script…")
     status, _h, script_bytes = apple.http_request(
         "GET",
         base + "/install.sh",
@@ -621,6 +656,7 @@ def run_self_update():
     if status != 200 or not script_bytes:
         raise RuntimeError("Could not download update script (HTTP %d)." % status)
 
+    _report(55, "Downloaded update script (%d KB), running installer…" % (len(script_bytes) // 1024))
     fd, tmp = tempfile.mkstemp(prefix=".baristore-update-", dir=storage.ROOT)
     try:
         with os.fdopen(fd, "wb") as out:
@@ -630,6 +666,7 @@ def run_self_update():
         code = subprocess.call(["sh", tmp], env=env)
         if code != 0:
             raise RuntimeError("Update script exited with code %d." % code)
+        _report(100, "Update finished.")
         return "Updated successfully! Restart BariStore to apply changes."
     finally:
         try:
@@ -1062,7 +1099,25 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
             if route == "/api/update":
-                msg = run_self_update()
+                with _LOCK:
+                    if _JOB["active"]:
+                        self._send_json(
+                            200,
+                            {"ok": True, "message": "Another operation is running; retry after it finishes."},
+                        )
+                        return
+                my_id = _start_job("update", "Checking for updates", "Starting update…")
+                try:
+                    msg = run_self_update(
+                        progress=lambda pct, step: _update_job(
+                            step=step, progress=int(pct)
+                        )
+                    )
+                except Exception as exc:
+                    _finish_job(error=str(exc), job_id=my_id)
+                    self._send_json(400, {"ok": False, "error": str(exc)})
+                    return
+                _finish_job(result={"message": msg}, job_id=my_id)
                 self._send_json(200, {"ok": True, "message": msg})
                 return
 
@@ -1122,20 +1177,23 @@ def run(open_browser=True):
         print("  open   BROWSER=internalbrowser openurl %s" % url)
     print("  press Enter to stop the server.")
 
-    import select as _select
+    def _wait_for_enter():
+        # Blocking readline in a daemon thread: works whether or not stdin is
+        # a TTY (a-Shell may not report isatty). EOF (closed stdin) is ignored
+        # so background launches keep running; any real line stops the server.
+        try:
+            if sys.stdin is None:
+                return
+            line = sys.stdin.readline()
+            if line:
+                _STOP.set()
+        except Exception:
+            pass
+
+    threading.Thread(target=_wait_for_enter, daemon=True).start()
     try:
         while not _STOP.is_set():
-            if sys.stdin and sys.stdin.isatty():
-                try:
-                    r, _, _ = _select.select([sys.stdin], [], [], 0.5)
-                    if r:
-                        line = sys.stdin.readline()
-                        if line != "":
-                            break
-                except (OSError, ValueError):
-                    _STOP.wait(0.5)
-            else:
-                _STOP.wait(0.5)
+            _STOP.wait(0.5)
     except KeyboardInterrupt:
         print()
     finally:

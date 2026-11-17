@@ -1,4 +1,4 @@
 """BariStore — On-device iOS App Store, Signer, and JIT Enabler for a-Shell (MIT)."""
 
-VERSION = "0.9.50"
+VERSION = "0.9.51"
 APP_NAME = "BariStore"
