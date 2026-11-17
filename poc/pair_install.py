@@ -649,7 +649,7 @@ async def pair_fresh(identity, timeout, raw=False, target_ip=""):
     pseudo = pairing.PairingRecord(identity, info)
     record_path = save_record(pseudo)
     udid = normalise_udid(info.get("udid", ""))
-    save_state(paired=True, udid=udid, peer_ip=peer_ip,
+    save_state(paired=True, udid=udid, peer_ip=peer_ip, paired_at=int(time.time()),
                peer_name=info.get("name", ""), record=record_path)
     return rpp_tunnel.load_record(record_path), udid, peer_ip, info
 
@@ -1084,7 +1084,7 @@ async def _run(args):
         registry_upsert(imported_info, record_path, "")
         record = imported
         udid = normalise_udid(args.get("udid") or imported_udid or udid)
-        save_state(paired=True, udid=udid, record=RECORD_PATH)
+        save_state(paired=True, udid=udid, record=RECORD_PATH, paired_at=int(time.time()))
         _say("  imported     %s" % source)
         if udid:
             _say("  UDID         %s" % udid)

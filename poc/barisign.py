@@ -67,7 +67,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.21"
+VERSION = "0.9.22"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -82,6 +82,12 @@ VARIANTS_FILE = os.path.join(_HERE, "..", "variants.json")
 # from it, and an early return in main() used to leave it pointing at the app
 # container root, which is not writable.
 os.makedirs(STATE_DIR, exist_ok=True)
+try:
+    # The drop folder must exist before the picker runs, or Files shows
+    # nothing to drop into. Same reason as STATE_DIR: do it at import.
+    os.makedirs(CUSTOM_IPA_DIR, exist_ok=True)
+except OSError:
+    pass
 portal.STORAGE = STATE_DIR
 signin.STORAGE = STATE_DIR
 
@@ -531,8 +537,23 @@ def _sign_in(email, preferred=None, use_clipboard=False, staged=False):
         works even when the terminal's echo was left off by the password prompt."""
         # Same byte reader as every other prompt: the spinner is already
         # stopped here, and routing through _read_line keeps 2FA immune to
-        # that whole class of terminal-mode bugs.
-        return "".join(ch for ch in _read_line("  %s: " % label) if ch.isdigit())
+        # that whole class of terminal-mode bugs. Fresh line first: the iOS
+        # system Allow/code popup can shift the view while it is up, so the
+        # prompt must not share a line with anything. Empty returns (focus
+        # jump, stray Return) re-prompt instead of sending a blank code to
+        # Apple, which would burn the whole sign-in.
+        _line_clear()
+        print("  %s shown on your trusted device:" % label)
+        while True:
+            try:
+                entered = "".join(ch for ch in _read_line("  code: ") if ch.isdigit())
+            except KeyboardInterrupt:
+                print()
+                raise
+            if len(entered) >= 6:
+                print("  code entered (%d digits), checking with Apple..." % len(entered))
+                return entered
+            print("  ! that was %d digits; enter all 6" % len(entered))
 
     for index, url in enumerate(candidates, 1):
         _step(1, 3, "anisette")
@@ -582,6 +603,13 @@ def _sign_in(email, preferred=None, use_clipboard=False, staged=False):
                     _forget_anisette(anisette, state_path)
                     refused_identity = True
                     break          # keep the password: it was never the problem
+                if "rejected the verification code" in message:
+                    # Wrong/expired code, not a wrong password: keep everything
+                    # and ask for the code again instead of restarting login.
+                    print("  ! code rejected; enter the current one")
+                    if attempt < 2:
+                        print("  retry %d/3" % (attempt + 2))
+                        continue
                 if "-22406" in message or "correct password" in message.lower():
                     print("  ! wrong password (-22406)")
                     print("    apple ID sent: %r" % email)
@@ -627,13 +655,51 @@ def _forget_anisette(anisette, state_path):
         pass
 
 
-def _portal(account, email, udid, bundle_id, device_name, app_name):
+def _reused_session(email):
+    """A saved portal session that still works, or None.
+
+    The portal token is a bearer credential like the signing key: it lives in
+    state/ (sandboxed to a-Shell, wiped by forget/reset, never printed) and is
+    validated live with listTeams before use. A dead token falls back to a
+    full sign-in, so expiry just costs one extra Apple round-trip.
+    """
+    saved = load_state().get("gs_token") or {}
+    if not isinstance(saved, dict):
+        return None
+    if (saved.get("email") or "") != email:
+        return None
+    token, adsid = saved.get("token") or "", saved.get("adsid") or ""
+    if not token or not adsid:
+        return None
+    try:
+        state_path = os.path.join(STATE_DIR, "anisette.json")
+        _step(1, 3, "saved session")
+        anisette, gs = connect_anisette("", state_path)
+        session = DeveloperSession(AppleAccount(email, gs, anisette), token, adsid)
+        session.call("listTeams", key="teams", device_type="")
+    except Exception:                                       # noqa: BLE001
+        _line_clear()
+        return None
+    _line_clear()
+    return session
+
+
+def _login_session(email, staged=False):
+    """Portal session: the saved one when it still works, else a fresh sign-in."""
+    session = _reused_session(email)
+    if session is not None:
+        print("  session    reused (no password, no 2FA needed)")
+        return session
+    account = _sign_in(email, staged=staged)
+    token, adsid = account.app_token("xcode.auth")
+    return DeveloperSession(account, token, adsid)
+
+
+def _portal(session, email, udid, bundle_id, device_name, app_name):
     """Register the device, get a certificate and a provisioning profile."""
     # Also gives the revoke path a stage to redraw, with the Apple ID restored.
     _stage("Portal", "Apple ID  %s" % email)
     started = time.time()
-    token, adsid = account.app_token("xcode.auth")
-    session = DeveloperSession(account, token, adsid)
 
     _step(1, 5, "team")
     team = pick_team(session)
@@ -693,6 +759,11 @@ def _portal(account, email, udid, bundle_id, device_name, app_name):
         print("    developer.apple.com and run portal again.")
     print("  took      %.0f s" % (time.time() - started))
 
+    try:
+        update_state(gs_token={"email": email, "token": session.token,
+                               "adsid": session.adsid, "saved_at": int(time.time())})
+    except Exception:                                       # noqa: BLE001
+        pass
     return {"team_id": team["teamId"], "bundle_id": full_bundle_id,
             "profile": profile_path, "key": key_path, "cert": cert_path}
 
@@ -731,7 +802,9 @@ def _have_command(name):
 def cmd_status(_argv):
     state = load_state()
     _stage("Status")
+    saved = state.get("gs_token") if isinstance(state.get("gs_token"), dict) else {}
     rows = (("Apple ID", state.get("email")), ("UDID", state.get("udid")),
+            ("session", "saved" if saved.get("token") else "-"),
             ("variant", state.get("variant")), ("release", state.get("asset_version")),
             ("bundle", state.get("bundle_id")), ("team", state.get("team_id")),
             ("cert", state.get("cert")), ("profile", state.get("profile")),
@@ -874,9 +947,88 @@ def cmd_udid(argv):
             print("  turn on Developer Mode on the target, then run again")
             return 1
 
-    update_state(udid=udid)
+    update_state(udid=udid, paired_at=int(time.time()))
     _result("UDID", "%s saved" % udid)
     return 0
+
+
+PAIRING_FRESH_SECS = 1800
+
+
+def _ensure_udid(loopback=False):
+    """UDID from state, or pair for it now (loopback for the one-device flow).
+
+    Portal needs the UDID before the pair stage runs, so this is the pairing
+    that happens inside the portal stage. Returns "" when pairing failed.
+    """
+    udid = normalise_udid(load_state().get("udid", ""))
+    if udid:
+        return udid
+    if loopback:
+        pair = os.path.join(_HERE, "pair_install.py")
+        code = subprocess.call([sys.executable, "-u", pair, "--loopback",
+                                "--pair-only", "--keep-awake"])
+        if code != 0:
+            return ""
+        return normalise_udid(load_state().get("udid", ""))
+    print("no UDID: running udid first")
+    if cmd_udid([]) != 0:
+        return ""
+    return normalise_udid(load_state().get("udid", ""))
+
+
+def _ensure_pairing(loopback=False):
+    """A live pairing for the install; skip when this run already paired.
+
+    Portal pairs internally when the UDID is missing, so the pair stage would
+    ask for a second PIN without this check.
+    """
+    state = load_state()
+    try:
+        age = time.time() - float(state.get("paired_at") or 0)
+    except (TypeError, ValueError):                          # noqa: BLE001
+        age = float("inf")
+    record = os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist")
+    if state.get("udid") and os.path.isfile(record) and age < PAIRING_FRESH_SECS:
+        print("  UDID      %s (paired %d min ago, reusing)" % (state["udid"], int(age // 60)))
+        return 0
+    if loopback:
+        pair = os.path.join(_HERE, "pair_install.py")
+        return subprocess.call([sys.executable, "-u", pair, "--loopback",
+                                "--pair-only", "--keep-awake"])
+    return cmd_udid([])
+
+
+def _loopback_port():
+    """RPPairing port behind LocalDevVPN, or 0. Same probe as pair --loopback."""
+    import asyncio as _asyncio
+
+    async def _open(port):
+        try:
+            _reader, writer = await _asyncio.wait_for(
+                _asyncio.open_connection("10.7.0.1", port), 1.0)
+            try:
+                writer.close()
+            except Exception:                               # noqa: BLE001
+                pass
+            return port
+        except Exception:                                   # noqa: BLE001
+            return None
+
+    async def _scan():
+        if await _open(49152):
+            return 49152
+        for chunk in range(49152, 49152 + 64, 16):
+            found = await _asyncio.gather(*[_open(port) for port in range(chunk, chunk + 16)])
+            hit = [port for port in found if port]
+            if hit:
+                return hit[0]
+        return 0
+
+    try:
+        return _asyncio.run(_scan())
+    except Exception:                                       # noqa: BLE001
+        return 0
 
 
 def argv_get(argv, flag):
@@ -928,6 +1080,11 @@ def cmd_login(argv):
         if not email:
             print("no Apple ID")
             return 2
+    reused = _reused_session(email)
+    if reused is not None:
+        update_state(email=email)
+        _result("LOGIN", "ok  (saved session still works: no password, no 2FA)")
+        return 0
     account = _sign_in(email, preferred, use_clipboard, staged=not given)
     update_state(email=email)
     name = ""
@@ -980,15 +1137,12 @@ def cmd_portal(argv):
             print("! that is not a UDID")
             return 2
     if not udid:
-        udid = state.get("udid") or ""
+        udid = _ensure_udid(loopback=False)
     if not udid:
-        print("no UDID: running udid first")
-        if cmd_udid([]) != 0:
-            return 1
-        udid = load_state().get("udid", "")
+        return 1
 
-    account = _sign_in(email)
-    result = _portal(account, email, udid, bundle_id, "BariSign device",
+    session = _login_session(email)
+    result = _portal(session, email, udid, bundle_id, "BariSign device",
                      app_display_name(variant_id=variant, bundle_id=bundle_id))
     update_state(email=email, udid=udid, variant=variant or state.get("variant", ""),
                  bundle_id=result["bundle_id"], team_id=result["team_id"],
@@ -1112,16 +1266,24 @@ def _resolve_ipa_path(typed):
 def _choose_custom_ipa(state):
     """Let the user pick an IPA already on the signer.
 
-    A numbered list when IPAs are found; otherwise (or additionally) a path
-    can be pasted. A distinct bundle id needs its own App ID, and a free
-    Apple ID has 10 App ID slots.
+    A numbered list when IPAs are found; when the folder is empty, an info
+    screen waits for the drop and rescans. A distinct bundle id needs its own
+    App ID, and a free Apple ID has 10 App ID slots.
     """
-    found = _find_signer_ipas()
-    _stage("Custom IPA")
-    print("  put the .ipa in Files > On My iPhone/iPad >")
-    print("  a-Shell > Custom IPAs first, then pick it below.")
-    print()
-    if found:
+    while True:
+        found = _find_signer_ipas()
+        _stage("Custom IPA")
+        print("  put the .ipa in Files > On My iPhone/iPad >")
+        print("  a-Shell > Custom IPAs, then pick it below.")
+        print("  folder: %s" % _display_path(CUSTOM_IPA_DIR))
+        print()
+        if not found:
+            print("  the folder is empty right now.")
+            print("  drop the .ipa in, come back, press Enter to rescan.")
+            typed = _ask("  Enter = rescan, back = go back: ").strip().lower()
+            if typed in ("back", "b", "q"):
+                return None
+            continue
         print("  IPAs in Custom IPAs (newest first):")
         for index, path in enumerate(found, 1):
             try:
@@ -1129,27 +1291,34 @@ def _choose_custom_ipa(state):
             except OSError:
                 size = 0
             print("  %d  %s  (%.1f MB)" % (index, os.path.basename(path), size))
-        print("  or paste a path below.")
-    for _attempt in range(3):
-        typed = _ask("  number or path (empty = back): ").strip()
-        if not typed:
-            return None
-        if typed.isdigit() and found and 1 <= int(typed) <= len(found):
-            path = found[int(typed) - 1]
-        else:
-            path = _resolve_ipa_path(typed)
-        if not path:
-            print("  ! not found, try again")
+        print("  or paste a path below (a new drop needs a rescan first).")
+        picked = None
+        for _attempt in range(3):
+            typed = _ask("  number or path (empty = back): ").strip()
+            if not typed:
+                return None
+            if typed.isdigit() and found and 1 <= int(typed) <= len(found):
+                path = found[int(typed) - 1]
+            else:
+                path = _resolve_ipa_path(typed)
+            if not path:
+                print("  ! not found, try again")
+                continue
+            bundle_id = _ipa_bundle_id(path)
+            if not bundle_id:
+                print("  ! not an IPA (no Payload/*.app/Info.plist)")
+                continue
+            picked = (path, bundle_id)
+            break
+        if picked is None:
+            # Three misses: a file may have landed meanwhile, so rescan
+            # instead of dropping back to the menu.
             continue
-        bundle_id = _ipa_bundle_id(path)
-        if not bundle_id:
-            print("  ! not an IPA (no Payload/*.app/Info.plist)")
-            continue
+        path, bundle_id = picked
         update_state(variant="custom", bundle_id=bundle_id, ipa=path)
         print("  bundle   %s" % bundle_id)
         return {"id": "custom", "name": os.path.basename(path),
                 "bundle_id": bundle_id, "custom_ipa": path}
-    return None
 
 
 def _ipa_bundle_id(path):
@@ -1306,8 +1475,8 @@ def cmd_sign(argv):
 
 
 def cmd_guided(argv):
-    """check -> Apple ID -> Developer Mode? -> pairing/UDID -> variant ->
-    download -> portal -> sign -> [trigger] -> install."""
+    """check -> Apple ID -> variant -> download -> portal -> pairing/UDID ->
+    sign -> [trigger] -> install."""
     state = load_state()
     print("BariSign %s" % VERSION)
     if poc_login._selftest(quiet=True) != 0:
@@ -1323,37 +1492,9 @@ def cmd_guided(argv):
         if not email:
             print("no Apple ID")
             return 2
-    account = _sign_in(email, staged=not state.get("email"))
+    session = _login_session(email, staged=not state.get("email"))
     update_state(email=email)
     state = load_state()
-
-    # Pairing needs the Paired Macs screen, which needs Developer Mode — so
-    # the question comes before any pairing attempt. A saved pairing means
-    # Developer Mode is already there: refresh the UDID and move on.
-    has_record = os.path.isfile(os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist"))
-    if has_record:
-        have_devmode = True
-        if cmd_udid([]) != 0:
-            return 1
-        state = load_state()
-    else:
-        _stage("Developer Mode")
-        print("  on the target, open:")
-        print("    Settings > Privacy & Security > Developer Mode")
-        print("    (or Settings > Developer)")
-        have_devmode = _yes("  is Developer Mode there?",
-                            default=bool(state.get("paired")))
-        if have_devmode:
-            if cmd_udid([]) != 0:
-                return 1
-        else:
-            # No UDID page anymore: pairing is the only source. The attempt
-            # itself can reveal the Developer Mode setting (Apple docs), and
-            # the trigger step after signing covers the rest.
-            print("  no UDID page: pairing now; it can reveal Developer Mode")
-            if cmd_udid([]) != 0:
-                return 1
-        state = load_state()
 
     variants = load_variants()
     if variants:
@@ -1369,7 +1510,31 @@ def cmd_guided(argv):
             return 1
         state = load_state()
 
-    result = _portal(account, email, state.get("udid", ""), state.get("bundle_id", ""),
+    # Pairing needs the Paired Macs screen, which needs Developer Mode — so
+    # the question comes before portal's internal pairing. A saved pairing
+    # means Developer Mode is already there.
+    has_record = os.path.isfile(os.path.join(STATE_DIR, "PairingFile_RemoteRP.plist"))
+    if has_record:
+        have_devmode = True
+    else:
+        _stage("Developer Mode")
+        print("  on the target, open:")
+        print("    Settings > Privacy & Security > Developer Mode")
+        print("    (or Settings > Developer)")
+        have_devmode = _yes("  is Developer Mode there?",
+                            default=bool(state.get("paired")))
+        if not have_devmode:
+            # No UDID page anymore: pairing is the only source. The attempt
+            # itself can reveal the Developer Mode setting (Apple docs), and
+            # the trigger step after signing covers the rest.
+            print("  no UDID page: pairing now; it can reveal Developer Mode")
+
+    udid = _ensure_udid(loopback=False)
+    if not udid:
+        return 1
+    state = load_state()
+
+    result = _portal(session, email, udid, state.get("bundle_id", ""),
                      "BariSign device",
                      app_display_name(variant_id=state.get("variant", ""),
                                       bundle_id=state.get("bundle_id", "")))
@@ -1377,7 +1542,13 @@ def cmd_guided(argv):
                  profile=result["profile"], key=result["key"], cert=result["cert"])
     _result("PORTAL", "ok")
 
+    # The install needs a live pairing. Skipped when portal just paired,
+    # so one run asks for one PIN.
     state = load_state()
+    if _ensure_pairing(loopback=False) != 0:
+        return 1
+    state = load_state()
+
     _stage("Sign")
     saved = signer.find_saved_paths(STATE_DIR)
     # The .zip is only a convenience copy for manual sharing; the install
@@ -1411,11 +1582,9 @@ def cmd_guided(argv):
 
 
 def cmd_one(argv):
-    """Single-device full install: check -> Apple ID -> loopback pair ->
-    variant -> download -> portal -> sign -> [trigger] -> loopback install.
-
-    No flags: loopback and keep-awake are always on, because that is what this
-    command is. Needs LocalDevVPN connected on this same device.
+    """Single-device full install: check -> Apple ID -> variant -> download ->
+    portal -> pair -> sign -> install. No flags: loopback and keep-awake are
+    always on, because that is what this command is.
     """
     if "--help" in argv or "-h" in argv or "help" in argv:
         print("BariSign %s" % VERSION)
@@ -1438,30 +1607,21 @@ def cmd_one(argv):
         if not email:
             print("no Apple ID")
             return 2
-    account = _sign_in(email, staged=not state.get("email"))
+    _stage("Requirements")
+    print("  this device needs: Developer Mode ON, LocalDevVPN connected,")
+    print("  volume audible (the app speaks while you pair).")
+    print("  later: Settings > Developer > Paired Macs, enter the PIN shown here.")
+    while True:
+        if _loopback_port():
+            print("  loopback     LocalDevVPN answers")
+            break
+        print("  ! LocalDevVPN is not answering on this device")
+        print("    connect it, then continue.")
+        _ask("  press Enter when connected (Ctrl-C to stop): ")
+
+    session = _login_session(email, staged=not state.get("email"))
     update_state(email=email)
     state = load_state()
-
-    _stage("Pairing")
-    print("  same device: Settings > Developer > Paired Macs")
-    print("  this app keeps speaking while you are over there;")
-    print("  enter the printed PIN on the Paired Macs screen.")
-    code = subprocess.call([sys.executable, "-u", pair, "--loopback",
-                            "--pair-only", "--keep-awake"])
-    state = load_state()
-    if code != 0 or not state.get("udid"):
-        print("  pairing did not return a UDID")
-        print("  turn on Developer Mode, connect LocalDevVPN, run again")
-        return 1
-
-    _stage("Developer Mode")
-    print("  on this device, open:")
-    print("    Settings > Privacy & Security > Developer Mode")
-    print("    (or Settings > Developer)")
-    have_devmode = _yes("  is Developer Mode there?",
-                        default=bool(state.get("paired")))
-    if not have_devmode:
-        print("  pairing may reveal it; continuing, trigger below if needed")
 
     variants = load_variants()
     if variants:
@@ -1477,7 +1637,16 @@ def cmd_one(argv):
             return 1
         state = load_state()
 
-    result = _portal(account, email, state.get("udid", ""), state.get("bundle_id", ""),
+    # Portal registers the device, so it needs the UDID first: the loopback
+    # pairing runs here, inside the portal stage.
+    udid = _ensure_udid(loopback=True)
+    if not udid:
+        print("  pairing did not return a UDID")
+        print("  turn on Developer Mode, connect LocalDevVPN, run again")
+        return 1
+    state = load_state()
+
+    result = _portal(session, email, udid, state.get("bundle_id", ""),
                      "BariSign device",
                      app_display_name(variant_id=state.get("variant", ""),
                                       bundle_id=state.get("bundle_id", "")))
@@ -1485,23 +1654,22 @@ def cmd_one(argv):
                  profile=result["profile"], key=result["key"], cert=result["cert"])
     _result("PORTAL", "ok")
 
+    # The install needs a live pairing. Skipped when portal just paired,
+    # so one run asks for one PIN.
+    _stage("Pairing")
+    print("  same device: Settings > Developer > Paired Macs")
+    print("  this app keeps speaking while you are over there;")
+    print("  enter the printed PIN on the Paired Macs screen.")
     state = load_state()
+    if _ensure_pairing(loopback=True) != 0:
+        return 1
+    state = load_state()
+
     _stage("Sign")
     saved = signer.find_saved_paths(STATE_DIR)
     result = _sign_now(ipa, saved, [], hint=False, make_zip=False)
     if result is None:
         return 1
-    if not have_devmode:
-        _stage("Developer Mode")
-        print("  this device needs Developer Mode before installing.")
-        print("  opening the signed IPA: tap it once, then delete it.")
-        print("  the switch appears after the attempt.")
-        if _yes("  open the signed IPA now?", True):
-            _share_file(result["ipa"])
-        print("  after tapping: turn on Developer Mode,")
-        print("  then delete the tapped file.")
-        _ask("  press Enter when done: ")
-        state = load_state()
     if _yes("  install on this device now?", True):
         command = [sys.executable, "-u", pair, "--loopback", "--keep-awake",
                    "--ipa", result["ipa"]]

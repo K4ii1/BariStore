@@ -91,9 +91,10 @@ The a-Shell interface (no Shortcuts):
 - asks readiness questions (LocalDevVPN installed & connected? Developer Mode on? Apple ID ready?),
 - asks which variant,
 - points to a complete beginner GUIDE,
-- runs the heavy steps on the **signer**: download the original (optional Developer Mode trigger),
-  pair the target and take its UDID, Apple login with anisette (retry with another anisette server on
-  failure), sign the chosen IPA.
+- runs the heavy steps on the **signer**, always in this order: Apple login (saved session
+  reused when Apple still accepts it), variant + download, portal (pairs for the UDID when
+  missing), pair (skipped when this run already paired), sign the chosen IPA (optional
+  Developer Mode trigger only in the two-device flow). Anisette failover on -80045/-80046/503.
 - Ends with `sh barisign pair`: the signer advertises as a pairable host, the **target** opens
   Settings → Developer → Paired Macs, enters the code, and the signer installs over Wi-Fi.
 

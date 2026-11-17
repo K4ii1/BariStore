@@ -29,7 +29,9 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
 ## How the flow works
 
 1. On the **signer**, install a-Shell and BariSign, then run `sh barisign`.
-2. Sign in with your Apple ID. On the **target**, check Settings → Developer Mode:
+   One device instead: `sh barisignone` (Developer Mode ON + LocalDevVPN required).
+2. Sign in with your Apple ID (saved securely afterwards: no password or 2FA
+   until Apple refuses the session). On the **target**, check Settings → Developer Mode:
    if the switch is missing, the guided run walks you through a one-time trigger
    install that makes it appear.
 3. Pair the target: on the **target** open Settings → Developer Mode (or Settings →
@@ -140,7 +142,9 @@ Single-device limits, background execution and iPad windowing: `docs/SINGLE_DEVI
 ## Your Apple ID and your data
 
 - **Your password is never transmitted.** Apple's sign-in is SRP-6a: the password becomes a one-time proof
-  on the signer. It is never written to disk.
+  on the signer. It is never written to disk. The saved portal *session token* (not the password)
+  is reused so 2FA is not asked again; it lives in sandboxed `state/`, is never printed, and
+  `forget`/`reset` wipe it.
 - **The anisette server never sees your account.** It is asked only for device-identity headers, with a
   random identifier we generate — never your Apple ID, password or token.
 - **No BariSign server exists.** Nothing is collected: no analytics, no telemetry, no accounts.
