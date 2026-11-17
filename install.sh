@@ -119,7 +119,10 @@ download_all() {
                  variants.json install.sh; do
         if fetch "$_file" "$_file.part"; then
             _n=$((_n + 1))
-            if [ -f "$_file" ] && cmp -s "$_file" "$_file.part"; then
+            if [ -f "$_file" ] && python3 -c "import sys,hashlib
+a = hashlib.sha256(open(sys.argv[1],'rb').read()).digest()
+b = hashlib.sha256(open(sys.argv[2],'rb').read()).digest()
+sys.exit(0 if a == b else 1)" "$_file" "$_file.part" 2>/dev/null; then
                 _current=$((_current + 1))
                 rm -f "$_file.part"
             else

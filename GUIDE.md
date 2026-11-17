@@ -34,18 +34,22 @@ A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
 3. **Variant** — 1–5, or 6 for your own `.ipa` (drop it into Files → a-Shell → Custom IPAs first;
    the picker rescans when the folder was empty).
 4. **Download** — the current IPA, with size + SHA-256 checked. Reused when still current.
-5. **Pairing** — open Settings → Developer → Paired Macs → BariSign, enter the big PIN (if Paired
-   Macs is missing, look for a new Developer Mode section — pairing itself can reveal it).
-   The page plays silence so iOS holds the app while you are in Settings.
-6. **Developer Mode** — read over the tunnel. If off or hidden: the switch is shown (no restart).
+5. **Portal** — registers this iPhone, issues the certificate, downloads the profile (with the App
+   Group so SideStore/LiveContainer open their container). Needs the UDID, so it pairs first
+   when there is none yet (same screen, one PIN).
+6. **Pairing** — verifies the live pairing (skipped when the portal just paired seconds ago).
+   Settings → Developer → Paired Macs → BariSign, big PIN on the page (if Paired Macs is
+   missing, look for a new Developer Mode section — pairing itself can reveal it).
+7. **Developer Mode** — read over the tunnel. If off or hidden: the switch is shown (no restart).
    Turning it on always restarts the iPhone, which ends the run: flip it (or tap **Turn on now**),
    let it restart, then open BariSign and tap Start again — everything is saved and the run jumps
    straight back here to verify. With a passcode set, iOS refuses the instant path: flip it by hand.
-7. **Portal** — registers this iPhone, issues the certificate, downloads the profile (with the App
-   Group so SideStore/LiveContainer open their container).
 8. **Sign** — signs and verifies the IPA.
 9. **Install** — uploads and installs over loopback. Then: Settings → General → VPN & Device
    Management → trust the developer → open the app.
+
+The page has **Stop** (ends the run anywhere), **Back** (re-asks the previous question and
+replays your answers up to it) and a **Settings** card (version, what is saved, forget it).
 
 `Stop` (or Ctrl-C in the terminal) ends the run any time. Nothing is half-installed.
 

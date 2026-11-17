@@ -32,6 +32,9 @@ provisioning-profile download/parsing.
 1. **`aes_cbc_decrypt()` reimplemented** with `cryptography`. Upstream shells out to
    `openssl enc -d`, and this function is on the sign-in path (it decrypts Apple's SPD reply).
    a-Shell has no `openssl`.
+2. **ALPN `http/1.1` advertised** on the shared context: `http.client` sends no ALPN by
+   default, which makes the handshake fingerprint stand out to bot filtering in front of
+   some anisette hosts (device-observed as bare EOF mid-handshake).
 2. The `openssl()` helper was **removed** (it is unused once the function above is replaced).
 3. **`Anisette.detect()` keeps the server's `client_info`/`user_agent`** instead of discarding them.
    Since 2026-10-12 Apple refuses a sign-in whose claimed platform (-80045) differs from the platform

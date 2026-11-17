@@ -173,7 +173,63 @@ def _panel_rev():
         server.shutdown()
 
 
+def _back_and_cancel():
+    import threading, time as _t
+    server = _serve()
+    try:
+        # back with nothing pending -> false
+        status, body = _post(server, "/%s/api/back" % ("t" * 32),
+                             b"{}", "application/json")
+        assert status == 200 and json.loads(body) == {"ok": False}, (status, body)
+        print("ok  back with no question")
+        # question + history -> true, and replay auto-answers the rest
+        with webui._LOCK:
+            webui._STATE["question"] = {"id": 31, "kind": "text",
+                                        "label": "Name?", "options": []}
+            webui._QUESTION["event"] = threading.Event()
+            webui._HISTORY.append({"label": "Earlier?", "kind": "text", "answer": "x"})
+        status, body = _post(server, "/%s/api/back" % ("t" * 32),
+                             b"{}", "application/json")
+        assert status == 200 and json.loads(body) == {"ok": True}, (status, body)
+        print("ok  back arms replay")
+        with webui._LOCK:
+            assert webui._REPLAY["active"] is True
+            webui._REPLAY["active"] = False
+            webui._QUESTION["event"] = None
+            webui._STATE["question"] = None
+            webui._HISTORY.clear()
+    finally:
+        server.shutdown()
+
+
+def _cancel():
+    import asyncio as _a
+    import threading
+    started = threading.Event()
+    async def _waiter():
+        started.set()
+        await _a.sleep(30)
+        return "late"
+    holder = {}
+    def _target():
+        try:
+            holder["r"] = webui.run_coro(_waiter())
+        except Exception as exc:                              # noqa: BLE001
+            holder["e"] = type(exc).__name__
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    assert started.wait(timeout=5), "loopback coro never started"
+    import time as _t
+    _t.sleep(0.5)
+    webui._stop_async()
+    thread.join(timeout=10)
+    assert holder.get("e") == "FlowStop", holder
+    print("ok  stop cancels in-flight wait")
+
+
 if __name__ == "__main__":
     _forms()
     _panel_rev()
+    _back_and_cancel()
+    _cancel()
     main()

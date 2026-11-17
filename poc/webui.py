@@ -59,6 +59,7 @@ _STOP = threading.Event()
 _QUESTION = {"event": None, "answer": None}
 _QID = [0]
 _AUDIO_OK = {"event": None}
+_ASYNC = {"loop": None, "task": None}
 _LAST_POLL = {"at": 0.0}
 _REV = {"n": 0}
 
@@ -128,9 +129,34 @@ class _WebLog:
         return False
 
 
+class FlowRestart(Exception):
+    """Back button: re-run the flow, replaying answers up to the fixed one."""
+
+
 def _ask_web(label, kind="text", options=None, password_hint=""):
     if _STOP.is_set():
         raise FlowStop()
+    # Replay mode (after Back): auto-answer known questions in order, re-ask
+    # the last one so it can be fixed; a changed path stops the replay.
+    if _REPLAY["active"]:
+        with _LOCK:
+            idx = _REPLAY["index"]
+            hist = list(_HISTORY)
+        if idx < len(hist):
+            item = hist[idx]
+            if item["label"] == label and item["kind"] == kind:
+                with _LOCK:
+                    _REPLAY["index"] = idx + 1
+                if idx < len(hist) - 1:
+                    _log_line("%s %s (kept)" % (label, "••" if kind == "secret" else item["answer"]))
+                    return item["answer"]
+                with _LOCK:
+                    del _HISTORY[idx:]
+                    _REPLAY["active"] = False
+            else:
+                with _LOCK:
+                    del _HISTORY[idx:]
+                    _REPLAY["active"] = False
     with _LOCK:
         _QID[0] += 1
         _STATE["question"] = {"id": _QID[0], "kind": kind, "label": label,
@@ -141,9 +167,15 @@ def _ask_web(label, kind="text", options=None, password_hint=""):
     event = _QUESTION["event"]
     while not _STOP.is_set():
         if event.wait(0.5):
+            if _STOP.is_set():
+                raise FlowStop()
             with _LOCK:
                 answer = _QUESTION["answer"]
                 _STATE["question"] = None
+            if answer == "__back__":
+                raise FlowRestart()
+            _HISTORY.append({"label": label, "kind": kind,
+                             "options": list(options or []), "answer": answer or ""})
             _bump_rev()
             _log_line("%s %s" % (label, "••••••" if kind == "secret" else (answer or "")))
             return answer or ""
@@ -166,6 +198,44 @@ def _pick_team_web(session):
         if answer == options[index] or answer.strip() == str(index + 1):
             return team
     return teams[0]
+
+
+_HISTORY = []
+_REPLAY = {"active": False, "index": 0}
+
+
+def run_coro(coro):
+    """Run a coroutine so Stop can cancel it mid-wait (pairing, install).
+
+    asyncio.run gives no handle to cancel; this one does: the stop handler
+    cancels the task through the stored loop.
+    """
+    import asyncio as _asyncio
+    loop = _asyncio.new_event_loop()
+    task = loop.create_task(coro)
+    with _LOCK:
+        _ASYNC["loop"] = loop
+        _ASYNC["task"] = task
+    try:
+        return loop.run_until_complete(task)
+    except _asyncio.CancelledError:
+        raise FlowStop()
+    finally:
+        with _LOCK:
+            _ASYNC["loop"] = None
+            _ASYNC["task"] = None
+        loop.close()
+
+
+def _stop_async():
+    with _LOCK:
+        loop = _ASYNC["loop"]
+        task = _ASYNC["task"]
+    if loop is not None and task is not None:
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except Exception:                                       # noqa: BLE001
+            pass
 
 
 def _heartbeat(text):
@@ -305,6 +375,22 @@ def _wait_audio_ok(timeout=20):
             _AUDIO_OK["event"] = None
 
 
+def _reset_for_rerun(keep_log=True):
+    """Back to a clean slate for a restarted run; answers replay from history."""
+    with _LOCK:
+        _STATE["steps"] = [{"id": step_id, "label": label, "state": "todo"}
+                            for step_id, label in STEP_DEFS]
+        _STATE["done"] = None
+        _STATE["pin"] = None
+        _STATE["question"] = None
+        _STATE["progress"] = None
+        _STATE["activity"] = ""
+        _STATE["audio"] = False
+        if not keep_log:
+            _STATE["log"] = []
+    _bump_rev()
+
+
 def _run_flow():
     """The single-device pipeline. Runs in its own thread under _WebLog."""
     import contextlib
@@ -322,18 +408,27 @@ def _run_flow():
     old = sys.stdout
     sys.stdout = out
     try:
-        _flow(barisign, poc_login)
+        while True:
+            try:
+                _flow(barisign, poc_login)
+                break
+            except FlowRestart:
+                _log_line("— back one step —")
+                _reset_for_rerun()
+                continue
     except FlowStop:
         with _LOCK:
             if _STATE["done"] is None:
                 _STATE["done"] = {"ok": False, "title": "Stopped",
                                   "lines": ["Nothing was half-installed. Run again any time."]}
+                _bump_rev()
     except Exception as exc:                                    # noqa: BLE001
         _log_line("FAILED %r" % (exc,))
         with _LOCK:
             _STATE["done"] = {"ok": False, "title": "Stopped with an error",
                               "lines": [str(exc)[:300],
                                         "The terminal behind this sheet has the full log."]}
+            _bump_rev()
     finally:
         sys.stdout = old
         _restore(saved)
@@ -390,55 +485,26 @@ def _flow(barisign, poc_login):
                 raise FlowStop()
     _step_state("variant", "done")
 
+    _act("Downloading the IPA…")
     ipa, info = barisign._obtain_ipa(barisign.load_state(), [])
     if not ipa:
         raise RuntimeError("download failed; see the log")
     if info.get("bundle_id"):
         if barisign._adopt_custom_bundle_id(info["bundle_id"]) is None:
             raise RuntimeError("custom bundle id refused")
-    _step_state("pairing", "active")
-    with _LOCK:
-        _STATE["audio"] = True
-        _STATE["keepalive"] = "page audio…"
-    _act("Pairing: open Settings > Developer > Paired Macs…")
-    _log_line("Advertising as BariSign. Open Settings > Developer > "
-              "Paired Macs on this iPhone and enter the printed PIN. "
-              "No Paired Macs entry yet? Look for a new Developer Mode section "
-              "in Settings — pairing itself can reveal it.")
-    if not _wait_audio_ok():
-        # No sound on purpose: keep the app open and the screen awake.
-        with _LOCK:
-            _STATE["keepalive"] = "page audio?"
-        _log_line("page audio not confirmed; keep the app open and the screen awake")
-    else:
-        with _LOCK:
-            _STATE["keepalive"] = "page audio"
-    stop_beat = _heartbeat("waiting for the tap in Settings")
-    try:
-        state = barisign.load_state()
-        code = asyncio.run(pair_install._run(
-            _pair_args(udid=state.get("udid", ""), pair_only=True)))
-    finally:
-        stop_beat()
-        with _LOCK:
-            _STATE["audio"] = False
-            pin_cleared = _STATE["pin"] is not None
-            _STATE["pin"] = None
-            _STATE["keepalive"] = "—"
-    if pin_cleared:
-        _bump_rev()
-    if code != 0:
-        raise RuntimeError("pairing step failed; see the log")
-    _step_state("pairing", "done")
-
-    _step_state("developer-mode", "active")
-    _devmode_web()
-    _step_state("developer-mode", "done")
 
     _step_state("portal", "active")
+    _act("Preparing registration…")
     state = barisign.load_state()
-    result = barisign._portal(session, email, state.get("udid", ""),
-                              state.get("bundle_id", ""), "BariSign device",
+    udid = state.get("udid", "")
+    if not udid:
+        _log_line("No UDID yet: pairing once inside the portal stage.")
+        udid = _pair_now("Pairing for the UDID…")
+    if not udid:
+        raise RuntimeError("pairing did not return a UDID")
+    state = barisign.load_state()
+    result = barisign._portal(session, email, udid, state.get("bundle_id", ""),
+                              "BariSign device",
                               barisign.app_display_name(
                                   variant_id=state.get("variant", ""),
                                   bundle_id=state.get("bundle_id", "")))
@@ -447,7 +513,22 @@ def _flow(barisign, poc_login):
                           cert=result["cert"])
     _step_state("portal", "done")
 
+    _step_state("pairing", "active")
+    if _pairing_is_fresh():
+        _log_line("paired minutes ago; reusing it (one PIN per run)")
+    else:
+        udid = _pair_now("Pairing: open Settings > Developer > Paired Macs…")
+        if not udid:
+            raise RuntimeError("pairing did not return a UDID")
+    _step_state("pairing", "done")
+
+    _step_state("developer-mode", "active")
+    _act("Checking Developer Mode…")
+    _devmode_web()
+    _step_state("developer-mode", "done")
+
     _step_state("sign", "active")
+    _act("Signing…")
     state = barisign.load_state()
     saved_paths = barisign.signer.find_saved_paths(barisign.STATE_DIR)
     signed = barisign._sign_now(
@@ -461,26 +542,19 @@ def _flow(barisign, poc_login):
     _act("Installing…")
     with _LOCK:
         _STATE["audio"] = True
-        _STATE["keepalive"] = "page audio…"
+        _STATE["keepalive"] = "page audio"
     if not _wait_audio_ok():
         with _LOCK:
             _STATE["keepalive"] = "page audio?"
         _log_line("page audio not confirmed; keep the app open and the screen awake")
-    else:
-        with _LOCK:
-            _STATE["keepalive"] = "page audio"
     try:
-        code = asyncio.run(pair_install._run(
+        code = run_coro(pair_install._run(
             _pair_args(udid=barisign.load_state().get("udid", ""),
                        ipa=signed["ipa"])))
     finally:
         with _LOCK:
             _STATE["audio"] = False
-            pin_cleared = _STATE["pin"] is not None
-            _STATE["pin"] = None
             _STATE["keepalive"] = "—"
-    if pin_cleared:
-        _bump_rev()
     if code != 0:
         raise RuntimeError("install step failed; see the log")
     _step_state("install", "done")
@@ -492,6 +566,52 @@ def _flow(barisign, poc_login):
                       "trust the developer, then open the app."]}
 
 
+def _pairing_is_fresh():
+    import barisign
+    import time as _time
+    try:
+        state = barisign.load_state()
+    except Exception:                                           # noqa: BLE001
+        return False
+    try:
+        age = _time.time() - float(state.get("paired_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    record = os.path.join(barisign.STATE_DIR, "PairingFile_RemoteRP.plist")
+    return bool(state.get("udid")) and os.path.isfile(record) and age < 1800
+
+
+def _pair_now(purpose):
+    """In-process loopback pairing with keep-alive and a live timer."""
+    import barisign
+    with _LOCK:
+        _STATE["audio"] = True
+        _STATE["keepalive"] = "page audio…"
+    _act(purpose)
+    if not _wait_audio_ok():
+        with _LOCK:
+            _STATE["keepalive"] = "page audio?"
+        _log_line("page audio not confirmed; keep the app open and the screen awake")
+    else:
+        with _LOCK:
+            _STATE["keepalive"] = "page audio"
+    stop_beat = _heartbeat("waiting for the tap in Settings")
+    try:
+        state = barisign.load_state()
+        code = run_coro(pair_install._run(
+            _pair_args(udid=state.get("udid", ""), pair_only=True)))
+    finally:
+        stop_beat()
+        with _LOCK:
+            _STATE["audio"] = False
+            pin_cleared = _STATE["pin"] is not None
+            _STATE["pin"] = None
+            _STATE["keepalive"] = "—"
+        if pin_cleared:
+            _bump_rev()
+    if code != 0:
+        raise RuntimeError("pairing step failed; see the log")
+    return barisign.load_state().get("udid", "")
 def _devmode_web():
     """Developer Mode gate inside the web flow: status, show, optional turn-on.
 
@@ -583,7 +703,7 @@ def _devmode_web():
             raise RuntimeError("Developer Mode is still off. Turn it on and run again.")
         _log_line("Developer Mode is on.")
 
-    asyncio.run(_seq())
+    run_coro(_seq())
 
 
 PAGE = """<!doctype html>
@@ -647,7 +767,6 @@ button.secondary { background: #e9e9ee; color: #000; }
 .log pre { white-space: pre-wrap; word-break: break-word; font-size: .78rem;
   max-height: 14rem; overflow-y: auto; margin: .4rem 0 0; }
 #logbox.closed pre { display: none; }
-.log.closed pre { display: none; }
 .stop { text-align: center; margin-top: 1.4rem; }
 .err { color: #b00020; font-weight: 600; }
 .ok { color: #137333; font-weight: 600; }
@@ -659,7 +778,9 @@ button.secondary { background: #e9e9ee; color: #000; }
 <p class="sub">one iPhone, no computer. <span>keep-alive <span id="keepalive">__AUDIO__</span></span></p>
 <ol class="steps" id="steps">__STEPS__</ol>
 <div class="card"><h2 id="mtitle">__TITLE__</h2><div class="act" id="mactivity">__ACTIVITY__</div><div id="mbody">__BODY__</div></div>
-<div class="log" id="logbox"><h3><button class="link" id="logtoggle" type="button">Log &#8250;</button></h3><pre id="log">__LOG__</pre></div>
+<div class="log" id="logbox"><h3><button type="button" class="link" id="logtoggle">Log &#8250;</button></h3><pre id="log">__LOG__</pre></div>
+<div class="card"><h2>Settings</h2><div>__SETTINGS__</div>
+<form method="post" action="api/forget"><button type="submit" class="secondary">Forget saved state</button></form></div>
 <div class="stop">__STOP__</div>
 </main>
 <script>
@@ -767,6 +888,28 @@ def _render_page(server):
         started = _STATE["started"]
         polled = time.time() - _LAST_POLL["at"]
         rev = _REV["n"]
+    import barisign as _barisign_info
+    try:
+        _version = _barisign_info.VERSION
+    except Exception:                                           # noqa: BLE001
+        _version = "?"
+    try:
+        _state_now = _barisign_info.load_state()
+    except Exception:                                           # noqa: BLE001
+        _state_now = {}
+    _saved_rows = []
+    _saved_rows.append(("Apple ID", _state_now.get("email") or "—"))
+    _saved_rows.append(("UDID", (_state_now.get("udid") or "—")))
+    try:
+        _age = time.time() - float(_state_now.get("paired_at") or 0)
+        _paired_txt = ("paired %d min ago" % int(_age // 60)) if _age < 86400 else "old pairing"
+    except (TypeError, ValueError):
+        _paired_txt = "—"
+    _saved_rows.append(("Pairing", _paired_txt if _state_now.get("paired") else "—"))
+    _saved_rows.append(("Portal session", "saved" if isinstance(_state_now.get("gs_token"), dict) and _state_now["gs_token"].get("token") else "—"))
+    settings_html = "".join(
+        "<div>%s: <b>%s</b></div>" % (_html.escape(k), _html.escape(str(v)))
+        for k, v in ([("BariSign", _version)] + _saved_rows))
     token = server.token
     # Meta refresh only when the page script appears dead: with live JS
     # polling, reloads would wipe typed input.
@@ -778,7 +921,7 @@ def _render_page(server):
     audio_txt = keepalive if audio else "off"
     try:
         position = [step["state"] for step in steps].index("active") + 1
-        counter = "step %d of %d \u00b7 " % (position, len(steps))
+        counter = "Step %d of %d \u00b7 " % (position, len(steps))
     except ValueError:
         counter = ""
     active_label = ""
@@ -797,7 +940,11 @@ def _render_page(server):
     if done is not None or not started:
         stop = ""
     else:
-        stop = ('<form method="post" action="api/stop">'
+        can_back = question is not None and bool(_HISTORY)
+        back = ('<form method="post" action="api/back">'
+                '<button type="submit" class="secondary">Back</button></form>' if can_back else "")
+        stop = (back +
+                '<form method="post" action="api/stop">'
                 '<button type="submit" class="secondary">Stop</button></form>')
     page = PAGE.replace("__TOKEN__", token)
     page = page.replace("__REV__", str(rev))
@@ -805,6 +952,7 @@ def _render_page(server):
     page = page.replace("__AUDIO__", audio_txt)
     page = page.replace("__STEPS__", steps_html)
     page = page.replace("__TITLE__", title)
+    page = page.replace("__SETTINGS__", settings_html)
     page = page.replace("__ACTIVITY__", _html.escape(activity_text))
     page = page.replace("__BODY__", body)
     page = page.replace("__LOG__", log_html)
@@ -934,7 +1082,7 @@ class _Handler(BaseHTTPRequestHandler):
                 steps_snap = list(_STATE["steps"])
             try:
                 position = [step["state"] for step in steps_snap].index("active") + 1
-                counter_snap = "step %d of %d \u00b7 " % (position, len(steps_snap))
+                counter_snap = "Step %d of %d \u00b7 " % (position, len(steps_snap))
             except ValueError:
                 counter_snap = ""
             active_label_snap = ""
@@ -998,6 +1146,51 @@ class _Handler(BaseHTTPRequestHandler):
                     if _QUESTION["event"] is not None:
                         _QUESTION["answer"] = ""
                         _QUESTION["event"].set()
+                _stop_async()
+                return True
+            if rest == "/api/back":
+                with _LOCK:
+                    has_q = _STATE["question"] is not None
+                    has_hist = len(_HISTORY) > 0
+                if has_q and has_hist and _QUESTION["event"] is not None:
+                    with _LOCK:
+                        _REPLAY["active"] = True
+                        _REPLAY["index"] = 0
+                        _QUESTION["answer"] = "__back__"
+                        _QUESTION["event"].set()
+                    _log_line("back one step…")
+                    return True
+                return False
+            if rest == "/api/forget":
+                try:
+                    import barisign as _barisign_mod
+                    state_file = _barisign_mod.STATE_FILE
+                except Exception:                               # noqa: BLE001
+                    state_file = ""
+                removed = False
+                if state_file:
+                    try:
+                        os.remove(state_file)
+                        removed = True
+                    except OSError:
+                        pass
+                with _LOCK:
+                    _HISTORY.clear()
+                    _REPLAY["active"] = False
+                    _STATE["question"] = None
+                    _STATE["pin"] = None
+                    _STATE["done"] = {
+                        "ok": True, "title": "Forgot saved state",
+                        "lines": [("Saved Apple ID, session, UDID and portal data "
+                                   "were deleted." if removed else
+                                   "Nothing was saved."),
+                                  "Start again from the top."]}
+                _bump_rev()
+                _STOP.set()
+                with _LOCK:
+                    event = _QUESTION["event"]
+                if event is not None:
+                    event.set()
                 return True
             if rest == "/api/audio":
                 with _LOCK:
@@ -1050,6 +1243,18 @@ def run():
         print("  ! sheet did not open; run this in a-Shell:")
         print("    BROWSER=internalbrowser openurl %s" % url)
     print("  tap Start on the page. Stop there (or Ctrl-C here) ends the run.")
+
+    def _wait_enter():
+        try:
+            input()
+        except EOFError:
+            return
+        except Exception:                                       # noqa: BLE001
+            return
+        _STOP.set()
+
+    enter_thread = threading.Thread(target=_wait_enter, daemon=True)
+    enter_thread.start()
     try:
         while not _STOP.is_set():
             _STOP.wait(1.0)

@@ -192,6 +192,17 @@ class Fail(Exception):
 
 SSL_CTX = ssl.create_default_context()
 
+# CHANGED BY BARISIGN. Advertise plain http/1.1 like every browser does.
+# Python's http.client sends no ALPN protocols by default, which makes our
+# handshake fingerprint stand out; several anisette hosts sit behind bot
+# filtering that drops such handshakes mid-flight (seen on device as
+# "EOF occurred in violation of protocol"). This changes nothing about
+# verification or cipher choice.
+try:
+    SSL_CTX.set_alpn_protocols(["http/1.1"])
+except NotImplementedError:                                     # noqa: BLE001
+    pass
+
 # CHANGED BY BARISIGN. Apple's servers chain to Apple's own root CA. The Python
 # inside a-Shell ships its own CA file and does not trust it, so the handshake to
 # gsa.apple.com fails with CERTIFICATE_VERIFY_FAILED. poc_login.py points

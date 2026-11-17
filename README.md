@@ -24,11 +24,12 @@ opens a page over the terminal. Tap **Start** and it runs the whole install on t
 2. **Apple ID** — sign-in with anisette (saved session reused: no password or 2FA until Apple refuses it).
 3. **Variant** — SideStore / LiveContainer+SideStore / AltStore Classic, stable or nightly, or your own IPA.
 4. **Download** — resolved live from the project's releases, size + SHA-256 checked.
-5. **Pairing** — this iPhone pairs with itself (Settings → Developer → Paired Macs → BariSign, enter the
-   printed PIN). The page plays silence so iOS holds the app while you are in Settings.
-6. **Developer Mode** — read over the tunnel; if off or hidden, iOS is asked to show the switch (no
-   restart), or turn it on (restarts). No trigger install, no second device.
-7. **Portal** — device + App ID (+ App Group) + certificate + profile for your free ID.
+5. **Portal** — device + App ID (+ App Group) + certificate + profile for your free ID. Pairs
+   first when the UDID is still unknown (same screen, one PIN).
+6. **Pairing** — verifies the live pairing over loopback (skipped when just paired).
+7. **Developer Mode** — read over the tunnel; if off or hidden, the switch is shown (no restart).
+   Turning it on restarts the iPhone and ends the run: flip it, restart, run again — everything
+   is saved and the run jumps straight back. No trigger install, no second device.
 8. **Sign** — the IPA is signed and verified on-device.
 9. **Install** — over the same loopback tunnel; trust the developer, open the app.
 

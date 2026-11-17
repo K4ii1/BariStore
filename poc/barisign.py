@@ -22,6 +22,7 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import threading
 import re
 import plistlib
@@ -68,7 +69,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.30"
+VERSION = "0.9.31"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -598,6 +599,8 @@ def _sign_in(email, preferred=None, use_clipboard=False, staged=False):
                 last_error = exc
                 message = str(exc)
                 print("  ! %s" % message)
+                if "No anisette server answered" in message:
+                    print("  run barisign netcheck: it names the failing stage per host")
                 if _identity_refused(message):
                     print("  ! identity refused; next server")
                     saw_503 = True
@@ -779,6 +782,87 @@ def cmd_check(_argv):
     print()
     print("CHECK  %s" % ("pass" if passed == 0 else "fail"))
     return passed
+
+
+def cmd_netcheck(_argv):
+    """DNS -> TCP -> TLS -> HTTPS for every host we depend on.
+
+    Anisette EOFs look identical whether the path or the server is at fault;
+    this names the failing stage per host so a device report is actionable.
+    """
+    import socket
+    import urllib.parse
+
+    def stage(name, func):
+        started = time.time()
+        try:
+            detail = func()
+        except Exception as exc:                                # noqa: BLE001
+            print("  %-4s %-28s FAIL %s (%.1fs)" % (name, host, exc, time.time() - started))
+            return False
+        print("  %-4s %-28s ok %s (%.1fs)" % (name, host, detail, time.time() - started))
+        return True
+
+    targets = [("github", "https://raw.githubusercontent.com/"),
+               ("apple", "https://gsa.apple.com/")]
+    try:
+        urls = _anisette_order([])
+    except Exception:                                           # noqa: BLE001
+        urls = []
+    for url in urls[:8]:
+        targets.append(("anisette", url))
+
+    print("BariSign %s netcheck" % VERSION)
+    for kind, url in targets:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname
+        port = parts.port or 443
+
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            ip = infos[0][4][0]
+        except Exception as exc:                                # noqa: BLE001
+            print("  dns  %-28s FAIL %s" % (host, exc))
+            continue
+        print("  dns  %-28s ok %s" % (host, ip))
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(8)
+        try:
+            probe.connect((ip, port))
+        except Exception as exc:                                # noqa: BLE001
+            print("  tcp  %-28s FAIL %s" % (host, exc))
+            probe.close()
+            continue
+
+        try:
+            context = signin._ctx_for(host)
+            tls = context.wrap_socket(probe, server_hostname=host)
+            cipher = tls.cipher()
+            version = tls.version()
+        except Exception as exc:                                # noqa: BLE001
+            print("  tls  %-28s FAIL %s" % (host, exc))
+            try:
+                probe.close()
+            except Exception:                                   # noqa: BLE001
+                pass
+            continue
+        try:
+            tls.close()
+        except Exception:                                       # noqa: BLE001
+            pass
+        print("  tls  %-28s ok %s %s" % (host, version, (cipher or ["?"])[0]))
+        if kind != "anisette":
+            continue
+
+        try:
+            started = time.time()
+            status, _, _ = signin.request("GET", url.rstrip("/") + "/v3/client_info",
+                                          timeout=20)
+            print("  http %-28s ok HTTP %d (%.1fs)" % (host, status, time.time() - started))
+        except Exception as exc:                                # noqa: BLE001
+            print("  http %-28s FAIL %s" % (host, exc))
+    return 0
 
 
 def cmd_update(_argv):
@@ -1626,6 +1710,7 @@ COMMANDS = {
     "pair": cmd_pair,
     "version": cmd_version,
     "check": cmd_check,
+    "netcheck": cmd_netcheck,
     "status": cmd_status,
     "forget": cmd_forget,
     "reset": cmd_reset,
@@ -1688,6 +1773,7 @@ def _usage():
             ("barisign pair", "loopback install"),
             ("barisign status", "what is saved"),
             ("barisign check", "diagnostics only"),
+            ("barisign netcheck", "DNS/TCP/TLS per host"),
             ("barisign version", "which copy is running"),
             ("barisign update", "update in place"),
             ("barisign forget", "clear saved state"),
