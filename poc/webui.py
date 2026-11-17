@@ -289,7 +289,7 @@ def _run_flow():
 def _flow(barisign, poc_login):
     import devmode as devmode_module
     _step_state("requirements", "active")
-    _log_line("Requirements: Developer Mode ON, LocalDevVPN connected.")
+    _log_line("Requirements: LocalDevVPN connected.")
     while not _STOP.is_set():
         if barisign._loopback_port():
             _log_line("LocalDevVPN answers.")
@@ -624,10 +624,10 @@ def _render_page(server):
             extra = (' inputmode="numeric" autocomplete="one-time-code" data-autosend'
                      if kind == "code" else "")
             body = ('<form method="post" action="api/answer">'
-                    '<input type="%s" name="value"%s>'
+                    '<input type="%s" name="value"%s autocapitalize="off" autocorrect="off" spellcheck="false">'
                     '<input type="hidden" name="id" value="%d">'
-                    '<button type="submit">Send</button></form>') % (ftype, extra, qid)
-        meta = '<meta http-equiv="refresh" content="10">'
+                    '<button type="submit">Continue</button></form>') % (ftype, extra, qid)
+        meta = ""  # question: never reload under typing hands
         stop = ('<form method="post" action="api/stop">'
                 '<button type="submit" class="secondary">Stop</button></form>')
     else:

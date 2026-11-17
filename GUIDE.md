@@ -26,9 +26,9 @@ sh barisign
 
 A page opens over the terminal. Tap **Start**; answer what it asks. The steps:
 
-1. **Requirements** — Developer Mode ON, LocalDevVPN connected, volume audible. The page probes
-   LocalDevVPN and waits until it answers. (The probe is the loopback port; VPN closed = nothing
-   answers = it tells you to connect.)
+1. **Requirements** — LocalDevVPN connected, volume audible. The page probes
+   LocalDevVPN and waits until it answers. Developer Mode is checked later over the
+   tunnel: if off, the switch is shown (or turned on) before signing.
 2. **Apple ID** — email, then password (dots), then the 2FA code (6 boxes, sends itself). A saved
    session skips password + 2FA until Apple refuses it.
 3. **Variant** — 1–5, or 6 for your own `.ipa` (drop it into Files → a-Shell → Custom IPAs first;

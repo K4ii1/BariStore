@@ -68,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.25"
+VERSION = "0.9.26"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1502,8 +1502,9 @@ def cmd_shell(argv):
             print("no Apple ID")
             return 2
     _stage("Requirements")
-    print("  this device needs: Developer Mode ON, LocalDevVPN connected,")
+    print("  this device needs: LocalDevVPN connected,")
     print("  volume audible (the app speaks while you pair).")
+    print("  Developer Mode is checked later over the tunnel.")
     print("  later: Settings > Developer > Paired Macs, enter the PIN shown here.")
     while True:
         if _loopback_port():
