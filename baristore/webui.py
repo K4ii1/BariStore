@@ -374,8 +374,14 @@ def start_install_worker(params):
             _update_job(step="Connecting to Apple Developer Portal…", progress=52)
             session = apple.get_saved_session()
             if session is None:
+                saved_token = state.get("gs_token") or {}
+                if not email or not saved_token.get("token"):
+                    raise RuntimeError(
+                        "Not signed in to an Apple ID yet. Go to Options > Apple ID to sign in first "
+                        "(device pairing alone is not enough — signing apps needs an Apple ID session)."
+                    )
                 raise RuntimeError(
-                    "Your Apple ID session has expired. Please sign in again in Options > Apple ID."
+                    "Your Apple ID session has expired. Please sign in again in Options > Apple ID, then retry."
                 )
 
             # Ensure we have the device UDID
@@ -525,7 +531,7 @@ def start_refresh_all_worker():
         try:
             session = apple.get_saved_session()
             if session is None:
-                raise RuntimeError("Your Apple ID session expired. Sign in again in Options.")
+                raise RuntimeError("Your Apple ID session is missing or expired. Sign in again in Options > Apple ID.")
 
             refreshed = []
             total_apps = len(apps)
