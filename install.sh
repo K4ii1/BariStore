@@ -2,26 +2,63 @@
 # =============================================================================
 #  BariSign installer — downloads every file it needs. No git required.
 #
-#  In a-Shell:
-#      mkdir -p ~/Documents/barisign && cd ~/Documents/barisign
-#      curl -sSL "https://github.com/barismd/barisign/blob/main/install.sh?raw=true" -o install.sh
-#      sh install.sh
+#  In a-Shell, one line is enough (run it from anywhere):
+#      curl -fsSL https://raw.githubusercontent.com/barismd/barisign/main/install.sh | sh
 #
-#  Run it again any time to update: it overwrites the program files and leaves the
-#  saved state in state/ alone, so your Apple ID, UDID and profile stay.
+#  What it lays down in ~/Documents:
+#      barisign          the launcher: `sh barisign` from Documents, no cd needed
+#      barisign_files/   everything else (poc/, state/, ipa/, third_party/...)
+#
+#  Run it again any time to update: it overwrites the program files and leaves
+#  the saved state in barisign_files/state/ alone, so your Apple ID, UDID and
+#  profile stay. Old layouts (barisign/ as program dir, bin/, barisignone)
+#  are migrated/retired in place.
 # =============================================================================
 
 set -u
 
-BASE="https://github.com/barismd/barisign/blob/main"
-DIR="${BARISIGN_DIR:-$HOME/Documents/barisign}"
+# Re-run through a temp copy when invoked as the installed file itself: the
+# run overwrites install.sh with the newest copy, which would corrupt a
+# script reading itself.
+case "$0" in
+*/barisign_files/install.sh|install.sh)
+    _self=".install.sh.run-$$"
+    cp -f "$0" "$_self" || exit 1
+    exec sh "$_self" "$@"
+    ;;
+esac
+for _old in .install.sh.run-*; do
+    case "$_old" in
+        *"$$") ;;
+        *) rm -f "$_old" ;;
+    esac
+done
 
-mkdir -p "$DIR/poc" "$DIR/bin" "$DIR/third_party/sideinstaller" \
-         "$DIR/third_party/apple-roots" "$DIR/third_party/ca-bundle" || {
-    printf '  ! cannot create %s (a-Shell only writes inside ~/Documents)\n' "$DIR"
+BASE="https://github.com/barismd/barisign/blob/main"
+DOCS="$HOME/Documents"
+PROG="${BARISIGN_DIR:-$DOCS/barisign_files}"
+
+# Migrate the pre-0.9.25 layout: the program lived directly in barisign/.
+# Whatever that directory is (full install or a stray dir), it must not block
+# the launcher file of the same name: adopt it as the program dir, or park it.
+if [ -d "$DOCS/barisign" ]; then
+    if [ ! -e "$PROG" ]; then
+        mv "$DOCS/barisign" "$PROG" 2>/dev/null && \
+            printf '  moved      barisign/ -> barisign_files/\n'
+    else
+        mv "$DOCS/barisign" "$DOCS/barisign_legacy" 2>/dev/null && \
+            printf '  parked     stray barisign/ -> barisign_legacy/\n'
+    fi
+fi
+
+mkdir -p "$PROG/poc" "$PROG/third_party/sideinstaller" \
+         "$PROG/third_party/apple-roots" "$PROG/third_party/ca-bundle" || {
+    printf '  ! cannot create %s (a-Shell only writes inside ~/Documents)\n' "$PROG"
     exit 1
 }
-cd "$DIR" || exit 1
+cd "$PROG" || exit 1
+# Leftovers of older layouts, inside the program dir now.
+rm -rf "$PROG/bin" "$PROG/barisignone" "$PROG/update" "$PROG/barisign" 2>/dev/null
 
 # GitHub caches the /main/ URLs for a while after a push, and the unauthenticated
 # API rate-limits, so neither can be trusted for a fresh install. Instead we read
@@ -67,36 +104,18 @@ fetch() {   # fetch <file-in-repo> <destination>
     FAILED="${FAILED:-} $1"
     return 1
 }
-
 download_all() {
     fail=0
     _n=0
-    for _pair in "poc/poc_login.py poc/poc_login.py" \
-                 "poc/poc_portal.py poc/poc_portal.py" \
-                 "poc/barisign.py poc/barisign.py" \
-                 "poc/signer.py poc/signer.py" \
-                 "poc/download.py poc/download.py" \
-                 "poc/pair_install.py poc/pair_install.py" \
-                 "poc/tls_psk.py poc/tls_psk.py" \
-                 "poc/tcp6.py poc/tcp6.py" \
-                 "poc/remote_xpc.py poc/remote_xpc.py" \
-                 "poc/device_services.py poc/device_services.py" \
-                 "poc/devmode.py poc/devmode.py" \
-                 "poc/webui.py poc/webui.py" \
-                 "poc/pairing.py poc/pairing.py" \
-                 "poc/rpp_tunnel.py poc/rpp_tunnel.py" \
-                 "poc/mdns.py poc/mdns.py" \
-                 "poc/raw_mdns.py poc/raw_mdns.py" \
-                 "third_party/sideinstaller/signin.py third_party/sideinstaller/signin.py" \
-                 "third_party/sideinstaller/portal.py third_party/sideinstaller/portal.py" \
-                 "third_party/apple-roots/apple-roots.pem third_party/apple-roots/apple-roots.pem" \
-                 "third_party/ca-bundle/cacert.pem third_party/ca-bundle/cacert.pem" \
-                 "variants.json variants.json" \
-                 "barisign barisign" \
-                 "update update"; do
-        # shellcheck disable=SC2086
-        set -- $_pair
-        if fetch "$1" "$2"; then
+    for _file in poc/poc_login.py poc/poc_portal.py poc/barisign.py poc/signer.py \
+                 poc/download.py poc/pair_install.py poc/tls_psk.py poc/tcp6.py \
+                 poc/remote_xpc.py poc/devmode.py poc/webui.py \
+                 poc/device_services.py poc/pairing.py poc/rpp_tunnel.py poc/mdns.py \
+                 poc/raw_mdns.py \
+                 third_party/sideinstaller/signin.py third_party/sideinstaller/portal.py \
+                 third_party/apple-roots/apple-roots.pem third_party/ca-bundle/cacert.pem \
+                 variants.json install.sh; do
+        if fetch "$_file" "$_file"; then
             _n=$((_n + 1))
         else
             _n=$((_n + 1))
@@ -111,7 +130,14 @@ download_all() {
         esac
         printf '\r\033[2K  (1/2) files %s' "$_d"
     done
-    chmod +x barisign update 2>/dev/null
+    # The launcher lives one level up, in Documents: no cd needed to run.
+    cat > "$DOCS/barisign" <<'LAUNCHER'
+#!/bin/sh
+# BariSign launcher — runs from ~/Documents, no cd needed.
+cd "$(dirname "$0")/barisign_files" || exit 1
+exec python3 -u poc/barisign.py "$@"
+LAUNCHER
+    chmod +x "$DOCS/barisign" 2>/dev/null
     return $fail
 }
 
@@ -135,13 +161,12 @@ check_compiles() {
 }
 
 # Compiling is not enough: a half-stale set compiles and then fails on import.
-# The wrappers are shell, so check their syntax too.
 works() {
     python3 poc/barisign.py --help >/dev/null 2>&1 \
         && python3 poc/poc_portal.py --help >/dev/null 2>&1 \
         && python3 poc/pair_install.py --check >/dev/null 2>&1 \
         && python3 -c "import sys; sys.path.insert(0, 'poc'); import webui, devmode" \
-        && sh -n barisign && sh -n update
+        && sh -n "$DOCS/barisign"
 }
 
 # No background jobs: a-Shell's shell can leave a background spinner
@@ -175,7 +200,7 @@ while [ "$attempt" -le 2 ]; do
     download_all
     if [ "$fail" -eq 0 ]; then
         clear_screen
-        printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
+printf 'installing BariSign%s\n\n' "${VER:+" $VER"}"
     else
         printf '\r\033[2K  (1/2) files failed\n'
         printf '  ! could not fetch:%s\n' "$FAILED"
@@ -203,11 +228,7 @@ if [ "$fail" -ne 0 ] || ! works; then
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
     exit 1
 fi
-if [ -d bin ] || [ -f barisignone ]; then
-    rm -rf bin barisignone
-    printf '  retired    bin/ and barisignone (now: sh barisign, sh update)\n'
-fi
 printf 'BariSign %s installed\n\n' "${VER:-?}"
-printf '  sh barisign          opens the page, runs the whole install\n'
-printf '  sh barisign shell    terminal run without the page\n'
-printf '  help: sh barisign help\n'
+printf '  from Documents:  sh barisign          (the page, the whole install)\n'
+printf '                   sh barisign shell    (terminal, no page)\n'
+printf '                   sh barisign update   (updates everything)\n'

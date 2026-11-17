@@ -133,6 +133,8 @@ The web interface (no Shortcuts, no terminal strain):
 - If the same problem fails twice, **stop** and report so the user can switch to a stronger model.
 - Bump `VERSION` in `poc/barisign.py` on every functional commit (0.9.x line; never 1.0.0): the installer title prints
   the version being installed, so the user can see the update arrived.
+- Install/update paths: one-line `curl ... install.sh | sh`, plus `sh barisign update`.
+  No `bin/`, no root wrappers: the installer generates `~/Documents/barisign` (launcher).
 - Verified on device: sign-in, portal, signing, launch; pairing M1–M6 over raw broadcast.
   Written + Linux-tested, on-device run pending: loopback pairing, web sheet, devmode toggle,
   loopback install. Plan: `docs/PLAN_V2.md`; facts: `docs/RESULTS.md`; handoff:

@@ -12,10 +12,8 @@ and Linux-tested but **UNVERIFIED ON A DEVICE**. Run them and report back: what 
 ## Install (on the iPhone)
 
 ```
-mkdir -p ~/Documents/barisign && cd ~/Documents/barisign
-curl -sSL "https://github.com/barismd/barisign/blob/main/install.sh?raw=true" -o install.sh
-sh install.sh
-sh update        # later: updates everything in place
+curl -fsSL https://raw.githubusercontent.com/barismd/barisign/main/install.sh | sh
+sh barisign update   # later: updates everything in place
 ```
 
 ---

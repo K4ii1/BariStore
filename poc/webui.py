@@ -57,6 +57,7 @@ _LOCK = threading.Lock()
 _STOP = threading.Event()
 _QUESTION = {"event": None, "answer": None}
 _QID = [0]
+_AUDIO_OK = {"event": None}
 _PIN_RE = re.compile(r"pairing code:\s*(\d{4,8})")
 _PIN_LOG_RE = re.compile(r"(pairing code:\s*)\d{4,8}")
 
@@ -222,6 +223,27 @@ def _pair_args(udid="", ipa="", pair_only=False):
             "pair_only": pair_only, "repair": False, "debug": False, "export": ""}
 
 
+def _wait_audio_ok(timeout=20):
+    """True when the page confirmed silent audio is playing.
+
+    Without confirmation the speech loop holds the app instead (the fallback
+    when the sheet has no script or audio)."""
+    event = threading.Event()
+    with _LOCK:
+        _AUDIO_OK["event"] = event
+    try:
+        stop_at = time.time() + timeout
+        while time.time() < stop_at:
+            if _STOP.is_set():
+                raise FlowStop()
+            if event.wait(0.5):
+                return True
+        return False
+    finally:
+        with _LOCK:
+            _AUDIO_OK["event"] = None
+
+
 def _run_flow():
     """The single-device pipeline. Runs in its own thread under _WebLog."""
     import contextlib
@@ -302,12 +324,20 @@ def _flow(barisign, poc_login):
     _step_state("pairing", "active")
     with _LOCK:
         _STATE["audio"] = True
-    state = barisign.load_state()
-    code = asyncio.run(pair_install._run(
-        _pair_args(udid=state.get("udid", ""), pair_only=True)))
-    with _LOCK:
-        _STATE["audio"] = False
-        _STATE["pin"] = None
+    say_stop = None
+    if not _wait_audio_ok():
+        _log_line("page audio not confirmed; speech fallback holds us")
+        say_stop = pair_install.keep_awake_start()
+    try:
+        state = barisign.load_state()
+        code = asyncio.run(pair_install._run(
+            _pair_args(udid=state.get("udid", ""), pair_only=True)))
+    finally:
+        with _LOCK:
+            _STATE["audio"] = False
+            _STATE["pin"] = None
+        if say_stop is not None:
+            say_stop()
     if code != 0:
         raise RuntimeError("pairing step failed; see the log")
     _step_state("pairing", "done")
@@ -341,12 +371,20 @@ def _flow(barisign, poc_login):
     _step_state("install", "active")
     with _LOCK:
         _STATE["audio"] = True
-    code = asyncio.run(pair_install._run(
-        _pair_args(udid=barisign.load_state().get("udid", ""),
-                   ipa=signed["ipa"])))
-    with _LOCK:
-        _STATE["audio"] = False
-        _STATE["pin"] = None
+    say_stop = None
+    if not _wait_audio_ok():
+        _log_line("page audio not confirmed; speech fallback holds us")
+        say_stop = pair_install.keep_awake_start()
+    try:
+        code = asyncio.run(pair_install._run(
+            _pair_args(udid=barisign.load_state().get("udid", ""),
+                       ipa=signed["ipa"])))
+    finally:
+        with _LOCK:
+            _STATE["audio"] = False
+            _STATE["pin"] = None
+        if say_stop is not None:
+            say_stop()
     if code != 0:
         raise RuntimeError("install step failed; see the log")
     _step_state("install", "done")
@@ -442,6 +480,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+__META__
 <title>BariSign</title>
 <style>
 :root { color-scheme: light dark; }
@@ -468,15 +507,11 @@ button { font: inherit; font-weight: 600; width: 100%; padding: .8rem; border: 0
 button.secondary { background: #e9e9ee; color: #000; }
 .row { display: flex; gap: .6rem; } .row button { margin-top: .6rem; }
 .bar { height: .5rem; background: #e0e0e6; border-radius: .25rem; overflow: hidden; margin-top: .6rem; }
-.bar i { display: block; height: 100%; background: #0a6cff; width: 0; }
+.bar i { display: block; height: 100%; background: #0a6cff; }
 details.log { border: 1px solid #ccc; border-radius: .8rem; padding: .6rem 1rem; margin: 0 0 1rem; }
 details.log pre { white-space: pre-wrap; word-break: break-word; font-size: .8rem;
   max-height: 16rem; overflow-y: auto; margin: .4rem 0 0; }
-.dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%;
-  background: #bbb; margin-right: .4rem; vertical-align: baseline; }
-.dot.on { background: #137333; }
 .stop { text-align: center; margin-top: 1.4rem; }
-.stop button { background: none; color: #b00020; width: auto; padding: .4rem 1rem; }
 .err { color: #b00020; font-weight: 600; }
 .ok { color: #137333; font-weight: 600; }
 </style>
@@ -484,112 +519,136 @@ details.log pre { white-space: pre-wrap; word-break: break-word; font-size: .8re
 <body>
 <main>
 <h1>BariSign</h1>
-<p class="sub">one iPhone, no computer. <span id="audio"><span class="dot" id="audiodot"></span>keep-alive <span id="audiotxt">off</span></span></p>
-<ol class="steps" id="steps"></ol>
-<div class="card" id="main"><h2 id="mtitle">Starting…</h2><div id="mbody"></div></div>
-<details class="log"><summary>Log</summary><pre id="log"></pre></details>
-<div class="stop"><button id="stopbtn" class="secondary">Stop</button></div>
+<p class="sub">one iPhone, no computer. <span id="audio">keep-alive __AUDIO__</span></p>
+<ol class="steps">__STEPS__</ol>
+<div class="card"><h2>__TITLE__</h2><div>__BODY__</div></div>
+<details class="log"><summary>Log</summary><pre>__LOG__</pre></details>
+<div class="stop">__STOP__</div>
 </main>
 <script>
 "use strict";
-const TOKEN = "__TOKEN__";
-let started = false, lastQ = 0, audioCtx = null, audioTimer = null;
-function el(id) { return document.getElementById(id); }
-function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-async function api(path, body) {
-  const r = await fetch(TOKEN + path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: {"Content-Type": "application/json"},
-    body: body === undefined ? undefined : JSON.stringify(body)});
-  return r.json();
-}
-function startAudio() {
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    const len = audioCtx.sampleRate * 2, buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-    buf.getChannelData(0).fill(0);
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf; src.loop = true; src.connect(audioCtx.destination); src.start();
-  } catch (e) { /* keep going without it */ }
-}
-async function refresh() {
-  let s;
-  try { s = await api("/api/state"); } catch (e) { return; }
-  el("steps").innerHTML = s.steps.map(st =>
-    `<li class="${st.state}">${esc(st.label)}</li>`).join("");
-  el("audiodot").className = "dot" + (s.audio ? " on" : "");
-  el("audiotxt").textContent = s.audio ? "on (pairing/install)" : "off";
-  if (s.audio) startAudio();
-  if (s.pin) {
-    el("mtitle").textContent = "Enter this code";
-    el("mbody").innerHTML = `<div class="pin">${esc(s.pin)}</div>
-      <p class="hint">Settings &gt; Developer &gt; Paired Macs &gt; BariSign.
-      This page keeps the app awake while you are over there.</p>`;
-  } else if (s.done) {
-    el("mtitle").innerHTML = `<span class="${s.done.ok ? "ok" : "err"}">${esc(s.done.title)}</span>`;
-    el("mbody").innerHTML = s.done.lines.map(l => `<p>${esc(l)}</p>`).join("");
-  } else if (s.question) {
-    ask(s.question);
-  } else {
-    el("mtitle").textContent = s.activity || "Working…";
-    el("mbody").innerHTML = s.progress === null || s.progress === undefined ? "" :
-      `<div class="bar"><i style="width:${s.progress}%"></i></div>`;
+try {
+  const TOKEN = "__TOKEN__";
+  async function audioOk() {
+    try {
+      await fetch(TOKEN + "/api/audio", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: "{}"});
+    } catch (e) { /* the form path still works without it */ }
   }
-  el("log").textContent = (s.log || []).join("\n");
-  const pre = el("log"); pre.scrollTop = pre.scrollHeight;
-}
-let qShown = 0;
-function ask(q) {
-  if (qShown === q.id) return;
-  qShown = q.id;
-  el("mtitle").textContent = q.label;
-  const b = el("mbody");
-  if (q.kind === "bool") {
-    b.innerHTML = `<div class="row"><button id="qy">Yes</button><button id="qn" class="secondary">No</button></div>`;
-    el("qy").onclick = () => send(q.id, "y");
-    el("qn").onclick = () => send(q.id, "");
-  } else if (q.kind === "choice") {
-    b.innerHTML = q.options.map((o, i) =>
-      `<button data-i="${i}" class="${i ? "secondary" : ""}">${esc(o)}</button>`).join("");
-    b.querySelectorAll("button").forEach(btn =>
-      btn.onclick = () => send(q.id, q.options[+btn.dataset.i]));
-  } else {
-    const type = q.kind === "secret" ? "password" : (q.kind === "code" ? "tel" : "text");
-    const extra = q.kind === "code" ? ' inputmode="numeric" autocomplete="one-time-code" maxlength="12"' : "";
-    b.innerHTML = `<input id="qi" type="${type}"${extra} autocomplete="off" autocapitalize="off">
-      <button id="qs">Send</button>`;
-    const inp = el("qi"); inp.focus();
-    const go = () => send(q.id, inp.value);
-    el("qs").onclick = go;
-    inp.onkeydown = e => { if (e.key === "Enter") go(); };
-    if (q.kind === "code") inp.oninput = () => {
-      if (inp.value.replace(/[^0-9]/g, "").length >= 6) go(); };
-  }
-}
-async function send(id, value) {
-  qShown = id;
-  el("mbody").innerHTML = "<p class=\"hint\">Sent…</p>";
-  await api("/api/answer", {id, value});
-  refresh();
-}
-el("stopbtn").onclick = async () => { await api("/api/stop", {}); refresh(); };
-if (!started) {
-  started = true;
-  (async () => {
-    el("mtitle").textContent = "Ready";
-    el("mbody").innerHTML = `<p class="hint">Runs the whole install on this iPhone:
-      sign-in, download, pairing, Developer Mode, signing, install.</p>
-      <button id="go">Start</button>`;
-    el("go").onclick = async () => { startAudio(); await api("/api/start", {}); };
-    setInterval(refresh, 1000); refresh();
-  })();
-}
+  let audioCtx = null;
+  window.__barisignAudio = function () {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      const len = audioCtx.sampleRate * 2, buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      buf.getChannelData(0).fill(0);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf; src.loop = true; src.connect(audioCtx.destination); src.start();
+      audioOk();
+    } catch (e) { /* without it the speech fallback holds us */ }
+  };
+  document.querySelectorAll("form[data-audio]").forEach(f =>
+    f.addEventListener("submit", () => window.__barisignAudio()));
+  document.querySelectorAll('input[type="tel"][data-autosend]').forEach(inp =>
+    inp.addEventListener("input", () => {
+      if (inp.value.replace(/[^0-9]/g, "").length >= 6) inp.form.submit();
+    }));
+} catch (e) { /* plain forms work without any script */ }
 </script>
 </body>
 </html>
 """
 
+
+def _render_page(server):
+    with _LOCK:
+        steps = list(_STATE["steps"])
+        activity = _STATE["activity"]
+        progress = _STATE["progress"]
+        pin = _STATE["pin"]
+        question = dict(_STATE["question"]) if _STATE["question"] else None
+        log = list(_STATE["log"])
+        done = dict(_STATE["done"]) if _STATE["done"] else None
+        audio = _STATE["audio"]
+        started = _STATE["started"]
+    token = server.token
+    steps_html = "".join(
+        '<li class="%s">%s</li>' % (step["state"], _html.escape(step["label"]))
+        for step in steps)
+    log_html = _html.escape("\n".join(log[-30:]))
+    audio_txt = "on (pairing/install)" if audio else "off"
+
+    if not started:
+        title = "Ready"
+        body = ('<p class="hint">Runs the whole install on this iPhone: sign-in, '
+                'download, pairing, Developer Mode, signing, install.</p>'
+                '<form method="post" action="api/start" data-audio>'
+                '<button type="submit">Start</button></form>')
+        meta = ""
+        stop = ""
+    elif done:
+        title = '<span class="%s">%s</span>' % ("ok" if done["ok"] else "err",
+                                                _html.escape(done["title"]))
+        body = "".join("<p>%s</p>" % _html.escape(line) for line in done["lines"])
+        body += ('<p class="hint">You can close this sheet. '
+                 'Terminal: press Enter to finish.</p>')
+        meta = ""
+        stop = ""
+    elif pin:
+        title = "Enter this code"
+        body = ('<div class="pin">%s</div>'
+                '<p class="hint">Settings &gt; Developer &gt; Paired Macs &gt; BariSign. '
+                'This page keeps the app awake while you are over there.</p>') % _html.escape(pin)
+        meta = '<meta http-equiv="refresh" content="3">'
+        stop = ('<form method="post" action="api/stop">'
+                '<button type="submit" class="secondary">Stop</button></form>')
+    elif question:
+        qid = question["id"]
+        title = _html.escape(question["label"])
+        kind = question.get("kind")
+        if kind == "bool":
+            body = ('<form method="post" action="api/answer">'
+                    '<input type="hidden" name="id" value="%d">'
+                    '<div class="row"><button name="value" value="y">Yes</button>'
+                    '<button name="value" value="" class="secondary">No</button></div>'
+                    '</form>') % qid
+        elif kind == "choice":
+            body = "".join(
+                '<form method="post" action="api/answer">'
+                '<input type="hidden" name="id" value="%d">'
+                '<button name="value" value="%s" class="secondary">%s</button></form>'
+                % (qid, _html.escape(str(option), quote=True), _html.escape(str(option)))
+                for option in (question.get("options") or []))
+        else:
+            ftype = {"secret": "password", "code": "tel"}.get(kind, "text")
+            extra = (' inputmode="numeric" autocomplete="one-time-code" data-autosend'
+                     if kind == "code" else "")
+            body = ('<form method="post" action="api/answer">'
+                    '<input type="%s" name="value"%s>'
+                    '<input type="hidden" name="id" value="%d">'
+                    '<button type="submit">Send</button></form>') % (ftype, extra, qid)
+        meta = '<meta http-equiv="refresh" content="10">'
+        stop = ('<form method="post" action="api/stop">'
+                '<button type="submit" class="secondary">Stop</button></form>')
+    else:
+        title = _html.escape(activity or "Working…")
+        if progress is None:
+            body = ""
+        else:
+            body = '<div class="bar"><i style="width:%d%%"></i></div>' % progress
+        meta = '<meta http-equiv="refresh" content="2">'
+        stop = ('<form method="post" action="api/stop">'
+                '<button type="submit" class="secondary">Stop</button></form>')
+
+    page = PAGE.replace("__TOKEN__", token)
+    page = page.replace("__META__", meta)
+    page = page.replace("__AUDIO__", audio_txt)
+    page = page.replace("__STEPS__", steps_html)
+    page = page.replace("__TITLE__", title)
+    page = page.replace("__BODY__", body)
+    page = page.replace("__LOG__", log_html)
+    page = page.replace("__STOP__", stop)
+    return page.encode("utf-8")
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "BariSignUI/1"
@@ -607,13 +666,21 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _page(self):
-        payload = PAGE.replace("__TOKEN__", self.server.token).encode("utf-8")
+        payload = _render_page(self.server)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
+
+    def _redirect(self):
+        location = "/" + self.server.token + "/"
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
 
     def _guard(self):
         host = (self.headers.get("Host") or "")
@@ -657,34 +724,56 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
         raw = self.rfile.read(max(0, min(length, 65536))).decode("utf-8", "replace")
+        ctype = (self.headers.get("Content-Type") or "")
         try:
             body = json.loads(raw or "{}")
         except ValueError:
             body = {}
-        if rest == "/api/start":
-            thread = threading.Thread(target=_run_flow, daemon=True)
-            thread.start()
-            self._json(200, {"ok": True})
-            return
-        if rest == "/api/stop":
-            _STOP.set()
-            with _LOCK:
-                if _QUESTION["event"] is not None:
-                    _QUESTION["answer"] = ""
+        if not isinstance(body, dict) or ("id" not in body and "value" not in body
+                                          and "application/json" not in ctype):
+            fields = urllib.parse.parse_qs(raw, keep_blank_values=True)
+            body = {key: values[0] for key, values in fields.items()}
+        wants_json = "application/json" in ctype or "application/json" in (
+            self.headers.get("Accept") or "")
+
+        def _answer(body):
+            if rest == "/api/start":
+                thread = threading.Thread(target=_run_flow, daemon=True)
+                thread.start()
+                return True
+            if rest == "/api/stop":
+                _STOP.set()
+                with _LOCK:
+                    if _QUESTION["event"] is not None:
+                        _QUESTION["answer"] = ""
+                        _QUESTION["event"].set()
+                return True
+            if rest == "/api/audio":
+                with _LOCK:
+                    if _AUDIO_OK["event"] is not None:
+                        _AUDIO_OK["event"].set()
+                return True
+            if rest == "/api/answer":
+                try:
+                    answered = int(body.get("id", -1))
+                except (TypeError, ValueError):
+                    answered = -1
+                with _LOCK:
+                    question = _STATE["question"]
+                if question and answered == question["id"]:
+                    _QUESTION["answer"] = str(body.get("value", ""))
                     _QUESTION["event"].set()
-            self._json(200, {"ok": True})
-            return
-        if rest == "/api/answer":
-            with _LOCK:
-                question = _STATE["question"]
-            if question and body.get("id") == question["id"]:
-                _QUESTION["answer"] = str(body.get("value", ""))
-                _QUESTION["event"].set()
-                self._json(200, {"ok": True})
-            else:
-                self._json(200, {"ok": False})
-            return
-        self._json(404, {})
+                    return True
+                return False
+            return None
+
+        outcome = _answer(body)
+        if outcome is None:
+            self._json(404, {})
+        elif wants_json:
+            self._json(200, {"ok": bool(outcome)})
+        else:
+            self._redirect()
 
 
 def run():

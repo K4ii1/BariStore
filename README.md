@@ -41,12 +41,15 @@ No computer, no second device, no AirDrop, no OTA, no enterprise certificate.
 In a-Shell on the **iPhone itself**:
 
 ```
-mkdir -p ~/Documents/barisign && cd ~/Documents/barisign
-curl -sSL "https://github.com/barismd/barisign/blob/main/install.sh?raw=true" -o install.sh
-sh install.sh
+curl -fsSL https://raw.githubusercontent.com/barismd/barisign/main/install.sh | sh
 ```
 
-`sh update` self-updates everything in one command. Your saved state in `state/` is kept.
+One line, run from anywhere in a-Shell. It lays down `barisign` (the launcher, so no
+`cd` is ever needed) plus `barisign_files/` with everything else; an old `barisign/`
+folder is moved into place with its state kept.
+
+`sh barisign update` self-updates everything in place. Your saved state in
+`barisign_files/state/` is kept.
 There is **no pip step**: the engine is part of the program files.
 
 ```

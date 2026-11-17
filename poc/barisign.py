@@ -68,7 +68,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.24"
+VERSION = "0.9.25"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1646,6 +1646,7 @@ def _usage():
     print("  sh barisign status    what is saved")
     print("  sh barisign check     diagnostics only")
     print("  sh barisign version   which copy is running")
+    print("  sh barisign update    update everything in place")
     print("  sh barisign forget    clear the saved state")
     print("  sh barisign reset      remove saved state, IPAs and zips")
     print()

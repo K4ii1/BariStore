@@ -1,6 +1,10 @@
 # Next session — handoff (2026-11-17)
 
-State: version **0.9.23**. Single-device rewrite: `sh barisign` opens a web UI in a-Shell's
+State: version **0.9.25**. One-line install (`curl ... install.sh | sh`) into
+`~/Documents/barisign` (launcher) + `barisign_files/`; `sh barisign update` self-updates;
+root wrappers and `bin/` are gone. The page is server-rendered + meta-refresh now, so it
+works with scripts off; silent audio is JS-enhanced with a speech fallback when the page
+never confirms audio. Single-device rewrite: `sh barisign` opens a web UI in a-Shell's
 internal browser and runs the whole pipeline on this iPhone (requirements → Apple ID →
 variant → download → pairing → Developer Mode → portal → sign → install). The two-device
 guided flow is deleted; `sh barisign shell` is the terminal fallback (same order, speech

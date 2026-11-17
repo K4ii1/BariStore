@@ -98,5 +98,44 @@ def main():
         server2.shutdown()
 
 
+def _post(server, path, data, ctype):
+    request = urllib.request.Request(
+        "http://127.0.0.1:%d%s" % (server.port, path), data=data,
+        headers={"Content-Type": ctype, "Host": "127.0.0.1:%d" % server.port})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read()
+    except Exception as exc:                                    # noqa: BLE001
+        return getattr(exc, "code", None), b""
+
+
+def _forms():
+    import urllib.parse
+    server = _serve()
+    try:
+        with webui._LOCK:
+            webui._STATE["question"] = {"id": 11, "kind": "text",
+                                        "label": "Name?", "options": []}
+            webui._QUESTION["event"] = threading.Event()
+        status, _ = _post(server, "/%s/api/answer" % ("t" * 32),
+                           urllib.parse.urlencode({"id": "11", "value": "ada"}).encode(),
+                           "application/x-www-form-urlencoded")
+        assert status in (200, 303), status
+        assert webui._QUESTION["answer"] == "ada", webui._QUESTION["answer"]
+        print("ok  form answer posts")
+        with webui._LOCK:
+            webui._STATE["question"] = None
+        status, _ = _post(server, "/%s/api/audio" % ("t" * 32), b"{}",
+                           "application/json")
+        assert status == 200, status
+        print("ok  audio ping")
+        status, body = _get(server, "/%s/" % ("t" * 32))
+        assert status == 200 and b"<form" in body, (status, body[:60])
+        print("ok  page renders forms")
+    finally:
+        server.shutdown()
+
+
 if __name__ == "__main__":
+    _forms()
     main()
