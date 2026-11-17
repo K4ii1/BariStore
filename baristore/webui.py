@@ -173,6 +173,9 @@ def probe_environment(check_tunnel=False):
 def start_pairing_worker(fresh_identity=False):
     with _LOCK:
         if _JOB["active"]:
+            if _JOB.get("kind") == "pair":
+                # Already advertising — UI re-shows the current PIN via poll.
+                return
             raise RuntimeError("Another operation is currently running.")
     my_id = _start_job("pair", "Device Pairing", "Preparing 3072-bit SRP & PIN…")
 
@@ -191,7 +194,7 @@ def start_pairing_worker(fresh_identity=False):
 
             _rec, udid, info = _run_coro(
                 tunnel.pair_with_device(
-                    timeout=300,
+                    timeout=600,
                     fresh_identity=fresh_identity,
                     on_pin=on_pin,
                     on_status=on_status,
@@ -903,6 +906,24 @@ class _Handler(BaseHTTPRequestHandler):
 
             if route == "/api/pair/start":
                 start_pairing_worker(fresh_identity=bool(body.get("fresh")))
+                self._send_json(200, {"ok": True})
+                return
+
+            if route == "/api/pair/speak":
+                with _LOCK:
+                    pin = (_JOB.get("pin") or "") if _JOB.get("active") else ""
+                if not pin:
+                    self._send_json(
+                        400, {"ok": False, "error": "No active pairing PIN to read aloud."}
+                    )
+                    return
+                try:
+                    subprocess.Popen(["say", " ".join(pin)])
+                except Exception as exc:
+                    self._send_json(
+                        400, {"ok": False, "error": "Could not speak PIN: %s" % exc}
+                    )
+                    return
                 self._send_json(200, {"ok": True})
                 return
 

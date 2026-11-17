@@ -523,19 +523,39 @@ async function startPiPPin() {
   drawPiPFrame(pin);
   const canvas = document.getElementById("pipCanvas");
   const video = document.getElementById("pipVideo");
+  const canStdPiP = !!document.pictureInPictureEnabled && !!video.requestPictureInPicture;
+  let canWebkitPiP = false;
+  try {
+    canWebkitPiP = typeof video.webkitSetPresentationMode === "function"
+      && video.webkitSupportsPresentationMode
+      && video.webkitSupportsPresentationMode("picture-in-picture");
+  } catch (e) {}
+  if (!canStdPiP && !canWebkitPiP) {
+    await showAlert("PiP is not available here. Keep this PIN ready: " + pin + OPEN_SETTINGS_MSG);
+    return;
+  }
   try {
     if (!video.srcObject && canvas.captureStream) {
       video.srcObject = canvas.captureStream(5);
     }
-    await video.play();
-    if (video.requestPictureInPicture) {
+    // NOTE: do NOT play() before PiP — on iOS play() alone can force fullscreen.
+    if (canStdPiP) {
       await video.requestPictureInPicture();
-    } else if (video.webkitSetPresentationMode) {
+    } else {
       video.webkitSetPresentationMode("picture-in-picture");
     }
+    try { await video.play(); } catch (e) {}
   } catch (e) {
-    showAlert("Keep this PIN ready: " + pin + "\\nOpen Settings > Developer > Paired Macs > BariStore.");
+    try { await video.pause(); } catch (_) {}
+    await showAlert("Keep this PIN ready: " + pin + OPEN_SETTINGS_MSG);
   }
+}
+
+const OPEN_SETTINGS_MSG = "\\nOpen Settings > Developer > Paired Macs > BariStore.";
+
+async function speakPin() {
+  const res = await apiPost("/api/pair/speak", {});
+  if (!res.ok) await showAlert(res.error || "Could not speak PIN.");
 }
 
 /* --- Modal Helpers --- */
@@ -717,6 +737,9 @@ function renderOnboardingStep() {
         <div class="pin-box" id="obPin">------</div>
         <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
           <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
+          <button class="secondary full" onclick="speakPin()">🔊 Read PIN Aloud</button>
         </div>
         <div id="obPairStatus" class="sub" style="margin-bottom:0.65rem;color:var(--accent);font-weight:600"></div>
       </div>
@@ -1029,6 +1052,18 @@ async function pollStatus() {
       if (job.kind === "pair" || (APP.job && APP.job.kind === "pair")) {
         const obSt = document.getElementById("obPairStatus");
         if (obSt && job.step) obSt.textContent = job.step;
+        if (job.pin && !document.getElementById("optPinWrap")
+            && document.getElementById("optDeviceDetails")
+            && !document.getElementById("viewOptions").classList.contains("hidden")) {
+          const ae = document.activeElement;
+          if (!ae || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) renderOptions();
+        }
+        const optPinWrap = document.getElementById("optPinWrap");
+        if (optPinWrap && job.pin) {
+          document.getElementById("optPin").textContent = job.pin;
+          const optSt = document.getElementById("optPairStatus");
+          if (optSt && job.step) optSt.textContent = job.step;
+        }
       } else if (!job.active) {
         APP._pinBuzzed = false;
       }
@@ -1068,6 +1103,9 @@ async function onJobFinished(job) {
       else renderOnboardingStep();
     } else {
       renderOptions();
+      await showAlert(
+        "Device paired successfully! UDID: " + (job.result?.udid || APP.state.udid || "verified")
+      );
     }
   } else if (job.kind === "install" || job.kind === "refresh-all") {
     renderMyApps();
@@ -1659,6 +1697,20 @@ function renderOptions() {
     <div class="kv-row"><span>UDID</span><code>${esc(st.udid || '—')}</code></div>
     <div class="kv-row"><span>Developer Mode</span><span>${st.devmode_on === true ? 'Enabled' : (st.devmode_on === false ? 'Disabled' : 'Verified on install')}</span></div>
   `;
+  if (APP.job && APP.job.active && APP.job.kind === "pair" && APP.job.pin) {
+    document.getElementById("optDeviceDetails").innerHTML += `
+      <div id="optPinWrap" style="margin-top:0.65rem">
+        <div class="pin-box" id="optPin">${esc(APP.job.pin)}</div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
+          <button class="full" onclick="startPiPPin()">Float PIN over Settings (PiP)</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.4rem">
+          <button class="secondary full" onclick="speakPin()">🔊 Read PIN Aloud</button>
+        </div>
+        <div id="optPairStatus" class="sub" style="color:var(--accent);font-weight:600">${esc(APP.job.step || '')}</div>
+      </div>
+    `;
+  }
 
   const aniInp = document.getElementById("anisetteInput");
   if (aniInp && !aniInp.value) aniInp.value = st.anisette_url || "";
@@ -1751,7 +1803,20 @@ async function quitServer() {
 async function resetBariStore() {
   if (!(await showConfirm("Reset BariStore and erase all saved Apple ID sessions, pairing files, and cached IPAs?"))) return;
   const res = await apiPost("/api/reset", {});
-  if (res.ok) location.reload();
+  if (!res.ok) {
+    await showAlert(res.error || "Reset failed.");
+    return;
+  }
+  APP.job = { active: false };
+  APP.state = {};
+  APP.catalog = { sources: [], apps: [], store_variants: [] };
+  APP.installed_apps = [];
+  APP.currentTab = "featured";
+  APP.obStep = 1;
+  APP._pinBuzzed = false;
+  lastHandledJobId = 0;
+  await enterOnboarding();
+  await showAlert("BariStore has been reset. Start again from Step 1.");
 }
 
 window.addEventListener("DOMContentLoaded", initApp);
