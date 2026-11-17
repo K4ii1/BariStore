@@ -133,79 +133,6 @@ def test_multi_source_deduplication():
     assert len(catalog["store_variants"]) >= 7
 
 
-def test_sources_config_fallback():
-    tmp = tempfile.mkdtemp(prefix="sources-cfg-")
-    old = storage.SOURCES_CONFIG_FILE
-    storage.SOURCES_CONFIG_FILE = os.path.join(tmp, "missing.json")
-    try:
-        config = sources.load_sources_config()
-        assert len(config["store_variants"]) == 7, config["store_variants"]
-        assert len(config["default_sources"]) >= 8, config["default_sources"]
-        assert all(v.get("bundle_id") for v in config["store_variants"])
-    finally:
-        storage.SOURCES_CONFIG_FILE = old
-
-
-def test_catalogue_tolerates_odd_shapes():
-    """A third-party source may publish dicts where BariStore expects lists."""
-    configured = [
-        {"name": "Odd Source", "url": "https://odd.example/apps.json", "custom": True}
-    ]
-    raw_map = {
-        "https://odd.example/apps.json": {
-            "fetched_at": 1000,
-            "data": {
-                "name": {"unexpected": "dict"},
-                "subtitle": ["nope"],
-                "apps": [
-                    {
-                        "name": "Keyed",
-                        "bundleIdentifier": "com.example.keyed",
-                        "developerName": {"nested": True},
-                        "iconURL": {"oops": 1},
-                        "tintColor": 0,
-                        "version": 1.4,
-                        "size": "1,024",
-                        "downloadURL": "https://odd.example/keyed.ipa",
-                        # New AltStore sources key screenshots by device.
-                        "screenshots": {
-                            "iphone": ["https://odd.example/a.png", "https://odd.example/b.png"],
-                            "ipad": [{"url": "https://odd.example/c.png"}],
-                        },
-                    },
-                    {
-                        "name": "Flat urls",
-                        "bundleIdentifier": "com.example.flat",
-                        "screenshotURLs": ["https://odd.example/d.png"],
-                        "versions": [{"version": "2.0", "downloadURL": "https://odd.example/flat.ipa", "size": "2048"}],
-                    },
-                    {"bundleIdentifier": "com.example.nourl"},
-                    "not a dict",
-                ],
-            },
-        }
-    }
-    catalog = sources.build_catalog_from_cache(configured, raw_map)
-    by_id = {a["bundle_id"]: a for a in catalog["apps"]}
-    assert set(by_id) == {"com.example.keyed", "com.example.flat"}, by_id.keys()
-
-    keyed = by_id["com.example.keyed"]
-    assert keyed["name"] == "Keyed"
-    assert keyed["version"] == "1.4"
-    assert keyed["size"] == 1024
-    assert keyed["developer"] == "Odd Source"
-    assert keyed["icon_url"] == ""
-    assert len(keyed["screenshots"]) == 3
-    assert "https://odd.example/c.png" in keyed["screenshots"]
-
-    flat = by_id["com.example.flat"]
-    assert flat["screenshots"] == ["https://odd.example/d.png"]
-    assert flat["size"] == 2048
-
-    assert catalog["sources"][0]["name"] == "Odd Source"
-    assert catalog["sources"][0]["subtitle"] == ""
-
-
 def test_loopback_probe():
     async def main():
         server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
@@ -231,9 +158,5 @@ if __name__ == "__main__":
     print("ok  test_export_pairing_bytes")
     test_multi_source_deduplication()
     print("ok  test_multi_source_deduplication")
-    test_sources_config_fallback()
-    print("ok  test_sources_config_fallback")
-    test_catalogue_tolerates_odd_shapes()
-    print("ok  test_catalogue_tolerates_odd_shapes")
     test_loopback_probe()
     print("ok  test_loopback_probe")

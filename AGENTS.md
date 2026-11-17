@@ -15,6 +15,4 @@ Project goal: **BariStore** — a 100% MIT, on-device iOS/iPadOS App Store, IPA 
   - `baristore/device.py` — `lockdownd` + `amfi` (Developer Mode check/show/enable), `afc`, `house_arrest` (automatic pairing-file injection), `installation_proxy` (Install, Uninstall, Lookup), and `debug_proxy` (StikDebug-style JIT Enabler).
   - `baristore/sources.py` & `sources.json` — AltSource manager, multi-source app deduplicator, and runtime GitHub release resolver for SideStore, LiveContainer+SideStore, LiveContainer, and AltStore Classic.
   - `baristore/storage.py` — Persistent state in `state/` with automatic migration from legacy installs.
-- **Pairing must survive the Settings hop:** the PIN and SRP verifier are precomputed before advertising, every socket iOS opens gets its own SRP context with the *same* PIN, and a `say` keep-alive holds a-Shell while the user is away. The UI restores the pairing screen (and its PIN) after a page reload instead of falling back to the Store.
-- **Featured must never be empty:** `sources.py` carries a built-in copy of the store variants and default AltSources as a fallback when `sources.json` is unavailable.
 - **Bump `VERSION` in `baristore/__init__.py` on every functional commit.**

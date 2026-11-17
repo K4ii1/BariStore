@@ -36,7 +36,7 @@ baristore update
 When you run `baristore` for the first time, it opens a clean setup wizard inside a-Shell's internal browser:
 
 1. **LocalDevVPN Check** — Verifies that LocalDevVPN is connected on `10.7.0.1`.
-2. **Instant Device Pairing** — Pre-computes a 6-digit PIN and 3072-bit SRP-6a verifier *before* advertising, answers iOS' handshake in under a millisecond, tolerates the extra sockets iOS opens (they all share the same PIN), and keeps a-Shell alive while you are in Settings with a spoken keep-alive plus an optional floating Picture-in-Picture (PiP) PIN window. In **Settings → Developer → Paired Macs → BariStore**, iOS asks for your device passcode first and then shows the six-digit code screen; enter the PIN there (or import an existing pairing file).
+2. **Instant Device Pairing** — Pre-computes a 6-digit PIN and 3072-bit SRP-6a verifier *before* advertising over 250ms mDNS broadcast, holds a-Shell awake in the background with a non-zero sub-audible audio loop + optional floating Picture-in-Picture (PiP) PIN window, and pairs from **Settings → Developer → Paired Macs → BariStore** (or imports an existing pairing file).
 3. **Developer Mode Over Tunnel** — Checks Developer Mode status over the loopback tunnel. If disabled or hidden, reveals the toggle in **Settings → Privacy & Security → Developer Mode** or enables it immediately.
 4. **Apple ID Sign-In** — Authenticates via Anisette + SRP-6a + 2FA and saves your developer session so you **never get logged out**.
 

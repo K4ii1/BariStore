@@ -530,13 +530,11 @@ class PairableHost:
         return self.peer
 
     async def _handshake(self):
-        request = await self._recv(timeout=15.0)
+        request = await self._recv(timeout=120.0)
         try:
             handshake = request["request"]["_0"]["handshake"]["_0"]
         except (KeyError, TypeError):
             raise PairingError("the device sent an unexpected handshake")
-        if handshake.get("hostOptions", {}).get("attemptPairVerify"):
-            raise PairingError("the device already knows this host; use pair-verify instead")
         await self._send(
             {
                 "response": {
@@ -584,17 +582,28 @@ class PairableHost:
             }
         )
 
-    async def _recv_pairing_data(self, timeout=20.0):
-        response = await self._recv(timeout=timeout)
-        event = response.get("event", {}).get("_0", {})
-        if "pairingData" in event:
-            return base64.b64decode(event["pairingData"]["_0"]["data"])
-        if "pairingRejectedWithError" in event:
-            raise PairingError("the device rejected the pairing")
-        raise PairingError("the device sent no pairing data")
+    async def _recv_pairing_data(self, timeout=120.0):
+        while True:
+            response = await self._recv(timeout=timeout)
+            event = response.get("event", {}).get("_0", {})
+            if "pairingData" in event:
+                pdata = event["pairingData"]["_0"]
+                if pdata.get("kind") == "verifyManualPairing":
+                    await self._send_pairing_data(
+                        tlv_encode([(TLV_STATE, b"\x02"), (TLV_ERROR, b"\x02")]),
+                        kind="verifyManualPairing",
+                    )
+                    continue
+                if "data" in pdata:
+                    return base64.b64decode(pdata["data"])
+            if "pairVerifyFailed" in event:
+                continue
+            if "pairingRejectedWithError" in event:
+                raise PairingError("the device rejected the pairing")
+            raise PairingError("the device sent no pairing data")
 
     async def _pair_setup(self, pin_callback):
-        m1 = tlv_decode(await self._recv_pairing_data(timeout=15.0))
+        m1 = tlv_decode(await self._recv_pairing_data(timeout=120.0))
         _expect_state(m1, 1)
 
         if self._precomputed_srp is not None:

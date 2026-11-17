@@ -49,17 +49,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print()
         sys.exit(130)
-    except Exception:
-        import traceback
-
-        report = traceback.format_exc()
-        try:
-            from baristore import storage
-
-            storage.ensure_dirs()
-            with open(os.path.join(storage.STATE_DIR, "launch.log"), "a") as handle:
-                handle.write("FATAL\n" + report + "\n")
-        except Exception:
-            pass
-        sys.stderr.write("BariStore failed to start:\n" + report)
-        sys.exit(1)

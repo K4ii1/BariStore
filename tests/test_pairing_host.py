@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import os
-import socket
 import struct
 import sys
 
@@ -194,91 +193,6 @@ async def main():
     await server.wait_closed()
 
 
-class _DummyAdvertiser:
-    """Stands in for the mDNS advertiser so the test never touches UDP 5353."""
-
-    def __init__(self, *args, **kwargs):
-        self.transports = "stub"
-
-    def start(self):
-        return self
-
-    def stop(self):
-        pass
-
-
-async def _pair_with_probe():
-    """A dropped socket must not abort the run, and the same PIN must complete it."""
-    import tempfile
-
-    from baristore import storage
-    from baristore import tunnel as tunnel_module
-
-    tmp = tempfile.mkdtemp(prefix="baristore-pair-")
-    saved = {
-        name: getattr(storage, name)
-        for name in (
-            "STATE_DIR",
-            "STATE_FILE",
-            "RECORD_PATH",
-            "IDENTITY_PATH",
-            "ALT_RECORD_PLIST",
-            "ALT_RECORD_PAIRING",
-        )
-    }
-    real_advertiser = tunnel_module.mdns.Advertiser
-    storage.STATE_DIR = tmp
-    storage.STATE_FILE = os.path.join(tmp, "baristore.json")
-    storage.RECORD_PATH = os.path.join(tmp, "PairingFile_RemoteRP.plist")
-    storage.IDENTITY_PATH = os.path.join(tmp, "pairing_host.plist")
-    storage.ALT_RECORD_PLIST = os.path.join(tmp, "ALTPairingFile.plist")
-    storage.ALT_RECORD_PAIRING = os.path.join(tmp, "ALTPairingFile.mobiledevicepairing")
-    tunnel_module.mdns.Advertiser = _DummyAdvertiser
-
-    # A free port the listener will be told to use.
-    probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    listen_port = probe.getsockname()[1]
-    probe.close()
-
-    pins = []
-    try:
-        task = asyncio.create_task(
-            tunnel_module.pair_with_device(timeout=15, on_pin=pins.append, port=listen_port)
-        )
-        for _ in range(300):
-            if pins:
-                break
-            await asyncio.sleep(0.02)
-        assert pins, "pair_with_device never reported a PIN"
-
-        # 1. A bare connection that sends nothing and goes away (iOS does this).
-        dropped_reader, dropped_writer = await asyncio.open_connection(
-            "127.0.0.1", listen_port
-        )
-        dropped_writer.close()
-        await dropped_writer.wait_closed()
-
-        # 2. The real pairing, using the PIN the UI was given.
-        reader, writer = await asyncio.open_connection("127.0.0.1", listen_port)
-        client = MockClient(reader, writer, pins[0])
-        await asyncio.wait_for(client.run(), 20)
-        writer.close()
-        await writer.wait_closed()
-
-        record, udid, info = await asyncio.wait_for(task, 20)
-        assert record["identifier"], record
-        assert udid == "c" * 40, udid
-        assert info["name"] == "Target", info
-        assert os.path.isfile(storage.RECORD_PATH)
-    finally:
-        tunnel_module.mdns.Advertiser = real_advertiser
-        for name, value in saved.items():
-            setattr(storage, name, value)
-
-
 if __name__ == "__main__":
     asyncio.run(main())
     print("ok  pairing host round-trip")
-    asyncio.run(_pair_with_probe())
-    print("ok  pairing survives a dropped socket with the same PIN")

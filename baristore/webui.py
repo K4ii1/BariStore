@@ -9,9 +9,6 @@ import json
 import os
 import plistlib
 import secrets
-import select
-import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,65 +47,6 @@ def _log(msg):
         del _JOB["logs"][:-150]
 
 
-# --- Keep-alive -------------------------------------------------------------
-#
-# Pairing needs one trip to Settings > Developer > Paired Macs, and iOS suspends
-# a-Shell the moment the user leaves it. The only hold available to a Python
-# guest inside a-Shell is audible speech through the `say` command (a-Shell sets
-# the playback audio session at launch), so we keep saying one short line while
-# a job runs. On Linux / CI `say` does not exist and this is a silent no-op.
-
-_KEEPALIVE = {"stop": None, "thread": None}
-_KEEPALIVE_TEXT = (
-    "BariStore is waiting. Open Settings, Developer, Paired Macs, "
-    "and enter the code shown on screen."
-)
-
-
-def keepalive_start():
-    with _LOCK:
-        if _KEEPALIVE["thread"] is not None and _KEEPALIVE["thread"].is_alive():
-            return
-        if shutil.which("say") is None:
-            return
-        stop = threading.Event()
-
-        def _loop():
-            while not stop.is_set():
-                try:
-                    process = subprocess.Popen(
-                        ["say", "-r", "150", _KEEPALIVE_TEXT],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                except Exception:
-                    return
-                while process.poll() is None:
-                    if stop.wait(0.4):
-                        break
-                if process.poll() is None:
-                    try:
-                        process.terminate()
-                    except Exception:
-                        pass
-                if stop.wait(0.4):
-                    return
-
-        thread = threading.Thread(target=_loop, daemon=True)
-        _KEEPALIVE["stop"] = stop
-        _KEEPALIVE["thread"] = thread
-        thread.start()
-
-
-def keepalive_stop():
-    with _LOCK:
-        stop = _KEEPALIVE["stop"]
-        _KEEPALIVE["stop"] = None
-        _KEEPALIVE["thread"] = None
-    if stop is not None:
-        stop.set()
-
-
 def _start_job(kind, title, step="Starting…"):
     with _LOCK:
         _JOB["id"] += 1
@@ -122,10 +60,7 @@ def _start_job(kind, title, step="Starting…"):
         _JOB["prompt"] = None
         _JOB["result"] = None
         _JOB["logs"] = []
-        job_id = _JOB["id"]
-    if kind in ("pair", "install", "refresh-all"):
-        keepalive_start()
-    return job_id
+        return _JOB["id"]
 
 
 def _update_job(step=None, progress=None, pin=None):
@@ -150,7 +85,6 @@ def _finish_job(result=None, error=None, prompt=None):
             _JOB["prompt"] = prompt
         if result is not None:
             _JOB["result"] = result
-    keepalive_stop()
 
 
 def cancel_active_job():
@@ -190,13 +124,6 @@ def probe_environment(check_tunnel=False):
     paired = storage.has_pairing_record()
     udid = storage.normalise_udid(state.get("udid") or "")
     devmode = state.get("devmode_on")
-
-    with _LOCK:
-        busy = _JOB["active"]
-    # Never open a second tunnel while a job already owns one: the pairing
-    # listener must not be disturbed by a probe.
-    if busy and check_tunnel:
-        check_tunnel = False
 
     if check_tunnel and vpn_connected and paired:
         async def _check():
@@ -761,15 +688,6 @@ class _Handler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8", "replace"))
 
     def do_GET(self):  # noqa: N802
-        try:
-            self._do_get()
-        except Exception as exc:
-            try:
-                self._send_json(500, {"ok": False, "error": "Internal error: %s" % exc})
-            except Exception:
-                pass
-
-    def _do_get(self):
         route = self._guard()
         if route is None:
             self._send_json(404, {"error": "Not found"})
@@ -803,9 +721,10 @@ class _Handler(BaseHTTPRequestHandler):
                 and isinstance(state.get("gs_token"), dict)
                 and state["gs_token"].get("token")
             )
-            onboarding_complete = bool(
-                state.get("onboarding_complete") or (paired and has_account)
-            )
+            if "onboarding_complete" in state:
+                onboarding_complete = bool(state["onboarding_complete"])
+            else:
+                onboarding_complete = bool(paired and has_account)
             catalog = sources.build_catalog_from_cache()
             with _LOCK:
                 job_copy = dict(_JOB)
@@ -915,15 +834,6 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Unknown endpoint"})
 
     def do_POST(self):  # noqa: N802
-        try:
-            self._do_post()
-        except Exception as exc:
-            try:
-                self._send_json(500, {"ok": False, "error": "Internal error: %s" % exc})
-            except Exception:
-                pass
-
-    def _do_post(self):
         route = self._guard()
         if route is None:
             self._send_json(404, {"error": "Not found"})
@@ -990,6 +900,29 @@ class _Handler(BaseHTTPRequestHandler):
             if route == "/api/onboarding/complete":
                 storage.update_state(onboarding_complete=True)
                 self._send_json(200, {"ok": True})
+                return
+
+            if route == "/api/onboarding/reset":
+                storage.update_state(onboarding_complete=False)
+                self._send_json(200, {"ok": True})
+                return
+
+            if route == "/api/open-external":
+                url = (body.get("url") or "").strip()
+                if not url.startswith(("https://", "http://")):
+                    raise RuntimeError("Invalid URL")
+                env = dict(os.environ)
+                env["BROWSER"] = "safari"
+                try:
+                    subprocess.Popen(["openurl", url], env=env)
+                except Exception:
+                    pass
+                self._send_json(200, {"ok": True})
+                return
+
+            if route == "/api/shutdown":
+                self._send_json(200, {"ok": True})
+                threading.Timer(0.3, _STOP.set).start()
                 return
 
             if route == "/api/sources/add":
@@ -1110,39 +1043,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "state": storage.load_state()})
                 return
 
-            if route == "/api/shutdown":
-                self._send_json(200, {"ok": True})
-                threading.Timer(0.5, _STOP.set).start()
-                return
-
             if route == "/api/netcheck":
                 results = apple.run_network_diagnostics()
-                self._send_json(
-                    200,
-                    {
-                        "ok": True,
-                        "results": results,
-                        "trust": apple.trust_report(),
-                    },
-                )
-                return
-
-            if route == "/api/open-external":
-                target = (body.get("url") or "").strip()
-                if not target.startswith(("https://", "http://")):
-                    raise RuntimeError("Only http(s) links can be opened.")
-                environment = dict(os.environ)
-                environment.pop("BROWSER", None)
-                try:
-                    subprocess.Popen(
-                        ["openurl", target],
-                        env=environment,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                except Exception as exc:
-                    raise RuntimeError("Could not launch a browser: %s" % exc)
-                self._send_json(200, {"ok": True, "url": target})
+                self._send_json(200, {"ok": True, "results": results})
                 return
 
             if route == "/api/update":
@@ -1168,16 +1071,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(exc)})
 
 
-def _launch_log(text):
-    """Boot/failure trace on disk: the terminal may not be readable at all."""
-    try:
-        storage.ensure_dirs()
-        with open(os.path.join(storage.STATE_DIR, "launch.log"), "a", encoding="utf-8") as handle:
-            handle.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
-    except Exception:
-        pass
-
-
 def run(open_browser=True):
     """Start the local BariStore server and open the Web UI in a-Shell's internal browser."""
     token = secrets.token_hex(16)
@@ -1197,13 +1090,9 @@ def run(open_browser=True):
     thread.start()
 
     # Warm up AltSources in a background thread so first launch has live apps ready quickly
-    def _warm_sources():
-        try:
-            sources.fetch_all_sources(force_refresh=False)
-        except Exception:
-            pass
-
-    threading.Thread(target=_warm_sources, daemon=True).start()
+    threading.Thread(
+        target=lambda: sources.fetch_all_sources(force_refresh=False), daemon=True
+    ).start()
 
     url = "http://127.0.0.1:%d/%s/" % (server.port, token)
     opened = False
@@ -1218,50 +1107,25 @@ def run(open_browser=True):
     print("  url    %s" % url)
     if not opened and open_browser:
         print("  open   BROWSER=internalbrowser openurl %s" % url)
-    print("  press Enter here to stop the server (Ctrl-C works too).")
-    _launch_log(
-        "started v%s url=%s openurl=%s python=%s"
-        % (VERSION, url, opened, sys.version.split()[0])
-    )
+    print("  press Enter to stop the server.")
 
-    # The main thread owns the keyboard: Enter ends the run, and the HTTP threads
-    # keep serving until then. If stdin is already at EOF (a-Shell sometimes
-    # hands us a closed stdin), keep serving anyway instead of dying silently.
-    stdin = sys.stdin
-    at_eof = False
+    import select as _select
     try:
         while not _STOP.is_set():
-            if stdin is None or at_eof:
+            if sys.stdin and sys.stdin.isatty():
+                try:
+                    r, _, _ = _select.select([sys.stdin], [], [], 0.5)
+                    if r:
+                        line = sys.stdin.readline()
+                        if line != "":
+                            break
+                except (OSError, ValueError):
+                    _STOP.wait(0.5)
+            else:
                 _STOP.wait(0.5)
-                continue
-            try:
-                ready, _, _ = select.select([stdin], [], [], 0.5)
-            except KeyboardInterrupt:
-                break
-            except (OSError, ValueError):
-                at_eof = True
-                _launch_log("stdin unusable; staying up, quit from the page")
-                continue
-            if not ready:
-                continue
-            try:
-                line = stdin.readline()
-            except Exception:
-                at_eof = True
-                continue
-            if line == "":
-                at_eof = True
-                _launch_log("stdin EOF; staying up, quit from the page")
-                continue
-            break
     except KeyboardInterrupt:
-        pass
-    finally:
         print()
-        _launch_log("stopped")
+    finally:
         _STOP.set()
-        try:
-            server.shutdown()
-        except Exception:
-            pass
+        server.shutdown()
     return 0

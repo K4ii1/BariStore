@@ -7,7 +7,6 @@ import plistlib
 import sys
 import tempfile
 import threading
-import time
 import urllib.request
 import zipfile
 from http.server import ThreadingHTTPServer
@@ -158,75 +157,9 @@ def main():
         status, ob_res = _post(server, "/%s/api/onboarding/complete" % token, {})
         assert status == 200 and ob_res["ok"] is True
         print("ok  /api/settings and /api/onboarding/complete")
-
-        # External links are only opened for http(s) targets.
-        status, bad = _post(
-            server, "/%s/api/open-external" % token, {"url": "javascript:alert(1)"}
-        )
-        assert status == 400 and bad.get("ok") is False, (status, bad)
-        print("ok  /api/open-external rejects non-http targets")
-
-        # A finished job is restored on reload instead of dropping the user into the store.
-        with webui._LOCK:
-            webui._JOB.update(
-                {
-                    "id": 91,
-                    "active": True,
-                    "kind": "pair",
-                    "title": "Device Pairing",
-                    "step": "waiting",
-                    "pin": "123456",
-                    "progress": None,
-                    "error": None,
-                    "prompt": None,
-                    "result": None,
-                    "logs": [],
-                }
-            )
-        status, boot_raw = _get(server, "/%s/api/bootstrap" % token)
-        boot = json.loads(boot_raw.decode("utf-8"))
-        assert boot["job"]["active"] is True
-        assert boot["job"]["kind"] == "pair"
-        assert boot["job"]["pin"] == "123456"
-        with webui._LOCK:
-            webui._JOB.update({"active": False, "pin": None})
-        print("ok  /api/bootstrap restores an in-flight pairing job")
-
-        # The page can always stop the server, even when the terminal has no stdin.
-        status, sd = _post(server, "/%s/api/shutdown" % token, {})
-        assert status == 200 and sd.get("ok") is True, (status, sd)
-        time.sleep(0.8)
-        assert webui._STOP.is_set()
-        webui._STOP.clear()
-        print("ok  /api/shutdown stops the server loop")
     finally:
         server.shutdown()
 
 
-def _js_syntax_check():
-    """The whole UI is one inline script: a syntax error blanks the page."""
-    import shutil
-    import subprocess
-
-    from baristore import ui_page
-
-    node = shutil.which("node") or shutil.which("nodejs")
-    html = ui_page.render_html("tok", "test")
-    assert "showFatal" in html and "fatalBanner" in html
-    start = html.index("<script>") + len("<script>")
-    end = html.index("</script>", start)
-    script = html[start:end]
-    if not node:
-        print("ok  page JavaScript assembled (node missing, syntax check skipped)")
-        return
-    path = os.path.join(tempfile.mkdtemp(prefix="baristore-js-"), "page.js")
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(script)
-    result = subprocess.run([node, "--check", path], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr[-800:]
-    print("ok  page JavaScript parses")
-
-
 if __name__ == "__main__":
     main()
-    _js_syntax_check()
