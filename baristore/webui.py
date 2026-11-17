@@ -682,17 +682,21 @@ def _latest_remote_version(repo="barismd/BariStore"):
     return sha, version
 
 
-def run_self_update(progress=None):
-    """Update in place. Fast-paths when already on the newest version."""
+def run_self_update(progress=None, force=False):
+    """Update in place. Fast-paths when already on the newest version unless forced."""
     import re as _re
 
     report = progress or (lambda _pct, _msg: None)
     repo = "barismd/BariStore"
     report(10, "Checking latest version…")
-    sha, remote_version = _latest_remote_version(repo)
-    if remote_version and remote_version == VERSION:
-        report(100, "Already up to date.")
-        return "You are already on the latest version (v%s)." % VERSION
+    if force:
+        # A clean reset must not depend on the version-check requests working.
+        sha, remote_version = "", "clean"
+    else:
+        sha, remote_version = _latest_remote_version(repo)
+        if remote_version and remote_version == VERSION:
+            report(100, "Already up to date.")
+            return "You are already on the latest version (v%s)." % VERSION
 
     base = (
         "https://raw.githubusercontent.com/%s/%s" % (repo, sha)
@@ -726,6 +730,87 @@ def run_self_update(progress=None):
             os.remove(tmp)
         except OSError:
             pass
+
+
+def _perform_clean_reset():
+    """Reinstall pristine BariStore from GitHub, then relaunch in a fresh process.
+
+    The running interpreter keeps its already-imported code in memory, so
+    replacing files on disk is safe; the new process picks up the clean files.
+    """
+    print("  reset: downloading clean BariStore…")
+    try:
+        msg = run_self_update(
+            force=True,
+            progress=lambda _pct, step: print("  reset: %s" % step),
+        )
+        print("  reset: %s" % msg)
+    except Exception as exc:
+        print("  reset: reinstall failed: %s" % exc)
+        with _LOCK:
+            _JOB["active"] = False
+            _JOB["error"] = "Reset failed while reinstalling: %s" % exc
+        return
+    time.sleep(1.0)
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.join(storage.HERE, "cli.py")],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        print("  reset: fresh BariStore process started")
+    except Exception as exc:
+        print("  reset: relaunch failed: %s" % exc)
+        return
+    time.sleep(0.5)
+    _STOP.set()
+
+
+def _save_pairing_file(raw):
+    """Write the pairing plist into every accessible Documents-like folder."""
+    saved = []
+    docs = os.path.join(os.path.expanduser("~"), "Documents")
+    for folder in (docs, os.path.expanduser("~"), storage.ROOT):
+        if not folder or not os.path.isdir(folder):
+            continue
+        try:
+            out_file = os.path.join(folder, "BariStore-Pairing.mobiledevicepairing")
+            with open(out_file, "wb") as handle:
+                handle.write(raw)
+            if out_file not in saved:
+                saved.append(out_file)
+        except OSError:
+            pass
+    return saved
+
+
+def _open_ios_file_preview(path):
+    """Ask a-Shell to show the saved file in iOS's own preview / share sheet."""
+    attempts = []
+    try:
+        subprocess.Popen(
+            ["open", path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        attempts.append("open")
+    except Exception as exc:
+        attempts.append("open failed: %s" % exc)
+        try:
+            url = "file://" + urllib.parse.quote(path)
+            subprocess.Popen(
+                ["openurl", url],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            attempts.append("openurl")
+        except Exception as exc2:
+            attempts.append("openurl failed: %s" % exc2)
+    return attempts
 
 
 # --- HTTP Request Handler ---------------------------------------------------
@@ -963,7 +1048,6 @@ class _Handler(BaseHTTPRequestHandler):
 
             if route == "/api/pair/export":
                 raw = storage.export_pairing_bytes()
-                saved = []
                 result = {
                     "ok": True,
                     "plist_text": raw.decode("utf-8", "replace"),
@@ -971,23 +1055,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "paths": [],
                     "message": "Preview only — tap Export & Save to write the file.",
                 }
-                # Default to saving for backwards compatibility; the UI asks
-                # for a preview first with {"save": false}.
                 if body.get("save", True):
-                    docs = os.path.join(os.path.expanduser("~"), "Documents")
-                    for folder in (docs, os.path.expanduser("~"), storage.ROOT):
-                        if not folder or not os.path.isdir(folder):
-                            continue
-                        try:
-                            out_file = os.path.join(
-                                folder, "BariStore-Pairing.mobiledevicepairing"
-                            )
-                            with open(out_file, "wb") as handle:
-                                handle.write(raw)
-                            if out_file not in saved:
-                                saved.append(out_file)
-                        except OSError:
-                            pass
+                    saved = _save_pairing_file(raw)
                     result["paths"] = saved
                     result["message"] = (
                         "Pairing file saved to Documents/BariStore-Pairing.mobiledevicepairing"
@@ -995,6 +1064,25 @@ class _Handler(BaseHTTPRequestHandler):
                         else "Could not write the pairing file to a local folder."
                     )
                 self._send_json(200, result)
+                return
+
+            if route == "/api/pair/preview":
+                raw = storage.export_pairing_bytes()
+                saved = _save_pairing_file(raw)
+                if not saved:
+                    raise RuntimeError("Could not save the pairing file for preview.")
+                attempts = _open_ios_file_preview(saved[0])
+                print("  pairing preview opened: %s (%s)" % (saved[0], ", ".join(attempts)))
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "path": saved[0],
+                        "paths": saved,
+                        "attempts": attempts,
+                        "message": "iOS preview opened for BariStore-Pairing.mobiledevicepairing",
+                    },
+                )
                 return
 
             if route == "/api/pair/import":
@@ -1246,10 +1334,29 @@ class _Handler(BaseHTTPRequestHandler):
 
             if route == "/api/reset":
                 _CANCEL.set()
-                print("BariStore reset requested — wiping state…")
+                with _LOCK:
+                    loop = _ASYNC_TASK["loop"]
+                    task = _ASYNC_TASK["task"]
+                if loop is not None and task is not None:
+                    try:
+                        loop.call_soon_threadsafe(task.cancel)
+                    except Exception:
+                        pass
+                print("BariStore reset requested — wiping all data…")
                 storage.factory_reset()
-                print("BariStore reset complete.")
-                self._send_json(200, {"ok": True})
+                apple._DNS_CACHE.clear()
+                apple._PENDING_LOGINS.clear()
+                apple._CACHED_URL_BAG = None
+                apple._CACHED_URL_BAG_AT = 0
+                print("BariStore state/cache wiped.")
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "message": "State wiped. Downloading clean BariStore and restarting…",
+                    },
+                )
+                threading.Thread(target=_perform_clean_reset, daemon=True).start()
                 return
 
             self._send_json(404, {"ok": False, "error": "Unknown POST endpoint"})

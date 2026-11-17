@@ -1525,9 +1525,23 @@ def find_payload_app(work_dir):
 
 def write_ipa(work_dir, output_path, progress=None):
     temporary = output_path + ".part"
+    # A fast first-pass count lets us report real percentages instead of a
+    # mysterious "Packing signed IPA…" that looks like a hang on large apps.
+    total_bytes = 0
+    file_count = 0
+    for dirpath, _dirnames, filenames in os.walk(work_dir):
+        for name in filenames:
+            absolute = os.path.join(dirpath, name)
+            try:
+                total_bytes += os.path.getsize(absolute)
+                file_count += 1
+            except OSError:
+                pass
+    done_bytes = 0
+    last_report = 0
     try:
         with zipfile.ZipFile(
-            temporary, "w", zipfile.ZIP_DEFLATED, allowZip64=True
+            temporary, "w", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=1
         ) as archive:
             packed = 0
             for dirpath, dirnames, filenames in os.walk(work_dir):
@@ -1558,10 +1572,19 @@ def write_ipa(work_dir, output_path, progress=None):
                     info.external_attr = ((0o100000 | mode) & 0xFFFF) << 16
                     info.compress_type = zipfile.ZIP_DEFLATED
                     with open(absolute, "rb") as handle:
-                        archive.writestr(info, handle.read())
+                        payload = handle.read()
+                    archive.writestr(info, payload)
+                    done_bytes += len(payload)
                     packed += 1
-                    if progress is not None and packed % 100 == 0:
-                        progress("Packing signed IPA (%d files)…" % packed)
+                    if progress is not None and (
+                        packed % 50 == 0 or done_bytes - last_report >= 8 * 1024 * 1024
+                    ):
+                        last_report = done_bytes
+                        pct = int(done_bytes * 100 / total_bytes) if total_bytes else 0
+                        progress(
+                            "Packing signed IPA (%d%% · %d/%d files)…"
+                            % (pct, packed, file_count)
+                        )
         os.replace(temporary, output_path)
     except BaseException:
         try:

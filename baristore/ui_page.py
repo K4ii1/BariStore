@@ -518,12 +518,17 @@ function drawPiPFrame(pin) {
   ctx.fillText("Settings > Developer > Paired Macs", canvas.width / 2, 228);
 }
 
-async function startPiPPin() {
-  startKeepAlive();
+function beginPinPiP() {
+  // Called synchronously inside the "Start Pairing" tap so iOS still considers
+  // it a user gesture — otherwise requestPictureInPicture is rejected.
   const pin = APP.job?.pin || "------";
   drawPiPFrame(pin);
   const canvas = document.getElementById("pipCanvas");
   const video = document.getElementById("pipVideo");
+  if (!canvas || !video) return false;
+  try {
+    if (!video.srcObject && canvas.captureStream) video.srcObject = canvas.captureStream(5);
+  } catch (e) {}
   const canStd = !!document.pictureInPictureEnabled && !!video.requestPictureInPicture;
   let canWebkit = false;
   try {
@@ -531,19 +536,28 @@ async function startPiPPin() {
       && video.webkitSupportsPresentationMode
       && video.webkitSupportsPresentationMode("picture-in-picture");
   } catch (e) {}
-  if (!canStd && !canWebkit) {
-    await showAlert("PiP is unavailable here. Keep this PIN ready: " + pin + ". Open Settings > Developer > Paired Macs > BariStore.");
-    return;
-  }
   try {
-    if (!video.srcObject && canvas.captureStream) video.srcObject = canvas.captureStream(5);
     // Enter PiP BEFORE play(): calling play() first makes iOS go fullscreen.
-    if (canStd) await video.requestPictureInPicture();
-    else video.webkitSetPresentationMode("picture-in-picture");
-    try { await video.play(); } catch (e) {}
+    if (canStd) {
+      video.requestPictureInPicture().then(function () {
+        try { video.play(); } catch (e) {}
+      }).catch(function () {});
+    } else if (canWebkit) {
+      video.webkitSetPresentationMode("picture-in-picture");
+      try { video.play(); } catch (e) {}
+    } else {
+      return false;
+    }
+    return true;
   } catch (e) {
-    try { await video.pause(); } catch (_) {}
-    await showAlert("Keep this PIN ready: " + pin + ". Open Settings > Developer > Paired Macs > BariStore.");
+    return false;
+  }
+}
+
+async function startPiPPin() {
+  startKeepAlive();
+  if (!beginPinPiP()) {
+    await showAlert("PiP is unavailable here. Keep this PIN ready: " + (APP.job?.pin || "------") + ". Open Settings > Developer > Paired Macs > BariStore.");
   }
 }
 
@@ -966,7 +980,11 @@ async function submit2FA(loginId, isOnboarding) {
 
 /* --- Pairing & Job Polling --- */
 async function startPairing(fresh) {
+  // Open the floating PIN window on the tap itself (user gesture required by
+  // iOS). It starts with "------" and is redrawn with the code the instant the
+  // device sends M1 and BariStore generates it.
   startKeepAlive();
+  beginPinPiP();
   const res = await apiPost("/api/pair/start", { fresh: Boolean(fresh) });
   if (!res.ok) {
     await showAlert(res.error || "Could not start pairing.");
@@ -1817,31 +1835,47 @@ async function openExternalUrl(url) {
   }
 }
 
-async function exportPairingFile(save) {
+async function exportPairingFile() {
+  // Save the file and hand it to iOS Quick Look / share sheet — NOT an XML
+  // dump inside the webview.
   try {
-    const res = await apiPost("/api/pair/export", { save: Boolean(save) });
+    const res = await apiPost("/api/pair/preview", {});
+    if (!res.ok) {
+      await showAlert(res.error || "Could not open the pairing file preview.");
+      return;
+    }
+    openModal(`
+      <h3>Pairing File Ready</h3>
+      <p class="sub" style="margin-bottom:0.7rem">The saved file is open in the iOS preview. Use iOS Share to send it to SideStore, AltStore or StikDebug.</p>
+      <div class="kv-row"><span>File</span><code style="font-size:0.75rem">${esc(res.path || "")}</code></div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.85rem">
+        <button class="full" onclick="closeModal()">Done</button>
+        <button class="secondary" onclick="viewPairingXml()">View XML</button>
+      </div>
+    `);
+  } catch (e) {
+    await showAlert("Export failed: " + (e.message || e));
+  }
+}
+
+async function viewPairingXml() {
+  try {
+    const res = await apiPost("/api/pair/export", { save: false });
     if (!res.ok) {
       await showAlert(res.error || "Could not read the pairing file.");
       return;
     }
-    if (!save) {
-      openModal(`
-        <h3>Pairing File Preview</h3>
-        <p class="sub" style="margin-bottom:0.6rem">This is the exact XML plist BariStore injects into SideStore / AltStore / StikDebug. Review it, then export it to your Documents folder.</p>
-        <pre style="white-space:pre-wrap;word-break:break-all;max-height:16rem;overflow:auto;background:var(--card2);border:1px solid var(--border);border-radius:0.6rem;padding:0.6rem;font-size:0.72rem">${esc(res.plist_text || "")}</pre>
-        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
-          <button class="full" onclick="exportPairingFile(true)">Export &amp; Save</button>
-          <button class="secondary" onclick="closeModal()">Close</button>
-        </div>
-      `);
-      return;
-    }
-    await showAlert(
-      (res.message || "Pairing file saved.") +
-      (res.paths && res.paths.length ? " Path: " + res.paths[0] : "")
-    );
+    openModal(`
+      <h3>Pairing File XML</h3>
+      <p class="sub" style="margin-bottom:0.6rem">Raw plist content (diagnostics only).</p>
+      <pre style="white-space:pre-wrap;word-break:break-all;max-height:16rem;overflow:auto;background:var(--card2);border:1px solid var(--border);border-radius:0.6rem;padding:0.6rem;font-size:0.72rem">${esc(res.plist_text || "")}</pre>
+      <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+        <button class="full" onclick="closeModal()">Close</button>
+        <button class="secondary" onclick="exportPairingFile()">iOS Preview</button>
+      </div>
+    `);
   } catch (e) {
-    await showAlert("Export failed: " + (e.message || e));
+    await showAlert("Could not read pairing file: " + (e.message || e));
   }
 }
 
@@ -1882,19 +1916,7 @@ async function resetBariStore() {
     await showAlert(res.error || "Reset failed.");
     return;
   }
-  APP.job = { active: false };
-  APP.state = {};
-  APP.catalog = { sources: [], apps: [], store_variants: [] };
-  APP.installed_apps = [];
-  APP.currentTab = "featured";
-  APP.obStep = 1;
-  lastHandledJobId = 0;
-  try {
-    await enterOnboarding(true);
-    await showAlert("BariStore has been reset. Start again from Step 1.");
-  } catch (e) {
-    await showAlert("Reset finished, but setup wizard failed to load: " + (e.message || e));
-  }
+  document.body.innerHTML = '<div class="container"><div class="card" style="margin-top:2rem;text-align:center"><h3>Resetting BariStore…</h3><p class="sub">All sign-in, pairing, cache and settings data has been erased. A clean BariStore is being downloaded and will open in a new window.</p></div></div>';
 }
 
 window.addEventListener("DOMContentLoaded", initApp);

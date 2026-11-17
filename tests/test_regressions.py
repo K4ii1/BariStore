@@ -37,6 +37,7 @@ def _fresh_state():
     storage.ALT_RECORD_PLIST = os.path.join(d, "ALTPairingFile.plist")
     storage.ALT_RECORD_PAIRING = os.path.join(d, "ALTPairingFile.mobiledevicepairing")
     storage.UPLOAD_DIR = os.path.join(d, "uploads")
+    storage.IDENTITY_PATH = os.path.join(d, "pairing_host.plist")
     storage.ensure_dirs()
     return d
 
@@ -108,6 +109,8 @@ def main():
     assert q < r and 'secondary full' in html[q - 90:q], "Quit must sit above Reset, full-width and not red"
     print("ok  1c Quit button sits directly above Reset, full-width and non-red")
     assert "obPinWrap" in script and "optPinWrap" in script
+    assert "beginPinPiP()" in script, "PiP must open on Start Pairing tap"
+    assert "/api/pair/preview" in script, "Export must open iOS file preview"
     assert "job.kind === \"update\"" in script
     assert "enterOnboarding(true)" in script, "forced wizard must not auto-complete"
     assert "onerror=\"this.remove()\"" in script, "broken icon fallback returned"
@@ -212,6 +215,7 @@ def main():
     packed = []
     signer.write_ipa(os.path.join(d, "ex"), out_ipa, progress=packed.append)
     assert any("Packing signed IPA" in m for m in packed), packed
+    assert any("%" in m for m in packed), packed
     assert os.path.getsize(out_ipa) > 0
     print("ok  5 signer progress: extract=%d pack=%d" % (len(extracted), len(packed)))
 
@@ -220,6 +224,16 @@ def main():
         msg = webui.run_self_update()
     assert "latest" in msg.lower(), msg
     print("ok  6a update fast path:", msg)
+
+    def _script_fetch(*a, **k):
+        return 200, {}, b"#!/bin/sh\necho ok\n"
+
+    with mock.patch.object(webui, "_latest_remote_version", side_effect=AssertionError("skip check")), \
+         mock.patch.object(webui.apple, "http_request", side_effect=_script_fetch), \
+         mock.patch.object(webui.subprocess, "call", return_value=0):
+        forced = webui.run_self_update(force=True)
+    assert "clean" in forced or "Updated" in forced, forced
+    print("ok  6a2 forced reinstall skips version check (used by Reset)")
 
     server = _serve()
     try:
@@ -282,6 +296,12 @@ def main():
         assert res["paths"], res
         print("ok  8 POST /api/pair/export preview + save both work")
 
+        with mock.patch.object(webui.subprocess, "Popen") as popen:
+            status, res = _post(server, "/%s/api/pair/preview" % server.token)
+        assert status == 200 and res["ok"] and res["path"], (status, res)
+        assert popen.called and popen.call_args[0][0][0] == "open"
+        print("ok  8b iOS preview opens the saved pairing file")
+
         # ---------- 9. reset / onboarding / restart / shutdown routes ----------
         assert _post(server, "/%s/api/onboarding/reset" % server.token)[0] == 200
         assert _post(server, "/%s/api/settings" % server.token, {"theme": "dark"})[0] == 200
@@ -294,9 +314,11 @@ def main():
 
         # Real factory reset through the HTTP API must clear the saved session.
         storage.update_state(email="wipe@icloud.com")
-        assert _post(server, "/%s/api/reset" % server.token)[0] == 200
+        with mock.patch.object(webui, "_perform_clean_reset"):
+            status, res = _post(server, "/%s/api/reset" % server.token)
+        assert status == 200 and "message" in res, (status, res)
         assert not storage.load_state().get("email"), storage.load_state()
-        print("ok  9b /api/reset actually wipes state (no dead reload needed)")
+        print("ok  9b /api/reset wipes state instantly, then clean reinstall in background")
 
         # ---------- 10. status endpoint surfaces job + login step ----------
         status, raw = _get(server, "/%s/api/status" % server.token)
