@@ -53,6 +53,7 @@ _STATE = {
     "audio": False,
     "keepalive": "—",
     "started": False,
+    "update_msg": "",
 }
 _LOCK = threading.Lock()
 _STOP = threading.Event()
@@ -71,10 +72,10 @@ _PIN_RE = re.compile(r"pairing code:\s*(\d{4,8})")
 _PIN_LOG_RE = re.compile(r"(pairing code:\s*)\d{4,8}")
 
 STEP_DEFS = [("requirements", "Requirements"), ("apple-id", "Apple ID"),
-             ("variant", "Variant"), ("download", "Download"),
              ("portal", "Portal"), ("pairing", "Pairing"),
-             ("developer-mode", "Developer Mode"), ("sign", "Sign"),
-             ("install", "Install")]
+             ("variant", "Variant"), ("download", "Download"),
+             ("developer-mode", "Developer Mode"),
+             ("sign-install", "Sign & Install")]
 _STEP_IDS = set(step_id for step_id, _label in STEP_DEFS)
 _STAGE_ALIAS = {"apple sign-in": "apple-id"}
 
@@ -467,6 +468,21 @@ def _flow(barisign, poc_login):
     barisign.update_state(email=email)
     _step_state("apple-id", "done")
 
+    _step_state("portal", "active")
+    _act("Developer portal…")
+    team = barisign._portal_team(session, barisign.load_state().get("team_id", "") or "")
+    barisign.update_state(team_id=team.get("teamId", ""), team_name=team.get("name", ""))
+    _log_line("team: %s" % team.get("name", "?"))
+    _step_state("portal", "done")
+
+    _step_state("pairing", "active")
+    if _pairing_is_fresh():
+        _log_line("paired minutes ago; reusing it (one PIN per run)")
+    else:
+        if not _pair_loop("Pairing: open Settings > Developer > Paired Macs…"):
+            raise FlowStop()
+    _step_state("pairing", "done")
+
     variants = barisign.load_variants()
     if variants:
         options = [item["name"] for item in variants] + ["Custom IPA (from Files)"]
@@ -493,52 +509,31 @@ def _flow(barisign, poc_login):
         if barisign._adopt_custom_bundle_id(info["bundle_id"]) is None:
             raise RuntimeError("custom bundle id refused")
 
-    _step_state("portal", "active")
-    _act("Preparing registration…")
-    state = barisign.load_state()
-    udid = state.get("udid", "")
-    if not udid:
-        _log_line("No UDID yet: pairing once inside the portal stage.")
-        udid = _pair_now("Pairing for the UDID…")
-    if not udid:
-        raise RuntimeError("pairing did not return a UDID")
-    state = barisign.load_state()
-    result = barisign._portal(session, email, udid, state.get("bundle_id", ""),
-                              "BariSign device",
-                              barisign.app_display_name(
-                                  variant_id=state.get("variant", ""),
-                                  bundle_id=state.get("bundle_id", "")))
-    barisign.update_state(bundle_id=result["bundle_id"], team_id=result["team_id"],
-                          profile=result["profile"], key=result["key"],
-                          cert=result["cert"])
-    _step_state("portal", "done")
-
-    _step_state("pairing", "active")
-    if _pairing_is_fresh():
-        _log_line("paired minutes ago; reusing it (one PIN per run)")
-    else:
-        udid = _pair_now("Pairing: open Settings > Developer > Paired Macs…")
-        if not udid:
-            raise RuntimeError("pairing did not return a UDID")
-    _step_state("pairing", "done")
-
     _step_state("developer-mode", "active")
     _act("Checking Developer Mode…")
     _devmode_web()
     _step_state("developer-mode", "done")
 
-    _step_state("sign", "active")
-    _act("Signing…")
+    _step_state("sign-install", "active")
+    _act("Registering, signing, installing…")
+    state = barisign.load_state()
+    team = barisign._portal_team(session, state.get("team_id", "") or "")
+    result = barisign._portal(session, email, state.get("udid", ""),
+                              state.get("bundle_id", ""), "BariSign device",
+                              barisign.app_display_name(
+                                  variant_id=state.get("variant", ""),
+                                  bundle_id=state.get("bundle_id", "")),
+                              team=team)
+    barisign.update_state(bundle_id=result["bundle_id"], team_id=result["team_id"],
+                          profile=result["profile"], key=result["key"],
+                          cert=result["cert"])
     state = barisign.load_state()
     saved_paths = barisign.signer.find_saved_paths(barisign.STATE_DIR)
     signed = barisign._sign_now(
-        barisign.load_state().get("ipa") or ipa, saved_paths, [],
+        state.get("ipa") or ipa, saved_paths, [],
         hint=False, make_zip=False)
     if signed is None:
         raise RuntimeError("signing failed; see the log")
-    _step_state("sign", "done")
-
-    _step_state("install", "active")
     _act("Installing…")
     with _LOCK:
         _STATE["audio"] = True
@@ -557,13 +552,27 @@ def _flow(barisign, poc_login):
             _STATE["keepalive"] = "—"
     if code != 0:
         raise RuntimeError("install step failed; see the log")
-    _step_state("install", "done")
+    _step_state("sign-install", "done")
 
     with _LOCK:
         _STATE["done"] = {
             "ok": True, "title": "Installed",
             "lines": ["On this iPhone: Settings > General > VPN & Device Management,",
                       "trust the developer, then open the app."]}
+
+
+def _pair_loop(label):
+    """Pair with a retry question instead of dying on the first failure."""
+    while True:
+        try:
+            udid = _pair_now(label)
+        except RuntimeError as exc:                             # noqa: BLE001
+            _log_line("%s" % exc)
+            udid = ""
+        if udid:
+            return udid
+        if not _ask_web("Pairing did not finish. Try again?", "bool"):
+            return ""
 
 
 def _pairing_is_fresh():
@@ -780,6 +789,7 @@ button.secondary { background: #e9e9ee; color: #000; }
 <div class="card"><h2 id="mtitle">__TITLE__</h2><div class="act" id="mactivity">__ACTIVITY__</div><div id="mbody">__BODY__</div></div>
 <div class="log" id="logbox"><h3><button type="button" class="link" id="logtoggle">Log &#8250;</button></h3><pre id="log">__LOG__</pre></div>
 <div class="card"><h2>Settings</h2><div>__SETTINGS__</div>
+<form method="post" action="api/update"><button type="submit">Check for updates</button></form>
 <form method="post" action="api/forget"><button type="submit" class="secondary">Forget saved state</button></form></div>
 <div class="stop">__STOP__</div>
 </main>
@@ -874,6 +884,28 @@ poll();
 """
 
 
+def _run_update_check():
+    """Run barisign update in a thread; report into the log + settings."""
+    import barisign as _barisign_mod
+    out = _WebLog()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        code = _barisign_mod.cmd_update([])
+    except Exception as exc:                                    # noqa: BLE001
+        code = 1
+        _log_line("update failed: %s" % exc)
+    finally:
+        sys.stdout = old
+    with _LOCK:
+        if code == 0:
+            _STATE["update_msg"] = "done — restart BariSign to use it"
+        else:
+            _STATE["update_msg"] = "update failed — see the log"
+    _bump_rev()
+
+
+
 def _render_page(server):
     with _LOCK:
         steps = list(_STATE["steps"])
@@ -910,6 +942,10 @@ def _render_page(server):
     settings_html = "".join(
         "<div>%s: <b>%s</b></div>" % (_html.escape(k), _html.escape(str(v)))
         for k, v in ([("BariSign", _version)] + _saved_rows))
+    with _LOCK:
+        _update_msg = _STATE.get("update_msg", "")
+    if _update_msg:
+        settings_html += "<div>Update: <b>%s</b></div>" % _html.escape(_update_msg)
     token = server.token
     # Meta refresh only when the page script appears dead: with live JS
     # polling, reloads would wipe typed input.
@@ -1191,6 +1227,12 @@ class _Handler(BaseHTTPRequestHandler):
                     event = _QUESTION["event"]
                 if event is not None:
                     event.set()
+                return True
+            if rest == "/api/update":
+                with _LOCK:
+                    _STATE["update_msg"] = "checking…"
+                thread = threading.Thread(target=_run_update_check, daemon=True)
+                thread.start()
                 return True
             if rest == "/api/audio":
                 with _LOCK:

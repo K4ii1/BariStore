@@ -6,7 +6,7 @@ root wrappers and `bin/` are gone. The page is server-rendered + meta-refresh no
 works with scripts off; silent audio is JS-enhanced with a speech fallback when the page
 never confirms audio. Single-device rewrite: `barisign` opens a web UI in a-Shell's
 internal browser and runs the whole pipeline on this iPhone (requirements → Apple ID →
-variant → download → pairing → Developer Mode → portal → sign → install). The two-device
+portal → pairing → variant → download → Developer Mode → sign & install). The two-device
 guided flow is deleted; `barisign shell` is the terminal fallback (same order, speech
 keep-alive). Developer Mode comes over the tunnel now (lockdownd GetValue + AMFI action,
 MIT idevice/siboot protocol facts, clean-room code in `poc/devmode.py`): no trigger

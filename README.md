@@ -22,16 +22,17 @@ opens a page over the terminal. Tap **Start** and it runs the whole install on t
 
 1. **Requirements** — LocalDevVPN connected (probed live; it waits for you).
 2. **Apple ID** — sign-in with anisette (saved session reused: no password or 2FA until Apple refuses it).
-3. **Variant** — SideStore / LiveContainer+SideStore / AltStore Classic, stable or nightly, or your own IPA.
-4. **Download** — resolved live from the project's releases, size + SHA-256 checked.
-5. **Portal** — device + App ID (+ App Group) + certificate + profile for your free ID. Pairs
-   first when the UDID is still unknown (same screen, one PIN).
-6. **Pairing** — verifies the live pairing over loopback (skipped when just paired).
+3. **Portal** — picks your developer team for this Apple ID.
+4. **Pairing** — this iPhone pairs with itself (Settings → Developer → Paired Macs → BariSign, enter the
+   printed PIN). The page plays silence so iOS holds the app while you are in Settings.
+5. **Variant** — SideStore / LiveContainer+SideStore / AltStore Classic, stable or nightly, or your own IPA.
+6. **Download** — resolved live from the project's releases, size + SHA-256 checked.
 7. **Developer Mode** — read over the tunnel; if off or hidden, the switch is shown (no restart).
-   Turning it on restarts the iPhone and ends the run: flip it, restart, run again — everything
-   is saved and the run jumps straight back. No trigger install, no second device.
-8. **Sign** — the IPA is signed and verified on-device.
-9. **Install** — over the same loopback tunnel; trust the developer, open the app.
+   Turning it on restarts the iPhone and ends the run with a restart card: flip it, restart, run
+   again — everything is saved and the run jumps straight back. No trigger install, no second device.
+8. **Sign & Install** — registers this iPhone, signs the IPA, installs it over the same loopback
+   tunnel; trust the developer, open the app. **Stop** ends the run anywhere; **Back** re-asks the
+   previous step; the page has a **Settings** card and a collapsible log.
 
 No computer, no second device, no AirDrop, no OTA, no enterprise certificate.
 

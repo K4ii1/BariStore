@@ -69,7 +69,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.31"
+VERSION = "0.9.32"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -699,14 +699,30 @@ def _login_session(email, staged=False):
     return DeveloperSession(account, token, adsid)
 
 
-def _portal(session, email, udid, bundle_id, device_name, app_name):
-    """Register the device, get a certificate and a provisioning profile."""
+def _portal_team(session, team_id=""):
+    """Pick the developer team; by saved id when given, by asking otherwise."""
+    if team_id:
+        teams = session.call("listTeams", key="teams", device_type="")
+        for team in teams or []:
+            if team.get("teamId") == team_id:
+                return team
+        raise Fail("the saved team %s is gone from this Apple ID; forget and run again"
+                   % team_id)
+    return pick_team(session)
+
+
+def _portal(session, email, udid, bundle_id, device_name, app_name, team=None):
+    """Register the device, get a certificate and a provisioning profile.
+
+    Pass a pre-picked team (from an earlier Portal stage) to skip picking;
+    terminal runs pass none and behave as before.
+    """
     # Also gives the revoke path a stage to redraw, with the Apple ID restored.
     _stage("Portal", "Apple ID  %s" % email)
     started = time.time()
 
     _step(1, 5, "team")
-    team = pick_team(session)
+    team = team or pick_team(session)
     _step(2, 5, "device")
     ensure_device(session, team, udid, device_name)
     registered = list_devices(session, team)
@@ -1601,9 +1617,9 @@ def cmd_sign(argv):
 
 
 def cmd_shell(argv):
-    """Single-device full install: check -> Apple ID -> variant -> download ->
-    portal -> pair -> sign -> install. No flags: loopback and keep-awake are
-    always on, because that is what this command is.
+    """Single-device full install: check -> Apple ID -> portal -> pairing ->
+    variant -> download -> sign -> install. No flags: loopback and keep-awake
+    are always on, because that is what this command is.
     """
     if "--help" in argv or "-h" in argv or "help" in argv:
         print("BariSign %s" % VERSION)
@@ -1643,6 +1659,34 @@ def cmd_shell(argv):
     update_state(email=email)
     state = load_state()
 
+    _stage("Portal")
+    print("  team and device registration for this Apple ID.")
+    team = _portal_team(session, state.get("team_id", "") or "")
+    update_state(team_id=team.get("teamId", ""), team_name=team.get("name", ""))
+    udid = state.get("udid", "")
+    if not udid:
+        # Portal registers the device, so it needs the UDID first: the
+        # loopback pairing runs here, inside the portal stage.
+        print("  no UDID yet: pairing once to get it")
+        udid = _ensure_udid(loopback=True)
+        if not udid:
+            print("  pairing did not return a UDID")
+            print("  turn on Developer Mode, connect LocalDevVPN, run again")
+            return 1
+        state = load_state()
+    _result("PORTAL", "team %s, UDID %s" % (team.get("name", "?"), udid))
+
+    # The install needs a live pairing. Skipped when portal just paired,
+    # so one run asks for one PIN.
+    _stage("Pairing")
+    print("  same device: Settings > Developer > Paired Macs")
+    print("  this app keeps speaking while you are over there;")
+    print("  enter the printed PIN on the Paired Macs screen.")
+    state = load_state()
+    if _ensure_pairing(loopback=True) != 0:
+        return 1
+    state = load_state()
+
     variants = load_variants()
     if variants:
         _choose_variant(state, variants)
@@ -1657,33 +1701,16 @@ def cmd_shell(argv):
             return 1
         state = load_state()
 
-    # Portal registers the device, so it needs the UDID first: the loopback
-    # pairing runs here, inside the portal stage.
-    udid = _ensure_udid(loopback=True)
-    if not udid:
-        print("  pairing did not return a UDID")
-        print("  turn on Developer Mode, connect LocalDevVPN, run again")
-        return 1
     state = load_state()
-
-    result = _portal(session, email, udid, state.get("bundle_id", ""),
+    team = _portal_team(session, state.get("team_id", "") or "")
+    result = _portal(session, email, state.get("udid", ""), state.get("bundle_id", ""),
                      "BariSign device",
                      app_display_name(variant_id=state.get("variant", ""),
-                                      bundle_id=state.get("bundle_id", "")))
+                                      bundle_id=state.get("bundle_id", "")),
+                     team=team)
     update_state(bundle_id=result["bundle_id"], team_id=result["team_id"],
                  profile=result["profile"], key=result["key"], cert=result["cert"])
     _result("PORTAL", "ok")
-
-    # The install needs a live pairing. Skipped when portal just paired,
-    # so one run asks for one PIN.
-    _stage("Pairing")
-    print("  same device: Settings > Developer > Paired Macs")
-    print("  this app keeps speaking while you are over there;")
-    print("  enter the printed PIN on the Paired Macs screen.")
-    state = load_state()
-    if _ensure_pairing(loopback=True) != 0:
-        return 1
-    state = load_state()
 
     _stage("Sign")
     saved = signer.find_saved_paths(STATE_DIR)

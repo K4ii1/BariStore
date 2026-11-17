@@ -9,9 +9,9 @@ BariSign + LocalDevVPN + Settings. iOS/iPadOS 27+.
 - **Audience = everyone, no computer, one device.** Users sign in with their **main Apple ID**
   (2FA supported); the README must say plainly why that is safe.
 - **Single-device flow (2026-11-17 rewrite):** `barisign` opens a web page in a-Shell's
-  internal browser and runs requirements → Apple ID → variant → download → pairing →
-  Developer Mode → portal → sign → install, all on this iPhone. `barisign shell` is the
-  terminal fallback (same order). The two-device plan is deleted.
+  internal browser and runs requirements → Apple ID → portal → pairing →
+  variant → download → Developer Mode → sign & install, all on this iPhone.
+  `barisign shell` is the terminal fallback (same order). The two-device plan is deleted.
 - **Web UI, not terminal strain:** backend and page talk JSON over 127.0.0.1 with a per-run
   token (siboot's page model). The sheet keeps a-Shell foreground; silence plays while the
   user is in Settings. Terminal output is mirrored to the page log.
@@ -83,8 +83,8 @@ One flow, five IPAs. **No generic IPA signer.**
 The web interface (no Shortcuts, no terminal strain):
 - opens a page in a-Shell's internal browser: steps, questions, the pairing PIN, a log;
 - runs, always in this order: requirements (LocalDevVPN probe + wait), Apple login (saved
-  session reused while Apple accepts it), variant, download, pairing (same iPhone, PIN on
-  the page), Developer Mode (tunnel: show or turn on), portal, sign, install;
+  session reused while Apple accepts it), portal (team pick), pairing (PIN; skipped when
+  fresh), variant, download, Developer Mode (tunnel: show or turn on), sign & install;
 - anisette failover on -80045/-80046/503; wrong 2FA codes retry without restarting login.
 
 ## Hard constraints
