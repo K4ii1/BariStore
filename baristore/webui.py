@@ -1110,6 +1110,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "state": storage.load_state()})
                 return
 
+            if route == "/api/shutdown":
+                self._send_json(200, {"ok": True})
+                threading.Timer(0.5, _STOP.set).start()
+                return
+
             if route == "/api/netcheck":
                 results = apple.run_network_diagnostics()
                 self._send_json(
@@ -1163,6 +1168,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(exc)})
 
 
+def _launch_log(text):
+    """Boot/failure trace on disk: the terminal may not be readable at all."""
+    try:
+        storage.ensure_dirs()
+        with open(os.path.join(storage.STATE_DIR, "launch.log"), "a", encoding="utf-8") as handle:
+            handle.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    except Exception:
+        pass
+
+
 def run(open_browser=True):
     """Start the local BariStore server and open the Web UI in a-Shell's internal browser."""
     token = secrets.token_hex(16)
@@ -1204,13 +1219,19 @@ def run(open_browser=True):
     if not opened and open_browser:
         print("  open   BROWSER=internalbrowser openurl %s" % url)
     print("  press Enter here to stop the server (Ctrl-C works too).")
+    _launch_log(
+        "started v%s url=%s openurl=%s python=%s"
+        % (VERSION, url, opened, sys.version.split()[0])
+    )
 
-    # The main thread owns the keyboard: a stray keystroke or Ctrl-C ends the
-    # run, and the HTTP threads keep serving until then.
+    # The main thread owns the keyboard: Enter ends the run, and the HTTP threads
+    # keep serving until then. If stdin is already at EOF (a-Shell sometimes
+    # hands us a closed stdin), keep serving anyway instead of dying silently.
     stdin = sys.stdin
+    at_eof = False
     try:
         while not _STOP.is_set():
-            if stdin is None:
+            if stdin is None or at_eof:
                 _STOP.wait(0.5)
                 continue
             try:
@@ -1218,18 +1239,26 @@ def run(open_browser=True):
             except KeyboardInterrupt:
                 break
             except (OSError, ValueError):
-                _STOP.wait(0.5)
+                at_eof = True
+                _launch_log("stdin unusable; staying up, quit from the page")
                 continue
-            if ready:
-                try:
-                    stdin.readline()
-                except Exception:
-                    pass
-                break
+            if not ready:
+                continue
+            try:
+                line = stdin.readline()
+            except Exception:
+                at_eof = True
+                continue
+            if line == "":
+                at_eof = True
+                _launch_log("stdin EOF; staying up, quit from the page")
+                continue
+            break
     except KeyboardInterrupt:
         pass
     finally:
         print()
+        _launch_log("stopped")
         _STOP.set()
         try:
             server.shutdown()

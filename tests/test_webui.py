@@ -7,6 +7,7 @@ import plistlib
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 import zipfile
 from http.server import ThreadingHTTPServer
@@ -190,6 +191,14 @@ def main():
         with webui._LOCK:
             webui._JOB.update({"active": False, "pin": None})
         print("ok  /api/bootstrap restores an in-flight pairing job")
+
+        # The page can always stop the server, even when the terminal has no stdin.
+        status, sd = _post(server, "/%s/api/shutdown" % token, {})
+        assert status == 200 and sd.get("ok") is True, (status, sd)
+        time.sleep(0.8)
+        assert webui._STOP.is_set()
+        webui._STOP.clear()
+        print("ok  /api/shutdown stops the server loop")
     finally:
         server.shutdown()
 

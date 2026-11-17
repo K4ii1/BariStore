@@ -361,6 +361,7 @@ input:focus, select:focus { border-color: var(--accent); }
         <button class="secondary" onclick="checkUpdates()">Check for Updates</button>
         <button class="secondary" onclick="clearCache()">Clear IPA Cache</button>
         <button class="secondary" onclick="openSetupWizard()">Run Setup Wizard</button>
+        <button class="secondary" onclick="quitBariStore()">Quit BariStore</button>
         <button class="danger" onclick="resetBariStore()">Reset BariStore</button>
       </div>
       <div id="maintOut" class="sub" style="margin-top:0.55rem"></div>
@@ -1779,8 +1780,18 @@ async function clearCache() {
   out.textContent = res.ok ? res.message : (res.error || "Could not clear cache.");
 }
 
-async function resetBariStore() {
-  if (!confirm("Reset BariStore and erase all saved Apple ID sessions, pairing files, and cached IPAs?")) return;
+async function quitBariStore() {
+  try {
+    await apiPost("/api/shutdown", {});
+  } catch (e) {
+    /* the server is allowed to disappear before answering */
+  }
+  document.body.innerHTML =
+    '<div class="card" style="margin:1rem"><b>BariStore stopped.</b>' +
+    '<p class="sub">You can close this sheet and go back to a-Shell.</p></div>';
+}
+
+async function resetBariStore() {  if (!confirm("Reset BariStore and erase all saved Apple ID sessions, pairing files, and cached IPAs?")) return;
   const res = await apiPost("/api/reset", {});
   if (res.ok) location.reload();
 }
