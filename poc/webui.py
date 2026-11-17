@@ -51,6 +51,7 @@ _STATE = {
     "log": [],              # last 200 lines
     "done": None,           # {ok, title, lines}
     "audio": False,
+    "keepalive": "—",
     "started": False,
 }
 _LOCK = threading.Lock()
@@ -58,6 +59,13 @@ _STOP = threading.Event()
 _QUESTION = {"event": None, "answer": None}
 _QID = [0]
 _AUDIO_OK = {"event": None}
+_LAST_POLL = {"at": 0.0}
+_REV = {"n": 0}
+
+
+def _bump_rev():
+    with _LOCK:
+        _REV["n"] += 1
 _PIN_RE = re.compile(r"pairing code:\s*(\d{4,8})")
 _PIN_LOG_RE = re.compile(r"(pairing code:\s*)\d{4,8}")
 
@@ -76,9 +84,14 @@ def _log_line(text):
         return
     line = _PIN_LOG_RE.sub(r"\1••••••", line)
     match = _PIN_RE.search(text or "")
+    pin_changed = False
     with _LOCK:
-        if match:
+        if match and _STATE["pin"] != match.group(1):
             _STATE["pin"] = match.group(1)
+            pin_changed = True
+    if pin_changed:
+        _bump_rev()
+    with _LOCK:
         _STATE["log"].append(line[-300:])
         del _STATE["log"][:-200]
 
@@ -124,15 +137,53 @@ def _ask_web(label, kind="text", options=None, password_hint=""):
                               "options": options or []}
         _QUESTION["event"] = threading.Event()
         _QUESTION["answer"] = None
+    _bump_rev()
     event = _QUESTION["event"]
     while not _STOP.is_set():
         if event.wait(0.5):
             with _LOCK:
                 answer = _QUESTION["answer"]
                 _STATE["question"] = None
+            _bump_rev()
             _log_line("%s %s" % (label, "••••••" if kind == "secret" else (answer or "")))
             return answer or ""
     raise FlowStop()
+
+
+def _pick_team_web(session):
+    """Team choice with real options (the vendored one only prints them)."""
+    teams = session.call("listTeams", key="teams", device_type="")
+    if not teams:
+        raise RuntimeError("This Apple account has no developer team. Open "
+                           "https://developer.apple.com in Safari, sign in once, "
+                           "and accept the free developer agreement.")
+    if len(teams) == 1:
+        return teams[0]
+    options = ["%s (%s)" % (team.get("name", "?"), team.get("teamId", "?"))
+               for team in teams]
+    answer = _ask_web("Which team should sign the app?", "choice", options)
+    for index, team in enumerate(teams):
+        if answer == options[index] or answer.strip() == str(index + 1):
+            return team
+    return teams[0]
+
+
+def _heartbeat(text):
+    """Activity pulse while waiting (pairing): proves we are alive."""
+    stop = threading.Event()
+
+    def _beat():
+        waited = 0
+        while not stop.wait(5):
+            waited += 5
+            if _STOP.is_set():
+                return
+            with _LOCK:
+                _STATE["activity"] = "%s (%ds)" % (text, waited)
+
+    thread = threading.Thread(target=_beat, daemon=True)
+    thread.start()
+    return stop.set
 
 
 def _step_state(step_id, state):
@@ -152,11 +203,14 @@ def _patch_for_web(barisign, poc_login):
     def _ask(prompt, default=None):
         return _ask_web(prompt, "text")
 
-    def _yes(prompt, default=False):
-        answer = _ask_web(prompt + (" [Y/n]" if default else " [y/N]"), "bool")
+    def _bool(prompt, default=False):
+        answer = _ask_web(prompt, "bool")
         if not answer:
             return bool(default)
         return answer.strip().lower() in ("y", "yes", "1")
+
+    def _yes(prompt, default=False):
+        return _bool(prompt + (" [Y/n]" if default else " [y/N]"), default)
 
     def _read_line(prompt):
         kind = "code" if "code" in prompt.lower() else "text"
@@ -197,6 +251,9 @@ def _patch_for_web(barisign, poc_login):
             (barisign, "_line_clear", lambda: None),
             (barisign, "_portal_line", lambda message, prefix="  ": _log_line("%s%s" % (prefix, message))),
             (barisign, "_portal_step", lambda message: _log_line("  %s" % message)),
+            (barisign, "_portal_ask", lambda prompt, default=None: _ask_web(prompt, "text")),
+            (barisign, "_portal_confirm", lambda prompt, default=False: _bool(prompt, default)),
+            (barisign, "pick_team", _pick_team_web),
             (barisign, "_result", _done_line),
             (poc_login, "_read_password", _read_password),
             (pair_install, "_ask", lambda prompt, default="": _ask_web(prompt, "text")),
@@ -312,7 +369,20 @@ def _flow(barisign, poc_login):
 
     variants = barisign.load_variants()
     if variants:
-        barisign._choose_variant(barisign.load_state(), variants)
+        options = [item["name"] for item in variants] + ["Custom IPA (from Files)"]
+        answer = _ask_web("Which app?", "choice", options)
+        picked = None
+        for item in variants:
+            if answer == item["name"]:
+                picked = item
+        state = barisign.load_state()
+        if picked is not None:
+            barisign.update_state(variant=picked["id"], bundle_id=picked["bundle_id"])
+            _log_line("  %s" % picked["name"])
+        else:
+            chosen = barisign._choose_custom_ipa(state)
+            if chosen is None:
+                raise FlowStop()
     _step_state("variant", "done")
 
     ipa, info = barisign._obtain_ipa(barisign.load_state(), [])
@@ -324,18 +394,32 @@ def _flow(barisign, poc_login):
     _step_state("pairing", "active")
     with _LOCK:
         _STATE["audio"] = True
+        _STATE["keepalive"] = "page audio…"
+    _log_line("Advertising as BariSign. Open Settings > Developer > "
+              "Paired Macs on this iPhone and enter the printed PIN.")
     say_stop = None
     if not _wait_audio_ok():
+        with _LOCK:
+            _STATE["keepalive"] = "speech"
         _log_line("page audio not confirmed; speech fallback holds us")
         say_stop = pair_install.keep_awake_start()
+    else:
+        with _LOCK:
+            _STATE["keepalive"] = "page audio"
+    stop_beat = _heartbeat("waiting for the tap in Settings")
     try:
         state = barisign.load_state()
         code = asyncio.run(pair_install._run(
             _pair_args(udid=state.get("udid", ""), pair_only=True)))
     finally:
+        stop_beat()
         with _LOCK:
             _STATE["audio"] = False
+            pin_cleared = _STATE["pin"] is not None
             _STATE["pin"] = None
+            _STATE["keepalive"] = "—"
+    if pin_cleared:
+        _bump_rev()
         if say_stop is not None:
             say_stop()
     if code != 0:
@@ -371,10 +455,16 @@ def _flow(barisign, poc_login):
     _step_state("install", "active")
     with _LOCK:
         _STATE["audio"] = True
+        _STATE["keepalive"] = "page audio…"
     say_stop = None
     if not _wait_audio_ok():
+        with _LOCK:
+            _STATE["keepalive"] = "speech"
         _log_line("page audio not confirmed; speech fallback holds us")
         say_stop = pair_install.keep_awake_start()
+    else:
+        with _LOCK:
+            _STATE["keepalive"] = "page audio"
     try:
         code = asyncio.run(pair_install._run(
             _pair_args(udid=barisign.load_state().get("udid", ""),
@@ -382,7 +472,11 @@ def _flow(barisign, poc_login):
     finally:
         with _LOCK:
             _STATE["audio"] = False
+            pin_cleared = _STATE["pin"] is not None
             _STATE["pin"] = None
+            _STATE["keepalive"] = "—"
+    if pin_cleared:
+        _bump_rev()
         if say_stop is not None:
             say_stop()
     if code != 0:
@@ -492,7 +586,9 @@ h1 { font-size: 1.5rem; margin: 0 0 .2rem; }
 .sub { color: #666; margin: 0 0 1rem; }
 ol.steps { list-style: none; margin: 0 0 1rem; padding: 0; }
 ol.steps li { padding: .3rem .6rem; border-radius: .5rem; color: #666; }
-ol.steps li.active { background: #0a6cff; color: #fff; font-weight: 600; }
+ol.steps li.active { background: #0a6cff; color: #fff; font-weight: 600;
+  animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 ol.steps li.done { color: #137333; }
 ol.steps li.done::after { content: " ✓"; }
 .card { border: 1px solid #ccc; border-radius: .8rem; padding: 1rem; margin: 0 0 1rem; }
@@ -508,8 +604,11 @@ button.secondary { background: #e9e9ee; color: #000; }
 .row { display: flex; gap: .6rem; } .row button { margin-top: .6rem; }
 .bar { height: .5rem; background: #e0e0e6; border-radius: .25rem; overflow: hidden; margin-top: .6rem; }
 .bar i { display: block; height: 100%; background: #0a6cff; }
-details.log { border: 1px solid #ccc; border-radius: .8rem; padding: .6rem 1rem; margin: 0 0 1rem; }
-details.log pre { white-space: pre-wrap; word-break: break-word; font-size: .8rem;
+.bar.indeterminate i { width: 30% !important;
+  animation: slide 1.2s ease-in-out infinite alternate; }
+@keyframes slide { from { margin-left: 0; } to { margin-left: 70%; } }
+.log { border: 1px solid #ccc; border-radius: .8rem; padding: .6rem 1rem; margin: 0 0 1rem; }
+.log pre { white-space: pre-wrap; word-break: break-word; font-size: .8rem;
   max-height: 16rem; overflow-y: auto; margin: .4rem 0 0; }
 .stop { text-align: center; margin-top: 1.4rem; }
 .err { color: #b00020; font-weight: 600; }
@@ -519,41 +618,90 @@ details.log pre { white-space: pre-wrap; word-break: break-word; font-size: .8re
 <body>
 <main>
 <h1>BariSign</h1>
-<p class="sub">one iPhone, no computer. <span id="audio">keep-alive __AUDIO__</span></p>
-<ol class="steps">__STEPS__</ol>
-<div class="card"><h2>__TITLE__</h2><div>__BODY__</div></div>
-<details class="log"><summary>Log</summary><pre>__LOG__</pre></details>
+<p class="sub">one iPhone, no computer. <span>keep-alive <span id="keepalive">__AUDIO__</span></span></p>
+<ol class="steps" id="steps">__STEPS__</ol>
+<div class="card"><h2 id="mtitle">__TITLE__</h2><div id="mactivity">__ACTIVITY__</div><div id="mbody">__BODY__</div></div>
+<div class="log"><h3>Log</h3><pre id="log">__LOG__</pre></div>
 <div class="stop">__STOP__</div>
 </main>
 <script>
 "use strict";
-try {
-  const TOKEN = "__TOKEN__";
-  async function audioOk() {
-    try {
-      await fetch(TOKEN + "/api/audio", {method: "POST",
-        headers: {"Content-Type": "application/json"}, body: "{}"});
-    } catch (e) { /* the form path still works without it */ }
-  }
-  let audioCtx = null;
-  window.__barisignAudio = function () {
-    try {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === "suspended") audioCtx.resume();
-      const len = audioCtx.sampleRate * 2, buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-      buf.getChannelData(0).fill(0);
-      const src = audioCtx.createBufferSource();
-      src.buffer = buf; src.loop = true; src.connect(audioCtx.destination); src.start();
-      audioOk();
-    } catch (e) { /* without it the speech fallback holds us */ }
-  };
-  document.querySelectorAll("form[data-audio]").forEach(f =>
-    f.addEventListener("submit", () => window.__barisignAudio()));
-  document.querySelectorAll('input[type="tel"][data-autosend]').forEach(inp =>
-    inp.addEventListener("input", () => {
-      if (inp.value.replace(/[^0-9]/g, "").length >= 6) inp.form.submit();
-    }));
-} catch (e) { /* plain forms work without any script */ }
+const TOKEN = "__TOKEN__";
+let lastRev = __REV__;
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+let audioStarted = false;
+async function ensureAudio() {
+  if (audioStarted) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!window.__ac) window.__ac = new AC();
+    if (window.__ac.state === "suspended") await window.__ac.resume();
+    const len = window.__ac.sampleRate * 2;
+    const buf = window.__ac.createBuffer(1, len, window.__ac.sampleRate);
+    buf.getChannelData(0).fill(0);
+    if (!window.__asrc) {
+      const src = window.__ac.createBufferSource();
+      src.buffer = buf; src.loop = true; src.connect(window.__ac.destination); src.start();
+      window.__asrc = src;
+    }
+    audioStarted = true;
+    await fetch(TOKEN + "/api/audio", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: "{}"});
+  } catch (e) { /* without it the speech fallback holds us */ }
+}
+document.addEventListener("submit", () => { ensureAudio(); });
+document.addEventListener("input", (e) => {
+  const inp = e.target;
+  if (inp && inp.matches && inp.matches('input[type="tel"][data-autosend]') &&
+      inp.value.replace(/[^0-9]/g, "").length >= 6) inp.form.submit();
+});
+async function poll() {
+  let st;
+  try {
+    const r = await fetch(TOKEN + "/api/state");
+    st = await r.json();
+  } catch (e) { return; }
+  try {
+    const steps = document.getElementById("steps");
+    if (steps) steps.innerHTML = st.steps.map(x =>
+      `<li class="${x.state}">${esc(x.label)}</li>`).join("");
+    const ka = document.getElementById("keepalive");
+    if (ka) ka.textContent = st.audio ? st.keepalive : "off";
+    const pre = document.getElementById("log");
+    if (pre) {
+      const text = (st.log || []).join("\n");
+      if (pre.textContent !== text) {
+        const nearBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+        pre.textContent = text;
+        if (nearBottom) pre.scrollTop = pre.scrollHeight;
+      }
+    }
+    const act = document.getElementById("mactivity");
+    if (act && st.activity !== undefined) act.textContent = st.activity || "";
+    const bar = document.querySelector("#mbody .bar i");
+    if (bar && typeof st.progress === "number")
+      bar.style.width = Math.max(0, Math.min(100, st.progress)) + "%";
+    if (st.audio) ensureAudio();
+    if (st.rev !== lastRev) {
+      lastRev = st.rev;
+      try {
+        const r = await fetch(TOKEN + "/api/panel");
+        const p = await r.json();
+        const t = document.getElementById("mtitle");
+        const b = document.getElementById("mbody");
+        if (t && p.title !== undefined) t.innerHTML = p.title;
+        if (b && p.body !== undefined) {
+          b.innerHTML = p.body;
+          const inp = b.querySelector("input[type=text], input[type=password], input[type=tel]");
+          if (inp) inp.focus();
+        }
+      } catch (e) { /* next poll retries */ }
+    }
+  } catch (e) { /* never break polling */ }
+}
+setInterval(poll, 1500);
+poll();
 </script>
 </body>
 </html>
@@ -570,41 +718,83 @@ def _render_page(server):
         log = list(_STATE["log"])
         done = dict(_STATE["done"]) if _STATE["done"] else None
         audio = _STATE["audio"]
+        keepalive = _STATE["keepalive"]
         started = _STATE["started"]
+        polled = time.time() - _LAST_POLL["at"]
+        rev = _REV["n"]
     token = server.token
+    # Meta refresh only when the page script appears dead: with live JS
+    # polling, reloads would wipe typed input.
+    js_alive = started and not done and polled < 10
     steps_html = "".join(
         '<li class="%s">%s</li>' % (step["state"], _html.escape(step["label"]))
         for step in steps)
     log_html = _html.escape("\n".join(log[-30:]))
-    audio_txt = "on (pairing/install)" if audio else "off"
+    audio_txt = keepalive if audio else "off"
+    try:
+        position = [step["state"] for step in steps].index("active") + 1
+        counter = "step %d of %d \u00b7 " % (position, len(steps))
+    except ValueError:
+        counter = ""
+    active_label = ""
+    for step in steps:
+        if step["state"] == "active":
+            active_label = step["label"]
+            break
+    title, body, activity_text = _panel_parts(
+        started, done, pin, question, activity, progress, counter, active_label)
+    if question is not None or done is not None or not started:
+        meta = ""
+    elif not js_alive:
+        meta = '<meta http-equiv="refresh" content="3">'
+    else:
+        meta = ""
+    if done is not None or not started:
+        stop = ""
+    else:
+        stop = ('<form method="post" action="api/stop">'
+                '<button type="submit" class="secondary">Stop</button></form>')
+    page = PAGE.replace("__TOKEN__", token)
+    page = page.replace("__REV__", str(rev))
+    page = page.replace("__META__", meta)
+    page = page.replace("__AUDIO__", audio_txt)
+    page = page.replace("__STEPS__", steps_html)
+    page = page.replace("__TITLE__", title)
+    page = page.replace("__ACTIVITY__", _html.escape(activity_text))
+    page = page.replace("__BODY__", body)
+    page = page.replace("__LOG__", log_html)
+    page = page.replace("__STOP__", stop)
+    return page.encode("utf-8")
 
+
+
+def _panel_parts(started, done, pin, question, activity, progress,
+                 counter, active_label):
+    """Title + body for the main card. Used by the page and /api/panel."""
     if not started:
         title = "Ready"
+        activity_text = ""
         body = ('<p class="hint">Runs the whole install on this iPhone: sign-in, '
                 'download, pairing, Developer Mode, signing, install.</p>'
                 '<form method="post" action="api/start" data-audio>'
                 '<button type="submit">Start</button></form>')
-        meta = ""
-        stop = ""
     elif done:
         title = '<span class="%s">%s</span>' % ("ok" if done["ok"] else "err",
                                                 _html.escape(done["title"]))
+        activity_text = ""
         body = "".join("<p>%s</p>" % _html.escape(line) for line in done["lines"])
         body += ('<p class="hint">You can close this sheet. '
                  'Terminal: press Enter to finish.</p>')
-        meta = ""
-        stop = ""
     elif pin:
         title = "Enter this code"
+        activity_text = "waiting for the tap in Settings…"
         body = ('<div class="pin">%s</div>'
                 '<p class="hint">Settings &gt; Developer &gt; Paired Macs &gt; BariSign. '
                 'This page keeps the app awake while you are over there.</p>') % _html.escape(pin)
-        meta = '<meta http-equiv="refresh" content="3">'
-        stop = ('<form method="post" action="api/stop">'
-                '<button type="submit" class="secondary">Stop</button></form>')
     elif question:
         qid = question["id"]
         title = _html.escape(question["label"])
+        activity_text = ""
         kind = question.get("kind")
         if kind == "bool":
             body = ('<form method="post" action="api/answer">'
@@ -627,28 +817,15 @@ def _render_page(server):
                     '<input type="%s" name="value"%s autocapitalize="off" autocorrect="off" spellcheck="false">'
                     '<input type="hidden" name="id" value="%d">'
                     '<button type="submit">Continue</button></form>') % (ftype, extra, qid)
-        meta = ""  # question: never reload under typing hands
-        stop = ('<form method="post" action="api/stop">'
-                '<button type="submit" class="secondary">Stop</button></form>')
     else:
-        title = _html.escape(activity or "Working…")
+        title = counter + _html.escape(active_label or "Working…")
+        activity_text = activity or ""
         if progress is None:
-            body = ""
+            body = '<div class="bar indeterminate"><i></i></div>'
         else:
             body = '<div class="bar"><i style="width:%d%%"></i></div>' % progress
-        meta = '<meta http-equiv="refresh" content="2">'
-        stop = ('<form method="post" action="api/stop">'
-                '<button type="submit" class="secondary">Stop</button></form>')
+    return title, body, activity_text
 
-    page = PAGE.replace("__TOKEN__", token)
-    page = page.replace("__META__", meta)
-    page = page.replace("__AUDIO__", audio_txt)
-    page = page.replace("__STEPS__", steps_html)
-    page = page.replace("__TITLE__", title)
-    page = page.replace("__BODY__", body)
-    page = page.replace("__LOG__", log_html)
-    page = page.replace("__STOP__", stop)
-    return page.encode("utf-8")
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "BariSignUI/1"
@@ -699,8 +876,35 @@ class _Handler(BaseHTTPRequestHandler):
         if rest in ("", "/"):
             self._page()
             return
+        if rest == "/api/panel":
+            with _LOCK:
+                rev = _REV["n"]
+            with _LOCK:
+                snapshot = (dict(_STATE["done"]) if _STATE["done"] else None,
+                            _STATE["pin"],
+                            dict(_STATE["question"]) if _STATE["question"] else None,
+                            _STATE["activity"], _STATE["progress"])
+            done_snap, pin_snap, question_snap, activity_snap, progress_snap = snapshot
+            with _LOCK:
+                steps_snap = list(_STATE["steps"])
+            try:
+                position = [step["state"] for step in steps_snap].index("active") + 1
+                counter_snap = "step %d of %d \u00b7 " % (position, len(steps_snap))
+            except ValueError:
+                counter_snap = ""
+            active_label_snap = ""
+            for step in steps_snap:
+                if step["state"] == "active":
+                    active_label_snap = step["label"]
+                    break
+            title, body, _activity_text = _panel_parts(
+                True, done_snap, pin_snap, question_snap,
+                activity_snap, progress_snap, counter_snap, active_label_snap)
+            self._json(200, {"rev": rev, "title": title, "body": body})
+            return
         if rest == "/api/state":
             with _LOCK:
+                _LAST_POLL["at"] = time.time()
                 self._json(200, {
                     "steps": [dict(step) for step in _STATE["steps"]],
                     "activity": _STATE["activity"],
@@ -710,7 +914,9 @@ class _Handler(BaseHTTPRequestHandler):
                     "log": list(_STATE["log"]),
                     "done": dict(_STATE["done"]) if _STATE["done"] else None,
                     "audio": _STATE["audio"],
-                    "started": _STATE["started"]})
+                    "keepalive": _STATE["keepalive"],
+                    "started": _STATE["started"],
+                    "rev": _REV["n"]})
             return
         self._json(404, {})
 

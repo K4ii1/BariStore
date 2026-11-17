@@ -246,5 +246,7 @@ if [ "$fail" -ne 0 ] || ! works; then
     exit 1
 fi
 printf 'BariSign %s installed\n\n' "${VER:-?}"
-printf '  sh barisign          opens the page, runs the install\n'
-printf '  sh barisign help     every command\n'
+printf '  sh barisign\n'
+printf '    opens the page, runs the install\n'
+printf '  sh barisign help\n'
+printf '    every command\n'

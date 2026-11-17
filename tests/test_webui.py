@@ -136,6 +136,44 @@ def _forms():
         server.shutdown()
 
 
+def _panel_rev():
+    server = _serve()
+    try:
+        with webui._LOCK:
+            webui._STATE["started"] = True
+            webui._STATE["steps"] = [{"id": "x", "label": "X", "state": "active"}]
+            webui._STATE["question"] = {"id": 21, "kind": "choice",
+                                        "label": "Pick?", "options": ["a", "b"]}
+            webui._QUESTION["event"] = threading.Event()
+        status, body = _get(server, "/%s/api/panel" % ("t" * 32))
+        assert status == 200, status
+        panel = json.loads(body.decode())
+        assert panel["rev"] >= 0 and "Pick?" in panel["title"] and ">a<" in panel["body"], panel
+        print("ok  panel rev")
+        status, body = _get(server, "/%s/" % ("t" * 32))
+        assert status == 200 and b"Pick?" in body and b"step 1 of 1" not in body, status
+        print("ok  full render with question")
+        with webui._LOCK:
+            webui._STATE["question"] = None
+            webui._STATE["pin"] = "123456"
+        status, body = _get(server, "/%s/" % ("t" * 32))
+        assert status == 200 and b"123456" in body, status
+        print("ok  full render with pin")
+        with webui._LOCK:
+            webui._STATE["pin"] = None
+            webui._STATE["done"] = {"ok": True, "title": "Done", "lines": ["hi"]}
+        status, body = _get(server, "/%s/" % ("t" * 32))
+        assert status == 200 and b"Done" in body and b"stopbtn" not in body, status
+        print("ok  full render done")
+        with webui._LOCK:
+            webui._STATE["done"] = None
+            webui._STATE["steps"] = []
+            webui._STATE["started"] = False
+    finally:
+        server.shutdown()
+
+
 if __name__ == "__main__":
     _forms()
+    _panel_rev()
     main()
