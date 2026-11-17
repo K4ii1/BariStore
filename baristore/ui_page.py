@@ -568,8 +568,15 @@ async function initApp() {
     data = {};
   }
   if (!data.ok) {
-    document.body.insertAdjacentHTML("afterbegin",
-      '<div class="card" style="margin:1rem"><b>BariStore could not reach its backend.</b><p class="sub">Close this sheet and run baristore again in a-Shell.</p></div>');
+    const detail = data.error ? String(data.error) : "The local server did not answer.";
+    document.body.insertAdjacentHTML(
+      "afterbegin",
+      '<div class="card" style="margin:1rem"><b>BariStore could not load its catalog.</b>' +
+        '<p class="sub" style="margin:0.4rem 0">' + esc(detail) + '</p>' +
+        '<button class="full" style="margin-top:0.6rem" onclick="location.reload()">Reload</button>' +
+        '<p class="sub" style="margin-top:0.6rem">If this keeps happening, press Ctrl-C in a-Shell and run baristore again.</p>' +
+        "</div>"
+    );
     return;
   }
   APP.onboarding_complete = Boolean(data.onboarding_complete);

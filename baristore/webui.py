@@ -760,6 +760,15 @@ class _Handler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8", "replace"))
 
     def do_GET(self):  # noqa: N802
+        try:
+            self._do_get()
+        except Exception as exc:
+            try:
+                self._send_json(500, {"ok": False, "error": "Internal error: %s" % exc})
+            except Exception:
+                pass
+
+    def _do_get(self):
         route = self._guard()
         if route is None:
             self._send_json(404, {"error": "Not found"})
@@ -905,6 +914,15 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Unknown endpoint"})
 
     def do_POST(self):  # noqa: N802
+        try:
+            self._do_post()
+        except Exception as exc:
+            try:
+                self._send_json(500, {"ok": False, "error": "Internal error: %s" % exc})
+            except Exception:
+                pass
+
+    def _do_post(self):
         route = self._guard()
         if route is None:
             self._send_json(404, {"error": "Not found"})
@@ -1156,9 +1174,13 @@ def run(open_browser=True):
     thread.start()
 
     # Warm up AltSources in a background thread so first launch has live apps ready quickly
-    threading.Thread(
-        target=lambda: sources.fetch_all_sources(force_refresh=False), daemon=True
-    ).start()
+    def _warm_sources():
+        try:
+            sources.fetch_all_sources(force_refresh=False)
+        except Exception:
+            pass
+
+    threading.Thread(target=_warm_sources, daemon=True).start()
 
     url = "http://127.0.0.1:%d/%s/" % (server.port, token)
     opened = False

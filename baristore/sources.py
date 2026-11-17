@@ -264,7 +264,7 @@ def _fetch_source_json(url, timeout=12):
 
 
 def _normalise_icon_url(icon_url):
-    icon = (icon_url or "").strip()
+    icon = _text(icon_url).strip()
     if not icon:
         return ""
     if icon.startswith(("http://", "https://", "data:")):
@@ -276,33 +276,31 @@ def _extract_latest_version(app_dict):
     """Extract latest version details from an AltSource app object."""
     versions = app_dict.get("versions")
     latest = {}
-    if isinstance(versions, list) and versions:
+    if isinstance(versions, list):
         for item in versions:
             if isinstance(item, dict) and item.get("downloadURL"):
                 latest = item
                 break
     version = (
-        latest.get("version")
-        or app_dict.get("version")
-        or latest.get("buildVersion")
+        _text(latest.get("version"))
+        or _text(app_dict.get("version"))
+        or _text(latest.get("buildVersion"))
         or "1.0"
     )
-    download_url = latest.get("downloadURL") or app_dict.get("downloadURL") or ""
-    size = int(latest.get("size") or app_dict.get("size") or 0)
-    sha256 = latest.get("sha256") or app_dict.get("sha256") or ""
-    date = latest.get("date") or app_dict.get("versionDate") or ""
-    version_desc = (
-        latest.get("localizedDescription")
-        or app_dict.get("versionDescription")
-        or ""
+    download_url = _text(latest.get("downloadURL")) or _text(app_dict.get("downloadURL"))
+    size = _number(latest.get("size")) or _number(app_dict.get("size"))
+    sha256 = (_text(latest.get("sha256")) or _text(app_dict.get("sha256"))).lower()
+    date = _text(latest.get("date")) or _text(app_dict.get("versionDate"))
+    version_desc = _text(latest.get("localizedDescription")) or _text(
+        app_dict.get("versionDescription")
     )
     return {
-        "version": str(version),
-        "download_url": str(download_url),
+        "version": version,
+        "download_url": download_url,
         "size": size,
-        "sha256": str(sha256).lower(),
-        "date": str(date),
-        "version_description": str(version_desc),
+        "sha256": sha256,
+        "date": date,
+        "version_description": version_desc,
     }
 
 
@@ -353,7 +351,7 @@ def build_catalog_from_cache(configured=None, raw_map=None):
         url = entry.get("url") or ""
         cached = raw_map.get(url) or {}
         data = cached.get("data") if isinstance(cached.get("data"), dict) else {}
-        source_name = data.get("name") or entry.get("name") or url
+        source_name = _text(data.get("name")) or _text(entry.get("name")) or url
         app_list = data.get("apps") if isinstance(data.get("apps"), list) else []
 
         sources_meta.append(
@@ -363,59 +361,31 @@ def build_catalog_from_cache(configured=None, raw_map=None):
                 "custom": bool(entry.get("custom")),
                 "app_count": len(app_list),
                 "fetched_at": cached.get("fetched_at") or 0,
-                "subtitle": data.get("subtitle") or data.get("description") or "",
-                "icon_url": _normalise_icon_url(data.get("iconURL") or ""),
+                "subtitle": _text(data.get("subtitle")) or _text(data.get("description")),
+                "icon_url": _normalise_icon_url(data.get("iconURL")),
             }
         )
 
         for app in app_list:
             if not isinstance(app, dict):
                 continue
-            bundle_id = (app.get("bundleIdentifier") or app.get("appID") or "").strip()
-            if not bundle_id:
+            try:
+                catalogued = _catalogue_app(app, source_name, url)
+            except Exception:
+                # One malformed entry in a third-party source must never take the
+                # whole store down.
+                catalogued = None
+            if catalogued is None:
                 continue
-            ver_info = _extract_latest_version(app)
-            if not ver_info["download_url"] or not ver_info["download_url"].startswith("http"):
-                continue
-
-            offer = {
-                "source_name": source_name,
-                "source_url": url,
-                "version": ver_info["version"],
-                "download_url": ver_info["download_url"],
-                "size": ver_info["size"],
-                "sha256": ver_info["sha256"],
-                "date": ver_info["date"],
-                "version_description": ver_info["version_description"],
-            }
-
+            bundle_id, entry, offer = catalogued
             if bundle_id not in apps_by_bundle:
-                apps_by_bundle[bundle_id] = {
-                    "bundle_id": bundle_id,
-                    "name": app.get("name") or bundle_id,
-                    "developer": app.get("developerName") or source_name,
-                    "subtitle": app.get("subtitle") or "",
-                    "description": app.get("localizedDescription") or app.get("subtitle") or "",
-                    "icon_url": _normalise_icon_url(app.get("iconURL") or ""),
-                    "tint_color": app.get("tintColor") or "#0A84FF",
-                    "category": app.get("category") or "utilities",
-                    "screenshots": (
-                        app.get("screenshotURLs") or app.get("screenshots") or []
-                    )[:6],
-                    "version": ver_info["version"],
-                    "download_url": ver_info["download_url"],
-                    "size": ver_info["size"],
-                    "sha256": ver_info["sha256"],
-                    "source_name": source_name,
-                    "source_url": url,
-                    "offers": [offer],
-                }
+                apps_by_bundle[bundle_id] = entry
             else:
                 existing = apps_by_bundle[bundle_id]
                 if not any(o["source_url"] == url for o in existing["offers"]):
                     existing["offers"].append(offer)
-                if not existing["icon_url"] and app.get("iconURL"):
-                    existing["icon_url"] = _normalise_icon_url(app.get("iconURL"))
+                if not existing["icon_url"] and entry["icon_url"]:
+                    existing["icon_url"] = entry["icon_url"]
 
     apps = list(apps_by_bundle.values())
     for item in apps:
@@ -427,6 +397,111 @@ def build_catalog_from_cache(configured=None, raw_map=None):
         "apps": apps,
         "store_variants": get_store_variants(),
     }
+
+
+def _text(value):
+    """Coerce whatever a third-party source put in a field to a plain string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, (int, float)):
+        return str(value)
+    return ""
+
+
+def _number(value):
+    """Coerce sizes/ids that sources publish as strings (with separators)."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = "".join(ch for ch in value if ch.isdigit())
+        if cleaned:
+            try:
+                return int(cleaned)
+            except ValueError:
+                return 0
+    return 0
+
+
+def _screenshot_urls(app):
+    """Collect screenshot links from every shape a source may use.
+
+    AltStore allows `screenshotURLs: [...]`, keyed variants such as
+    `screenshots: {"iphone": [...], "ipad": [...]}` and lists of objects. Taking
+    a slice of the raw value used to raise `KeyError: slice(...)` on a dict,
+    which aborted the whole catalog response.
+    """
+    raw = app.get("screenshotURLs")
+    if not raw:
+        raw = app.get("screenshots")
+    urls = []
+
+    def add(item, depth=0):
+        if depth > 3 or len(urls) >= 24:
+            return
+        if isinstance(item, str):
+            url = _normalise_icon_url(item)
+            if url and url not in urls:
+                urls.append(url)
+        elif isinstance(item, dict):
+            for key in ("url", "URL", "imageURL", "image", "light", "dark"):
+                if key in item:
+                    add(item[key], depth + 1)
+            for value in item.values():
+                if isinstance(value, (list, dict)):
+                    add(value, depth + 1)
+        elif isinstance(item, (list, tuple)):
+            for value in item:
+                add(value, depth + 1)
+
+    add(raw)
+    return urls[:6]
+
+
+def _catalogue_app(app, source_name, source_url):
+    """Turn one AltSource app entry into (bundle_id, catalogue entry, offer)."""
+    bundle_id = _text(app.get("bundleIdentifier") or app.get("appID")).strip()
+    if not bundle_id:
+        return None
+    ver_info = _extract_latest_version(app)
+    download_url = ver_info["download_url"]
+    if not download_url.startswith("http"):
+        return None
+
+    name = _text(app.get("name")).strip() or bundle_id
+    icon = _normalise_icon_url(_text(app.get("iconURL")))
+    offer = {
+        "source_name": source_name,
+        "source_url": source_url,
+        "version": ver_info["version"],
+        "download_url": download_url,
+        "size": ver_info["size"],
+        "sha256": ver_info["sha256"],
+        "date": ver_info["date"],
+        "version_description": ver_info["version_description"],
+    }
+    entry = {
+        "bundle_id": bundle_id,
+        "name": name,
+        "developer": _text(app.get("developerName")).strip() or source_name,
+        "subtitle": _text(app.get("subtitle")),
+        "description": _text(app.get("localizedDescription")) or _text(app.get("subtitle")),
+        "icon_url": icon,
+        "tint_color": _text(app.get("tintColor")) or "#0A84FF",
+        "category": _text(app.get("category")) or "utilities",
+        "screenshots": _screenshot_urls(app),
+        "version": ver_info["version"],
+        "download_url": download_url,
+        "size": ver_info["size"],
+        "sha256": ver_info["sha256"],
+        "source_name": source_name,
+        "source_url": source_url,
+        "offers": [offer],
+    }
+    return bundle_id, entry, offer
 
 
 # --- GitHub Release Resolver & IPA Downloader -------------------------------
