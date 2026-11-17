@@ -58,7 +58,7 @@ def _api(url, timeout=40):
     if status == 403 and "rate limit" in text.lower():
         raise DownloadError(
             "GitHub's API rate limit is used up for now. Wait an hour, or download\n"
-            "    the IPA yourself and run: sh bin/barisign sign --ipa FILE")
+            "    the IPA yourself and run: sh barisign sign --ipa FILE")
     if status == 404:
         raise DownloadError("GitHub does not know this release page")
     if status != 200:

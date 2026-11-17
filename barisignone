@@ -1,0 +1,15 @@
+#!/bin/sh
+# BariSign one-device experiment — same phone as signer and target.
+#
+#   sh barisignone                    # safe test: loopback pair-only + keep-awake
+#   sh barisignone --keep-awake       # full same-device install attempt
+#   sh barisignone --help             # all pair flags (passed through)
+#
+# Anything given is passed to `pair --loopback` as-is; with no arguments the
+# safe test above runs. EXPERIMENTAL and UNVERIFIED: needs LocalDevVPN
+# connected on the same device. Report-back steps: docs/SINGLE_DEVICE.md sect. 5.
+cd "$(dirname "$0")" || exit 1
+if [ $# -eq 0 ]; then
+    set -- --pair-only --keep-awake
+fi
+exec python3 -u poc/barisign.py pair --loopback "$@"

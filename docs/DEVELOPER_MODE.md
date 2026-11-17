@@ -62,7 +62,7 @@ Other projects confirm the same pairing UI: StikPair (iOS 27+, "Pair with StikPa
 Activity), Husk ("Pair with Husk", code in a notification), Madeira ("Pair with Madeira").
 
 > **Update 2026-10-31:** the AirDrop experiment below is history. AirDrop refuses free-profile IPAs
-> (`MIInstallerErrorDomain` 111). The current install route is `sh bin/barisign pair`: the **signer** runs a-Shell
+> (`MIInstallerErrorDomain` 111). The current install route is `sh barisign pair`: the **signer** runs a-Shell
 > and the pairing host in the foreground, while the **target** only opens Settings and pairs. See
 > `docs/PAIRING_INSTALL.md` and `AGENTS.md`.
 
@@ -72,7 +72,7 @@ Activity), Husk ("Pair with Husk", code in a notification), Madeira ("Pair with 
    needed to *install* a development-signed app; several tools report the opposite in practice: the
    app installs, refuses to open, and tapping it makes the Developer Mode setting appear. Our earlier
    test on the other iPhone proved nothing because that phone was not in the profile. Register its
-   UDID (`sh bin/barisign portal --udid <that UDID>`), sign again, and AirDrop the **.ipa** (not the
+   UDID (`sh barisign portal --udid <that UDID>`), sign again, and AirDrop the **.ipa** (not the
    zip) from the signing phone straight to it. Watch whether the icon appears, and whether tapping it
    reveals Settings → Privacy & Security → Developer Mode. If it does, no pairing is needed at all.
 2. **Does Bonjour work from a-Shell?** No: DNS-SD registration fails with -65555 and is
@@ -99,11 +99,11 @@ StikPair, Husk and Madeira all use an app extension for exactly this.
 - **The target** needs *its* UDID registered (`sh barisign udid` pairs and saves it — no page since 0.9.18)
   **and** Developer Mode on. The pairing host runs on the **signer**, in a-Shell, while the user is on
   the target — so the "a-Shell is suspended by Settings" problem does not arise.
-- **The install** is `sh bin/barisign pair`: the signer advertises `BariSign`, the target pairs from Settings,
+- **The install** is `sh barisign pair`: the signer advertises `BariSign`, the target pairs from Settings,
   and the signer installs with `installation_proxy` through the pure-Python userspace tunnel.
 - **The long-term win** is the fork plan: a pairing module inside SideStore/AltStore/LiveContainer
   (RPPairing host + PIN + pairing record) plus LocalDevVPN and `installation_proxy` would let the apps
-  refresh themselves. That belongs in the Swift apps; `bin/barisign pair` is the first, a-Shell-side version of
+  refresh themselves. That belongs in the Swift apps; `barisign pair` is the first, a-Shell-side version of
   the same protocol.
 - **Licence note.** SideInstaller and StikPair are non-commercial; LocalDevVPN is an App Store app.
   Read them for behaviour only. The clean-room reimplementation route in `docs/FORK_PLAN.md` stands,

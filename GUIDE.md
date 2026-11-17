@@ -12,7 +12,7 @@ install on itself — see `docs/SINGLE_DEVICE.md` for what works single-device a
 **Status (0.9.17):** Apple sign-in, the developer portal, signing and launching the signed app are verified on
 a real device. Pairing runs over **raw broadcast** (device-verified M1–M6, UDID saved): `DNSServiceRegister`
 fails inside a-Shell with `-65555` (no `NSBonjourServices` entry), so `pair` advertises over
-broadcast automatically — just run `sh bin/barisign pair` and open Paired Macs on the target. If
+broadcast automatically — just run `sh barisign pair` and open Paired Macs on the target. If
 that still fails, the engine can install once a pairing record exists:
 `pair --import FILE --host <target-ip>` (options in `docs/NEXT_SESSION.md`).
 
@@ -29,7 +29,8 @@ sh install.sh
 Then one command drives everything (`sh barisign` works the same, shorter):
 
 ```
-sh barisign            # guided
+sh barisign            # guided (two devices)
+sh barisignone         # one-device experiment (safe pair-only test by default)
 sh barisign status     # what is saved
 ```
 
@@ -63,7 +64,7 @@ Other UDID sources: `docs/UDID_OPTIONS.md`.
 ## LOGIN (signer)
 
 ```
-sh bin/barisign login
+sh barisign login
 ```
 
 It first proves an anisette server works and Apple answers, then asks for the password (typed as `*`).
@@ -75,7 +76,7 @@ server. A free Apple ID is enough.
 ## PORTAL (signer)
 
 ```
-sh bin/barisign portal
+sh barisign portal
 ```
 
 Registers the target's UDID, issues a certificate and downloads a provisioning profile. Verified on a
@@ -92,8 +93,8 @@ reuses a cached file only when size **and** digest match (`(cached, still curren
 portal, verifies the result, and writes `<name>-signed.ipa` (plus a `.zip`).
 
 ```
-sh bin/barisign sign              # download (unless --ipa), sign, zip
-sh bin/barisign sign --ipa X.ipa  # sign a file you already have
+sh barisign sign              # download (unless --ipa), sign, zip
+sh barisign sign --ipa X.ipa  # sign a file you already have
 ```
 
 Put a custom IPA in Files > On My iPhone/iPad > a-Shell > Custom IPAs first; the guided
@@ -112,9 +113,9 @@ target UDID) before uploading anything.
 > visible); there is no background/Live Activity/Shortcuts path — see `docs/SINGLE_DEVICE.md`.
 
 ```
-sh bin/barisign pair                       # pick a paired device, or pair a new one
-sh bin/barisign pair --loopback          # EXPERIMENTAL: same device via LocalDevVPN (docs/SINGLE_DEVICE.md)
-sh bin/barisign pair --export [FILE]       # copy a pairing file out (AirDrop it, or
+sh barisign pair                       # pick a paired device, or pair a new one
+sh barisign pair --loopback          # EXPERIMENTAL: same device via LocalDevVPN (docs/SINGLE_DEVICE.md)
+sh barisign pair --export [FILE]       # copy a pairing file out (AirDrop it, or
                                            # import it from the app's own settings)
 ```
 
@@ -135,8 +136,8 @@ answers, answer the retry / re-pair question.
 5. On the target, tap **Trust** for the developer and open the app.
 
 There is no separate engine install: `sh install.sh` fetches the program files, and
-`sh bin/barisign pair --check` confirms every pure-Python module imports with the `cryptography`
-version a-Shell ships. `sh bin/update` updates the same files.
+`sh barisign pair --check` confirms every pure-Python module imports with the `cryptography`
+version a-Shell ships. `sh update` updates the same files.
 
 The app installs **only on the target whose UDID is in the profile**: a development-signed app is
 refused on any other device or Apple ID. To use another target, register its UDID and sign again.
@@ -160,6 +161,6 @@ refused on any other device or Apple ID. To use another target, register its UDI
 | login `-80045` / `-80046` / `503` | Apple refused the identity, not the password. It moves to the next anisette server; if all fail, wait 10–15 minutes without retrying |
 | UDID not recognised | `40` hex characters, or `24` like `00008110-001a2c3e0e91801e` |
 | pairing finds no Paired Macs entry | run plain `sh barisign pair` (raw broadcast is automatic); if the target has no entry after 1 min, restart a-Shell and retry |
-| `bin/barisign pair` finds no IPA | sign on the signer first, or pass `--ipa FILE` |
-| BariSign does not appear in Paired Macs | run plain `sh bin/barisign pair` (raw broadcast is automatic); if the target has no entry after 1 min, restart a-Shell and retry |
+| `barisign pair` finds no IPA | sign on the signer first, or pass `--ipa FILE` |
+| BariSign does not appear in Paired Macs | run plain `sh barisign pair` (raw broadcast is automatic); if the target has no entry after 1 min, restart a-Shell and retry |
 | terminal stops taking input | quit a-Shell from the app switcher and reopen it |

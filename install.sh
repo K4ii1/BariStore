@@ -91,8 +91,8 @@ download_all() {
                  "third_party/ca-bundle/cacert.pem third_party/ca-bundle/cacert.pem" \
                  "variants.json variants.json" \
                  "barisign barisign" \
-                 "bin/barisign bin/barisign" \
-                 "bin/update bin/update"; do
+                 "update update" \
+                 "barisignone barisignone"; do
         # shellcheck disable=SC2086
         set -- $_pair
         if fetch "$1" "$2"; then
@@ -110,7 +110,7 @@ download_all() {
         esac
         printf '\r\033[2K  (1/2) files %s' "$_d"
     done
-    chmod +x bin/* 2>/dev/null
+    chmod +x barisign update barisignone 2>/dev/null
     return $fail
 }
 
@@ -139,7 +139,7 @@ works() {
     python3 poc/barisign.py --help >/dev/null 2>&1 \
         && python3 poc/poc_portal.py --help >/dev/null 2>&1 \
         && python3 poc/pair_install.py --check >/dev/null 2>&1 \
-        && sh -n bin/barisign && sh -n bin/update
+        && sh -n barisign && sh -n update && sh -n barisignone
 }
 
 # No background jobs: a-Shell's shell can leave a background spinner
@@ -201,6 +201,11 @@ if [ "$fail" -ne 0 ] || ! works; then
     printf '    check the network (Safari should open github.com) and run sh install.sh again.\n'
     exit 1
 fi
+if [ -d bin ]; then
+    rm -rf bin
+    printf '  retired    bin/ (now: sh barisign, sh update, sh barisignone)\n'
+fi
 printf 'BariSign %s installed\n\n' "${VER:-?}"
-printf '  sh bin/barisign ready\n'
-printf '  help: sh bin/barisign help\n'
+printf '  sh barisign ready\n'
+printf '  sh barisignone for the one-device experiment\n'
+printf '  help: sh barisign help\n'

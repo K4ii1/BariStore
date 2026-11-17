@@ -7,8 +7,8 @@ same Wi-Fi**: a signer (a-Shell) and a target (Safari + Settings).
 > **Pairing works from a-Shell via raw broadcast.** iOS only allows Bonjour types listed in an
 > app's signed `NSBonjourServices` allowlist, so a-Shell's `DNSServiceRegister` call fails with
 > `-65555` — but BariSign announces `_remotepairing-pairable-host._tcp` over raw multicast/broadcast
-> instead, no setup needed: run `sh bin/barisign pair` and open Paired Macs on the target. The
-> **signing/portal/UDID-page** path and the **pure tunnel/install engine** are unaffected.
+> instead, no setup needed: run `sh barisign pair` and open Paired Macs on the target. The
+> **signing/portal** path and the **pure tunnel/install engine** are unaffected.
 > Details and fallbacks (`--host`, `--import`): `docs/NEXT_SESSION.md`.
 
 | Role | What it is | What it runs |
@@ -28,7 +28,7 @@ They must be on the **same Wi-Fi**. The target never installs a-Shell or BariSig
 
 ## How the flow works
 
-1. On the **signer**, install a-Shell and BariSign, then run `sh bin/barisign`.
+1. On the **signer**, install a-Shell and BariSign, then run `sh barisign`.
 2. Sign in with your Apple ID. On the **target**, check Settings → Developer Mode:
    if the switch is missing, the guided run walks you through a one-time trigger
    install that makes it appear.
@@ -79,8 +79,8 @@ curl -sSL "https://github.com/barismd/barisign/blob/main/install.sh?raw=true" -o
 sh install.sh
 ```
 
-`sh bin/update` self-updates everything in one command: it reads the newest `install.sh` from the
-repository and applies it (files and `bin/update` itself). Your saved state in `state/` is kept.
+`sh update` self-updates everything in one command: it reads the newest `install.sh` from the
+repository and applies it (files and `update` itself). Your saved state in `state/` is kept.
 There is **no engine download and no pip step**: the pairing engine is part of the program files.
 
 ```
@@ -88,10 +88,11 @@ sh barisign          # guided: check -> Apple ID -> devmode -> pairing/UDID -> v
 sh barisign pair     # pair the target and install over Wi-Fi
 sh barisign status   # what is already known
 sh barisign --help   # every command
+sh barisignone       # EXPERIMENTAL one-device test via LocalDevVPN
 ```
 
-`sh barisign` is the same program as `sh bin/barisign`, only shorter. Updates stay
-`sh bin/update` and `sh install.sh`.
+The old `bin/` wrappers are gone: `sh barisign`, `sh update` and `sh barisignone`
+run from the install folder. Updates stay `sh update` and `sh install.sh`.
 
 ---
 
@@ -161,8 +162,10 @@ Single-device limits, background execution and iPad windowing: `docs/SINGLE_DEVI
 | `docs/NEXT_SESSION.md` | handoff: the on-device gates for the pure pairing/tunnel/install engine |
 | `docs/SINGLE_DEVICE.md` | single device, background (Live Activity/notification/Shortcuts) and version freshness: what is possible |
 | `variants.json` | the variant registry and runtime resolution rules |
-| `bin/barisign` | the single entry point on the signer |
-| `sh bin/barisign pair` | the signer → target pairing install |
+| `barisign` | the single entry point on the signer |
+| `update` | the updater (`sh install.sh` also works) |
+| `barisignone` | EXPERIMENTAL one-device run (same phone via LocalDevVPN) |
+| `sh barisign pair` | the signer → target pairing install |
 | `THIRD_PARTY_NOTICES.md` | licences and attribution |
 
 ## Licences — please read

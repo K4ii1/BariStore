@@ -1,4 +1,4 @@
 #!/bin/sh
-# BariSign — short cut for `sh bin/barisign`. Same program, less typing.
+# BariSign - one command for every stage. See GUIDE.md.
 cd "$(dirname "$0")" || exit 1
-exec sh bin/barisign "$@"
+exec python3 -u poc/barisign.py "$@"

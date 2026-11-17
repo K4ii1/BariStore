@@ -7,7 +7,7 @@
 #
 #  RUN IT (in a-Shell, from the installed folder):
 #
-#      sh bin/barisign login                 the normal way; the account is remembered
+#      sh barisign login                 the normal way; the account is remembered
 #      python3 poc/poc_login.py --selftest   the six checks on their own
 #      python3 poc/poc_login.py --diag       CA bundles + TLS reachability
 #      python3 poc/poc_login.py --login YOU@example.com

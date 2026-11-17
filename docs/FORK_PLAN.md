@@ -38,7 +38,7 @@ non-commercial SideInstaller derivation isolated. Nothing from one bucket is cop
 - Each upstream already publishes a **nightly** release built by its own CI, so a fork inherits a working
   build recipe: `.github/workflows` on GitHub-hosted macOS runners, free for public repos.
 - Our patch is kept as a **small, rebased commit series** on top of the upstream tag — never a merge.
-- `bin/update` style tooling must resolve, for each variant:
+- `update` style tooling must resolve, for each variant:
   - the upstream tag we forked (`<app>-base.json`),
   - our release asset (our own repo's release, same variant names as `variants.json`),
   - and refuse to hand out a build whose base tag is older than the upstream release it replaces.

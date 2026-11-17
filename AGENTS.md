@@ -27,11 +27,11 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
 - **Target = iOS 27+ only.** iOS 17.4–26.x is out of scope (pairing file needs a PC). Stated in `README.md`.
 - **Install = pairing + `installation_proxy` from the signer.** AirDrop and OTA are dead for
   free-profile apps on iOS 27: `MIInstallerErrorDomain` 111, *"free provisioning profile ... not
-  allowed to be installed from this source"*. The intended signer command is `sh bin/barisign pair`;
+  allowed to be installed from this source"*. The intended signer command is `sh barisign pair`;
   the target picks **BariSign** under Settings → Developer → Paired Macs and enters the code.
 - **Pure pairing engine (2026-11-15, replaces the qh3 blocker).** `pymobiledevice3` needs `qh3`
   (native, no iOS wheel) and APIs newer than a-Shell's `cryptography` 3.4.8, so it is no longer used.
-  `sh bin/barisign pair` now runs a self-contained MIT Python stack: RPPairing host (SRP-6a, TLV8,
+  `sh barisign pair` now runs a self-contained MIT Python stack: RPPairing host (SRP-6a, TLV8,
   OPACK), pair-verify, **TLS 1.2 PSK** (0x00AF/0x008C — the suites iOS actually negotiates, *not*
   TLS 1.3), a minimal IPv6/TCP stack, RSD (HTTP/2 + XPC, no HPACK), AFC, house_arrest and
   `installation_proxy`. No pip, no native wheel, no GPL runtime. The Linux tests are in `tests/`.
@@ -51,8 +51,8 @@ Both may be an iPhone or an iPad; only the role matters. Same Wi-Fi required.
   the remaining device gate. Details: `docs/RESULTS.md`, `docs/NEXT_SESSION.md`.
 - Single-device/background settled 2026-11-17 (a-Shell sources): one device cannot pair with or
   install on itself; no Live Activity/notification/Shortcuts background path; keep a-Shell
-  foreground (iPad Split View ok). Full analysis: `docs/SINGLE_DEVICE.md`. `sh bin/barisign one`
-  does not exist by design.
+  foreground (iPad Split View ok). Full analysis: `docs/SINGLE_DEVICE.md`. One-device runs
+  through `sh barisignone` (loopback experiment, 0.9.19+), not a `one` subcommand.
 - Download freshness: `resolve()` runs live on every sign (stable tag / nightly asset date shown
   before downloading); cached IPAs reused only on size + SHA-256 match. See
   `docs/SINGLE_DEVICE.md` §4.
@@ -94,7 +94,7 @@ The a-Shell interface (no Shortcuts):
 - runs the heavy steps on the **signer**: download the original (optional Developer Mode trigger),
   pair the target and take its UDID, Apple login with anisette (retry with another anisette server on
   failure), sign the chosen IPA.
-- Ends with `sh bin/barisign pair`: the signer advertises as a pairable host, the **target** opens
+- Ends with `sh barisign pair`: the signer advertises as a pairable host, the **target** opens
   Settings → Developer → Paired Macs, enters the code, and the signer installs over Wi-Fi.
 
 ## Hard constraints
@@ -112,7 +112,7 @@ The a-Shell interface (no Shortcuts):
 - **Localization**: all user-facing text (script messages, README) lives in
   per-language files so adding a language = adding a file. English first; translations only in
   the final phase, using the cheap model, after asking which languages.
-- Interface: a plain text flow in a-Shell (`sh bin/barisign`), **no Shortcuts** and no generated
+- Interface: a plain text flow in a-Shell (`sh barisign`), **no Shortcuts** and no generated
   `.shortcut` files. Every prompt is one line and every answer is a number, `y`/`n` or a pasted value,
   so a first-time user can follow it without help. All user-facing strings live in the i18n files.
 
@@ -145,7 +145,7 @@ The a-Shell interface (no Shortcuts):
   device; the tunnel/install engine is written and Linux-tested. iOS 27 accepts only
   device-initiated network pairing, which is what BariSign does. The plan is `docs/PLAN_V2.md`,
   verified facts are in `docs/RESULTS.md`, the session handoff in `docs/NEXT_SESSION.md`.
-- Version line: `0.9.x` until the user declares stable — never jump to 1.0.0; `sh bin/update` +
+- Version line: `0.9.x` until the user declares stable — never jump to 1.0.0; `sh update` +
   `sh install.sh` stay the only update paths.
 - Next: the on-device install (`pair` to Trust + open). Do not spend more effort on a-Shell-only
   pairing paths (DNS-SD, raw mDNS, host-initiated dialing: settled with device evidence) or on

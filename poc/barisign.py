@@ -67,7 +67,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.19"
+VERSION = "0.9.20"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -311,7 +311,7 @@ def _adopt_custom_bundle_id(bundle_id):
     if state.get("bundle_id"):
         print("  ! this IPA is %s" % bundle_id)
         print("    the saved profile is for %s" % state.get("bundle_id"))
-        print("    run: sh bin/barisign portal --bundle-id %s" % bundle_id)
+        print("    run: sh barisign portal --bundle-id %s" % bundle_id)
         print("    (a custom App ID uses one of the 10 free slots)")
         return None
     update_state(bundle_id=bundle_id, variant="custom")
@@ -1279,7 +1279,7 @@ def _sign_now(ipa, saved, argv, hint=True, make_zip=None):
     if result["zip"]:
         print("  zip   %s" % _display_path(result["zip"]))
     if hint:
-        print("  next  sh bin/barisign pair  (install on the target over Wi-Fi)")
+        print("  next  sh barisign pair  (install on the target over Wi-Fi)")
     return result
 
 
@@ -1291,7 +1291,7 @@ def cmd_sign(argv):
                                          ("cert", saved["cert"]),
                                          ("profile", saved["profile"])) if not path]
     if missing:
-        print("  ! no %s: run 'sh bin/barisign portal' first" % ", ".join(missing))
+        print("  ! no %s: run 'sh barisign portal' first" % ", ".join(missing))
         return 2
 
     ipa, info = _obtain_ipa(load_state(), argv)
@@ -1311,7 +1311,7 @@ def cmd_guided(argv):
     state = load_state()
     print("BariSign %s" % VERSION)
     if poc_login._selftest(quiet=True) != 0:
-        print("check  fail: run 'sh bin/barisign check' for the details")
+        print("check  fail: run 'sh barisign check' for the details")
         return 1
     print("check  ok")
 
@@ -1474,25 +1474,25 @@ _OPTIONS = {
 def _usage():
     print("BariSign %s" % VERSION)
     print()
-    print("  sh bin/barisign           guided run")
-    print("  sh bin/barisign udid      pair the target, save its UDID")
-    print("  sh bin/barisign login     Apple sign-in")
-    print("  sh bin/barisign portal    UDID + certificate + profile")
-    print("  sh bin/barisign sign      download, sign and zip the chosen variant")
-    print("  sh bin/barisign pair      pair the target and install over Wi-Fi")
-    print("  sh bin/barisign status    what is saved")
-    print("  sh bin/barisign check     diagnostics only")
-    print("  sh bin/barisign version   which copy is running")
-    print("  sh bin/barisign forget    clear the saved state")
-    print("  sh bin/barisign reset      remove saved state, IPAs and zips")
+    print("  sh barisign           guided run")
+    print("  sh barisign udid      pair the target, save its UDID")
+    print("  sh barisign login     Apple sign-in")
+    print("  sh barisign portal    UDID + certificate + profile")
+    print("  sh barisign sign      download, sign and zip the chosen variant")
+    print("  sh barisign pair      pair the target and install over Wi-Fi")
+    print("  sh barisign status    what is saved")
+    print("  sh barisign check     diagnostics only")
+    print("  sh barisign version   which copy is running")
+    print("  sh barisign forget    clear the saved state")
+    print("  sh barisign reset      remove saved state, IPAs and zips")
     print()
-    print("  options: sh bin/barisign <command> help")
+    print("  options: sh barisign <command> help")
 
 
 def _options(command):
     print("BariSign %s" % VERSION)
     print()
-    print("  sh bin/barisign %s" % command)
+    print("  sh barisign %s" % command)
     for flag, text in _OPTIONS[command]:
         print()
         print("    %s" % flag)

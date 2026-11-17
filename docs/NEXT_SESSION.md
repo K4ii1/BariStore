@@ -1,6 +1,6 @@
 # Next session — handoff (2026-11-17)
 
-State: version **0.9.19**. Experimental same-device path: `sh barisign pair --loopback --pair-only --keep-awake` (LocalDevVPN loopback + speech keep-alive; UNVERIFIED, see `docs/SINGLE_DEVICE.md` §5). `sh barisign` is the short form of `sh bin/barisign` (same program; updates stay `sh bin/update` + `sh install.sh`). The signer-hosted UDID page is **removed**: no HTTP server, no median link, no `--manual`/`--page` — pairing is the only UDID source (`sh barisign udid` pairs, or takes a pasted UDID). If Developer Mode cannot be opened with a plain unsigned IPA, the page comes back. Guided order is unchanged otherwise, guided flow reordered (Apple ID → devmode check → pairing/UDID →
+State: version **0.9.20**. `bin/` is retired: entry points are `sh barisign`, `sh update`, `sh barisignone` (one-device loopback experiment, defaults to safe `--pair-only --keep-awake` test). Experimental same-device path: `sh barisign pair --loopback --pair-only --keep-awake` (LocalDevVPN loopback + speech keep-alive; UNVERIFIED, see `docs/SINGLE_DEVICE.md` §5). `sh barisign` is the short form of `sh barisign` (same program; updates stay `sh update` + `sh install.sh`). The signer-hosted UDID page is **removed**: no HTTP server, no median link, no `--manual`/`--page` — pairing is the only UDID source (`sh barisign udid` pairs, or takes a pasted UDID). If Developer Mode cannot be opened with a plain unsigned IPA, the page comes back. Guided order is unchanged otherwise, guided flow reordered (Apple ID → devmode check → pairing/UDID →
 variant → download → portal → sign → install). Signing, the developer portal, the UDID fallback
 page and the self-updater are unchanged and still work. The download step now prints the
 resolved version before fetching (`SideStore 0.6.0 (24.1 MB)`, nightly by asset date) and
@@ -18,7 +18,7 @@ the target stops offering a prompt.
 
 ## What changed
 
-The `qh3`/`sslpsk`/`pymobiledevice3` route is gone. `sh bin/barisign pair` now runs a self-contained
+The `qh3`/`sslpsk`/`pymobiledevice3` route is gone. `sh barisign pair` now runs a self-contained
 MIT Python stack in `poc/` on top of the `cryptography` **3.4.8** that a-Shell ships:
 
 | File | Job |
@@ -41,10 +41,10 @@ interop test proves against OpenSSL.
 
 ## What to run now
 
-1. `sh bin/update` — clean screen, `installing BariSign <version>`, `(1/2) files` cycling,
+1. `sh update` — clean screen, `installing BariSign <version>`, `(1/2) files` cycling,
    clean screen, `(2/2) check`, clean screen, `BariSign <version> installed` + next step.
-2. `sh bin/barisign pair --check` — must import the engine.
-3. `sh bin/barisign pair` — pairs (raw broadcast is automatic on a-Shell) or reuses the
+2. `sh barisign pair --check` — must import the engine.
+3. `sh barisign pair` — pairs (raw broadcast is automatic on a-Shell) or reuses the
    record, finds the target by port scan + subnet sweep, then tunnels and installs with
    `installation_proxy`. Target: trust the developer, open the app.
 4. If a step fails, rerun with `--debug` and send the output plus `state/pair_debug.log`.
@@ -77,7 +77,7 @@ device: `pair --check`, `login`, `portal` (saved UDID), `sign`, `status`.
 
 ## Acceptance gates
 
-1. `sh bin/update` clean; files/engine synced; no repeated curl/git; no pip.
+1. `sh update` clean; files/engine synced; no repeated curl/git; no pip.
 2. `pair --check` imports on a-Shell with cryptography 3.4.8, no qh3/sslpsk/native wheel.
 3. `pair --pair-only` pairs from Settings over raw broadcast, saves the UDID and the pairing file.
 4. `pair` finds the target (paired address → port scan → subnet sweep), installs over Wi-Fi;
@@ -105,7 +105,7 @@ portal+sign pointer instead of failing at 40% with a bare ApplicationVerificatio
 covers the stale-asset case (e.g. installed days after signing, past the 7-day free profile).
 Still untested end to end on a device, as is the pairing-file write into the app. Pair UI is staged
 (Pair → Tunnel → Install → Done) with screen clears like the guided flow; a duplicate second
-connection is refused while one pair-setup runs. Run `sh bin/barisign pair` (plain; raw advertisement is now
+connection is refused while one pair-setup runs. Run `sh barisign pair` (plain; raw advertisement is now
 automatic on a-Shell, `--raw-mdns` only forces it elsewhere).
 
 - **Bonjour browse/registration in a-Shell.** Registration is the existing DNS-SD shim; browsing was
@@ -152,7 +152,7 @@ The TUN tests use `sudo` to create a point-to-point IPv6 interface (`baritun`); 
 ## Constraints that still apply
 
 - Everything on the signer is pure Python + the shipped `cryptography`; never add a native wheel.
-- Keep `sh bin/update` self-updating: `install.sh` must remain the single file it applies.
+- Keep `sh update` self-updating: `install.sh` must remain the single file it applies.
 - Do not name or describe the user's test hardware; use signer/target roles.
 - Do not claim device success without the user's confirmation. Mark untested code **untested**.
 - `third_party/sideinstaller/` stays isolated (non-commercial); never copy it into `poc/`.

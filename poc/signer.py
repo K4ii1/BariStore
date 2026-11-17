@@ -34,12 +34,12 @@
 #
 #  STATUS: VERIFIED ON DEVICE: the signed IPA installed on a device, Trust
 #          Developer was offered, and the app launched after the app-group fix.
-#          The signer -> target Wi-Fi install (`sh bin/barisign pair`) is the
+#          The signer -> target Wi-Fi install (`sh barisign pair`) is the
 #          remaining untested path.
 #
 #  RUN IT
 #  ------
-#      sh bin/barisign sign                  guided (finds the IPA in the folder)
+#      sh barisign sign                  guided (finds the IPA in the folder)
 #      python3 -u poc/signer.py --ipa X.ipa [--profile P --key K --cert C]
 #
 #  The self-check runs at the end of every sign: the finished IPA is reopened and
@@ -2207,7 +2207,7 @@ def sign_ipa(ipa_path, profile_path, key_path, cert_path, output_ipa=None,
 
 # ---------------------------------------------------------------------------
 # Stand-alone command line (for testing in a codespace; the real entry point is
-# sh bin/barisign sign)
+# sh barisign sign)
 # ---------------------------------------------------------------------------
 
 def _cli(argv):
@@ -2228,7 +2228,7 @@ def _cli(argv):
     key = value("--key") or saved["key"]
     cert = value("--cert") or saved["cert"]
     if not (profile and key and cert):
-        print("! the portal files are missing; run: sh bin/barisign portal")
+        print("! the portal files are missing; run: sh barisign portal")
         return 2
 
     def report(label):

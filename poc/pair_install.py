@@ -1194,7 +1194,7 @@ async def _run(args):
         _stage("Pairing", ["the target was not found"])
         _say("  pass its Wi-Fi address directly:")
         _say("  target: Settings > Wi-Fi > (i) > IP Address, then")
-        _say("  sh bin/barisign pair --host <target-ip>")
+        _say("  sh barisign pair --host <target-ip>")
         return 2
     _stage("Pairing", ["target:  %s" % host])
 
@@ -1279,7 +1279,7 @@ async def _run(args):
         ipa = find_ipa(explicit)
         if not ipa:
             _say("  ! no signed IPA found")
-            _say("    sign on the signer first (sh bin/barisign sign), or pass --ipa FILE")
+            _say("    sign on the signer first (sh barisign sign), or pass --ipa FILE")
             return 2
         _stage("Install", ["installing:  %s" % os.path.basename(ipa)])
         await asyncio.wait_for(install(session, ipa, RECORD_PATH), 900)
@@ -1287,7 +1287,7 @@ async def _run(args):
             "installed:  %s" % os.path.basename(ipa),
             "on the target: Settings > General > VPN & Device Management",
             "trust the developer, then open the app",
-            "pairing file: sh bin/barisign pair --export FILE for a manual copy",
+            "pairing file: sh barisign pair --export FILE for a manual copy",
         ]
         variant_id = load_state().get("variant", "")
         if "nightly" in variant_id and "sidestore" in ipa_bundle_id(ipa).lower():

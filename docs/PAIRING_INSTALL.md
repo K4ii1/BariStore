@@ -194,7 +194,7 @@ A merged plist containing both the RPPairing keys and the lockdown keys is the s
 new apps; AltStore ignores the lockdown half, SideStore uses the remote half on 26.4+. The file
 is written over AFC/house_arrest, exactly as AltServer and SideInstaller do.
 
-`bin/barisign pair` writes the record itself: `poc/pairing.py` stores our Ed25519 public/private
+`barisign pair` writes the record itself: `poc/pairing.py` stores our Ed25519 public/private
 keys, `identifier` and `alt_irk` (plus `host_identifier`/`host_alt_irk` aliases for older consumers)
 under `state/` as `PairingFile_RemoteRP.plist`, `ALTPairingFile.plist` and
 `ALTPairingFile.mobiledevicepairing`. After a successful install it writes the appropriate file into

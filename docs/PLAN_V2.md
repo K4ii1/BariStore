@@ -69,14 +69,14 @@ Facts that make it possible, checked 2026-10-29/31:
 - SideStore, AltStore and LiveContainer also accept an **imported** pairing file, which is how the module's
   output gets consumed.
 - The pure engine implements the device-initiated pairing host, pair-verify, the TLS 1.2 PSK tunnel,
-  a userspace TCP stack, RSD and `installation_proxy`; `bin/barisign pair` is the first implementation
+  a userspace TCP stack, RSD and `installation_proxy`; `barisign pair` is the first implementation
   of that route, written from the MIT `idevice` protocol sources.
 - Licences: SideStore **AGPL-3.0**, AltStore **AGPL-3.0**, LiveContainer **AGPL-3.0**; SideInstaller is
   "Other"/non-commercial and stays isolated in `third_party/sideinstaller/`. The engine is MIT and
   uses no GPL runtime; `pymobiledevice3` is a protocol reference only.
 
 Cost accepted with the decision: our patch to three AGPL projects, rebuilt on every upstream release, plus
-the `bin/barisign pair` engine on the signer.
+the `barisign pair` engine on the signer.
 
 ## Status
 

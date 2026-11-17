@@ -4,12 +4,12 @@
 # It reads the instructions from one file in the repository (install.sh), pinned
 # to the newest commit so GitHub's cache cannot serve a stale mix. install.sh
 # then fetches every file at that same commit, including this script and the
-# pairing engine step, so `sh bin/update` is the only command ever needed.
+# pairing engine step, so `sh update` is the only command ever needed.
 #
-#   sh bin/update          # update everything, in place
+#   sh update          # update everything, in place
 #
 # The user never has to run curl or git by hand again.
-cd "$(dirname "$0")/.." || exit 1
+cd "$(dirname "$0")" || exit 1
 
 ATOM="https://github.com/barismd/barisign/commits/main.atom"
 SHA=$(curl -sSL --max-time 25 "$ATOM" 2>/dev/null | python3 -c "
