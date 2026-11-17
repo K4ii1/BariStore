@@ -67,7 +67,7 @@ except ImportError as exc:                                    # noqa: BLE001
     print("Fix it by re-running the installer in the BariSign folder:  sh install.sh")
     sys.exit(2)
 
-VERSION = "0.9.20"
+VERSION = "0.9.21"
 STATE_DIR = poc_login.POC_STATE
 STATE_FILE = os.path.join(STATE_DIR, "barisign.json")
 # Signed + downloaded IPAs live in one folder inside BariSign (tidy);
@@ -1410,6 +1410,108 @@ def cmd_guided(argv):
     return 0
 
 
+def cmd_one(argv):
+    """Single-device full install: check -> Apple ID -> loopback pair ->
+    variant -> download -> portal -> sign -> [trigger] -> loopback install.
+
+    No flags: loopback and keep-awake are always on, because that is what this
+    command is. Needs LocalDevVPN connected on this same device.
+    """
+    if "--help" in argv or "-h" in argv or "help" in argv:
+        print("BariSign %s" % VERSION)
+        print()
+        print("  sh barisignone   single-device full install, no flags needed")
+        print("  needs LocalDevVPN connected on this device; volume audible")
+        return 0
+    pair = os.path.join(_HERE, "pair_install.py")
+    state = load_state()
+    print("BariSign %s" % VERSION)
+    if poc_login._selftest(quiet=True) != 0:
+        print("check  fail: run 'sh barisign check' for the details")
+        return 1
+    print("check  ok")
+
+    email = state.get("email") or ""
+    if not email:
+        _stage("Apple sign-in")
+        email = _ask("  Apple ID: ").strip()
+        if not email:
+            print("no Apple ID")
+            return 2
+    account = _sign_in(email, staged=not state.get("email"))
+    update_state(email=email)
+    state = load_state()
+
+    _stage("Pairing")
+    print("  same device: Settings > Developer > Paired Macs")
+    print("  this app keeps speaking while you are over there;")
+    print("  enter the printed PIN on the Paired Macs screen.")
+    code = subprocess.call([sys.executable, "-u", pair, "--loopback",
+                            "--pair-only", "--keep-awake"])
+    state = load_state()
+    if code != 0 or not state.get("udid"):
+        print("  pairing did not return a UDID")
+        print("  turn on Developer Mode, connect LocalDevVPN, run again")
+        return 1
+
+    _stage("Developer Mode")
+    print("  on this device, open:")
+    print("    Settings > Privacy & Security > Developer Mode")
+    print("    (or Settings > Developer)")
+    have_devmode = _yes("  is Developer Mode there?",
+                        default=bool(state.get("paired")))
+    if not have_devmode:
+        print("  pairing may reveal it; continuing, trigger below if needed")
+
+    variants = load_variants()
+    if variants:
+        _choose_variant(state, variants)
+        state = load_state()
+
+    _stage("Download")
+    ipa, _info = _obtain_ipa(state, [])
+    if not ipa:
+        return 1
+    if _info.get("bundle_id"):
+        if _adopt_custom_bundle_id(_info["bundle_id"]) is None:
+            return 1
+        state = load_state()
+
+    result = _portal(account, email, state.get("udid", ""), state.get("bundle_id", ""),
+                     "BariSign device",
+                     app_display_name(variant_id=state.get("variant", ""),
+                                      bundle_id=state.get("bundle_id", "")))
+    update_state(bundle_id=result["bundle_id"], team_id=result["team_id"],
+                 profile=result["profile"], key=result["key"], cert=result["cert"])
+    _result("PORTAL", "ok")
+
+    state = load_state()
+    _stage("Sign")
+    saved = signer.find_saved_paths(STATE_DIR)
+    result = _sign_now(ipa, saved, [], hint=False, make_zip=False)
+    if result is None:
+        return 1
+    if not have_devmode:
+        _stage("Developer Mode")
+        print("  this device needs Developer Mode before installing.")
+        print("  opening the signed IPA: tap it once, then delete it.")
+        print("  the switch appears after the attempt.")
+        if _yes("  open the signed IPA now?", True):
+            _share_file(result["ipa"])
+        print("  after tapping: turn on Developer Mode,")
+        print("  then delete the tapped file.")
+        _ask("  press Enter when done: ")
+        state = load_state()
+    if _yes("  install on this device now?", True):
+        command = [sys.executable, "-u", pair, "--loopback", "--keep-awake",
+                   "--ipa", result["ipa"]]
+        paired = load_state()
+        if paired.get("paired") and paired.get("udid"):
+            command += ["--udid", paired["udid"]]
+        return subprocess.call(command)
+    return 0
+
+
 def cmd_pair(argv):
     """Pair the target and install the signed IPA (pair_install.py)."""
     pair = os.path.join(_HERE, "pair_install.py")
@@ -1428,6 +1530,7 @@ COMMANDS = {
     "portal": cmd_portal,
     "sign": cmd_sign,
     "all": cmd_guided,
+    "one": cmd_one,
 }
 
 

@@ -47,7 +47,7 @@ script can *guarantee* background survival. Full experiment steps in §5.
 | Portal (device/cert/App ID/profile) once a UDID is saved | needs only the saved UDID, not the device in hand | `sh barisign portal` |
 | Sign + verify + preflight | no | `sh barisign sign` |
 | Install + pairing-file write | **yes, the target** | `sh barisign pair` |
-| Same-device experiment (LocalDevVPN loopback) | **experimental, §5** | `sh barisign pair --loopback --pair-only` first |
+| Same-device full install (LocalDevVPN loopback) | **experimental, §5** | `sh barisignone` (no flags) |
 
 ## 2. Background execution — checked against the a-Shell sources (2026-11-17)
 
@@ -139,8 +139,10 @@ Prerequisites on the one device: **LocalDevVPN installed and connected**, a-Shel
 volume audible (the keep-alive speaks). Then:
 
 ```
-sh barisign pair --loopback --pair-only --keep-awake
+sh barisignone
 ```
+(no flags: it pairs loopback-only, downloads, signs and installs with keep-awake
+always on. `pair --loopback --pair-only` remains the manual low-level test.)
 
 1. The signer advertises as **BariSign** (raw broadcast, as usual). Open **Settings ->
    Developer -> Paired Macs on the SAME device** and look: if BariSign is listed, the same

@@ -30,7 +30,7 @@ Then one command drives everything (`sh barisign` works the same, shorter):
 
 ```
 sh barisign            # guided (two devices)
-sh barisignone         # one-device experiment (safe pair-only test by default)
+sh barisignone         # one-device full install, no flags (LocalDevVPN needed)
 sh barisign status     # what is saved
 ```
 
